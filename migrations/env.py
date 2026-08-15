@@ -16,6 +16,7 @@ if config.config_file_name is not None:
 
 from app.config import settings
 from app.db import Base
+from app.models import Event, Client, Talk, Job, Review
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
@@ -30,6 +31,33 @@ target_metadata = Base.metadata
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
+
+import os
+
+# ---------------------------------------------------------------------------
+# Sequential revision IDs (0001, 0002, …)
+# ---------------------------------------------------------------------------
+
+def _next_rev_id() -> str:
+    """Return the next zero-padded revision number based on existing files."""
+    versions_dir = os.path.join(os.path.dirname(__file__), "versions")
+    max_num = 0
+    if os.path.isdir(versions_dir):
+        for name in os.listdir(versions_dir):
+            if name.endswith(".py") and not name.startswith("__"):
+                try:
+                    num = int(name.split("_", 1)[0])
+                    max_num = max(max_num, num)
+                except ValueError:
+                    pass
+    return f"{max_num + 1:04d}"
+
+
+def process_revision_directives(context, revision, directives):
+    """Replace the random hex revision ID with a sequential number."""
+    if directives:
+        script = directives[0]
+        script.rev_id = _next_rev_id()
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -49,6 +77,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        process_revision_directives=process_revision_directives,
     )
 
     with context.begin_transaction():
@@ -70,7 +99,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection, 
+            target_metadata=target_metadata,
+            process_revision_directives=process_revision_directives
         )
 
         with context.begin_transaction():
