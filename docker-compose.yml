@@ -4,7 +4,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://veditor:password@postgres:5432/veditor
+      - POSTGRES_USER=veditor
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=veditor
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       postgres:
@@ -16,7 +20,11 @@ services:
     build: .
     command: uv run celery -A app.tasks worker --loglevel=info
     environment:
-      - DATABASE_URL=postgresql://veditor:password@postgres:5432/veditor
+      - POSTGRES_USER=veditor
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=veditor
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       postgres:

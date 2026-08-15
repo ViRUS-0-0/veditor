@@ -1,6 +1,6 @@
 [project]
 name = "veditor"
-version = "1.0.0"
+version = "0.1.0"
 description = "VEditor"
 readme = "README.md"
 requires-python = ">=3.13"
