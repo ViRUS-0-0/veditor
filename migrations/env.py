@@ -3,6 +3,8 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
+import os
+
 from alembic import context
 
 # this is the Alembic Config object, which provides
@@ -14,9 +16,8 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-from app.config import settings
-from app.db import Base
-from app.models import Event, Client, Talk, Job, Review
+from app.config import settings  # noqa: E402
+from app.db import Base  # noqa: E402
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
@@ -32,11 +33,10 @@ target_metadata = Base.metadata
 # ... etc.
 
 
-import os
-
 # ---------------------------------------------------------------------------
 # Sequential revision IDs (0001, 0002, …)
 # ---------------------------------------------------------------------------
+
 
 def _next_rev_id() -> str:
     """Return the next zero-padded revision number based on existing files."""
@@ -58,6 +58,7 @@ def process_revision_directives(context, revision, directives):
     if directives:
         script = directives[0]
         script.rev_id = _next_rev_id()
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -99,9 +100,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, 
+            connection=connection,
             target_metadata=target_metadata,
-            process_revision_directives=process_revision_directives
+            process_revision_directives=process_revision_directives,
         )
 
         with context.begin_transaction():

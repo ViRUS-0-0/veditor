@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table('clients',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('hashed_key', sa.String(length=255), nullable=False),
-    sa.Column('event_ids', postgresql.ARRAY(sa.Integer()), nullable=False),
+    sa.Column('event_ids', postgresql.ARRAY(sa.Integer()), server_default=sa.text("'{}'::integer[]"), nullable=False),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('hashed_key')
     )
@@ -40,7 +40,7 @@ def upgrade() -> None:
     sa.Column('room', sa.String(length=255), nullable=True),
     sa.Column('start', sa.DateTime(timezone=True), nullable=False),
     sa.Column('end', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('status', sa.String(length=50), nullable=False),
+    sa.Column('status', sa.String(length=50), server_default=sa.text("'waiting_for_files'"), nullable=False),
     sa.ForeignKeyConstraint(['event_id'], ['events.id'], ),
     sa.PrimaryKeyConstraint('id')
     )

@@ -1,12 +1,13 @@
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
     postgres_user: str = "veditor"
     postgres_password: str = "password"
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "veditor"
-    
+
     redis_url: str = "redis://localhost:6379/0"
 
     @property
@@ -15,5 +16,6 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+
 
 settings = Settings()
