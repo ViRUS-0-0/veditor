@@ -1,8 +1,9 @@
-import pytest
-from fastapi import HTTPException, status
 from unittest.mock import MagicMock
 
-from app.auth import hash_api_key, get_client, verify_event_access
+import pytest
+from fastapi import HTTPException, status
+
+from app.auth import get_client, hash_api_key, verify_event_access
 from app.models import Client
 
 

@@ -1,9 +1,10 @@
 import sys
-import pytest
 from unittest.mock import MagicMock, patch
 
-from app.cli import create_client, main
+import pytest
+
 from app import models
+from app.cli import create_client, main
 
 
 @patch("app.cli.secrets.token_urlsafe")

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -17,7 +17,7 @@ class EventRead(EventBase):
 
 
 class ClientBase(BaseModel):
-    event_ids: List[int] = []
+    event_ids: list[int] = []
 
 
 class ClientCreate(ClientBase):
@@ -32,7 +32,7 @@ class ClientRead(ClientBase):
 
 class TalkBase(BaseModel):
     title: str
-    room: Optional[str] = None
+    room: str | None = None
     start: datetime
     end: datetime
     status: str = "waiting_for_files"
@@ -51,7 +51,7 @@ class TalkRead(TalkBase):
 class JobBase(BaseModel):
     kind: str
     status: str
-    log_path: Optional[str] = None
+    log_path: str | None = None
 
 
 class JobCreate(JobBase):
@@ -66,7 +66,7 @@ class JobRead(JobBase):
 
 class ReviewBase(BaseModel):
     decision: str
-    note: Optional[str] = None
+    note: str | None = None
 
 
 class ReviewCreate(ReviewBase):
@@ -80,4 +80,4 @@ class ReviewRead(ReviewBase):
 
 
 class TalkWithJobsRead(TalkRead):
-    jobs: List[JobRead] = []
+    jobs: list[JobRead] = []

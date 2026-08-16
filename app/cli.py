@@ -73,13 +73,12 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "admin":
-        if args.subcommand == "create-client":
-            db = SessionLocal()
-            try:
-                create_client(db, args.event_name, args.event_id)
-            finally:
-                db.close()
+    if args.command == "admin" and args.subcommand == "create-client":
+        db = SessionLocal()
+        try:
+            create_client(db, args.event_name, args.event_id)
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":

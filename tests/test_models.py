@@ -1,12 +1,13 @@
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, timezone
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.db import Base
-from app.models import Event, Client, Talk, Job, Review
+from app.models import Client, Event, Job, Review, Talk
 
 # Use the postgres instance from docker-compose, but we will wrap tests in a transaction
 engine = create_engine(settings.database_url)
@@ -39,8 +40,8 @@ def test_create_event_and_talk_relationships(db_session):
         event_id=event.id,
         title="Keynote",
         room="Main Hall",
-        start=datetime(2026, 3, 20, 9, 0, tzinfo=timezone.utc),
-        end=datetime(2026, 3, 20, 10, 0, tzinfo=timezone.utc),
+        start=datetime(2026, 3, 20, 9, 0, tzinfo=UTC),
+        end=datetime(2026, 3, 20, 10, 0, tzinfo=UTC),
     )
     db_session.add(talk)
     db_session.flush()
@@ -81,8 +82,8 @@ def test_required_fields_enforced(db_session):
     with pytest.raises(IntegrityError):
         talk = Talk(
             event_id=event.id,
-            start=datetime.now(timezone.utc),
-            end=datetime.now(timezone.utc),
+            start=datetime.now(UTC),
+            end=datetime.now(UTC),
         )
         db_session.add(talk)
         db_session.flush()

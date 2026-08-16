@@ -1,11 +1,12 @@
-from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
-from app.main import app
+from fastapi.testclient import TestClient
+
 from app import models
 from app.auth import get_client
 from app.db import get_db
+from app.main import app
 
 client = TestClient(app)
 
@@ -35,8 +36,8 @@ def test_ops_talks_authorized():
         event_id=1,
         title="Test Talk",
         room="Room 1",
-        start=datetime.now(timezone.utc),
-        end=datetime.now(timezone.utc),
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
         status="waiting_for_files",
     )
 
@@ -68,8 +69,8 @@ def test_ops_get_talk_authorized():
         event_id=1,
         title="Test Talk",
         room="Room 1",
-        start=datetime.now(timezone.utc),
-        end=datetime.now(timezone.utc),
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
         status="waiting_for_files",
         jobs=[mock_job],
     )
@@ -97,8 +98,8 @@ def test_ops_get_talk_unauthorized_event():
         id=1,
         event_id=1,  # Talk belongs to event 1
         title="Test Talk",
-        start=datetime.now(timezone.utc),
-        end=datetime.now(timezone.utc),
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
         status="waiting_for_files",
     )
 
@@ -122,8 +123,8 @@ def test_ops_get_job_authorized():
         id=1,
         event_id=1,
         title="Test Talk",
-        start=datetime.now(timezone.utc),
-        end=datetime.now(timezone.utc),
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
         status="waiting_for_files",
     )
 
@@ -158,8 +159,8 @@ def test_ops_get_job_unauthorized_event():
         id=1,
         event_id=1,  # Talk belongs to event 1
         title="Test Talk",
-        start=datetime.now(timezone.utc),
-        end=datetime.now(timezone.utc),
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
         status="waiting_for_files",
     )
 

@@ -1,5 +1,6 @@
 import pytest
-from app.states import advance, TRANSITIONS, InvalidTransitionError
+
+from app.states import TRANSITIONS, InvalidTransitionError, advance
 
 
 class DummyTalk:
