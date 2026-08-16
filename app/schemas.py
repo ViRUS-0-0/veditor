@@ -66,3 +66,7 @@ class ReviewRead(ReviewBase):
     id: int
     talk_id: int
     model_config = ConfigDict(from_attributes=True)
+
+
+class TalkWithJobsRead(TalkRead):
+    jobs: List[JobRead] = []
