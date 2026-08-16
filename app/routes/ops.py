@@ -1,4 +1,4 @@
-from typing import Annotated, List
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -15,7 +15,7 @@ router = APIRouter(
 )
 
 
-@router.get("/talks", response_model=List[schemas.TalkRead])
+@router.get("/talks", response_model=list[schemas.TalkRead])
 def list_talks(
     client: Annotated[models.Client, Depends(get_client)],
     db: Annotated[Session, Depends(get_db)],

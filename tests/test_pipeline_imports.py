@@ -21,9 +21,9 @@ def test_pipeline_imports():
     project_root = Path(__file__).parent.parent
     pipeline_dir = project_root / "app" / "pipeline"
 
-    assert (
-        pipeline_dir.is_dir()
-    ), "app/pipeline directory is missing; import guard cannot run"
+    assert pipeline_dir.is_dir(), (
+        "app/pipeline directory is missing; import guard cannot run"
+    )
 
     violations = []
 
