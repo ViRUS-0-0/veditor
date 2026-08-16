@@ -14,13 +14,16 @@ router = APIRouter(
     include_in_schema=False,
 )
 
+
 @router.get("/talks", response_model=List[schemas.TalkRead])
 def list_talks(
     client: Annotated[models.Client, Depends(get_client)],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Lists talks with current state, across events an operator's key can see."""
-    talks = db.query(models.Talk).filter(models.Talk.event_id.in_(client.event_ids)).all()
+    talks = (
+        db.query(models.Talk).filter(models.Talk.event_id.in_(client.event_ids)).all()
+    )
     return talks
 
 
@@ -33,10 +36,12 @@ def get_talk(
     """Talk detail including its associated jobs."""
     talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
     if not talk:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found")
-    
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+
     verify_event_access(talk.event_id, client)
-    
+
     return talk
 
 
@@ -49,13 +54,17 @@ def get_job(
     """Job status and log_path."""
     job = db.query(models.Job).filter(models.Job.id == job_id).first()
     if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
+        )
 
     # verify access to the job's talk's event
     # we need to join with talk or fetch the talk
     talk = job.talk
     if not talk:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job talk not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job talk not found"
+        )
 
     verify_event_access(talk.event_id, client)
 

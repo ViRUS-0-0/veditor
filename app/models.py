@@ -6,13 +6,16 @@ from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.db import Base
 
+
 class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    talks: Mapped[List["Talk"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+    talks: Mapped[List["Talk"]] = relationship(
+        back_populates="event", cascade="all, delete-orphan"
+    )
 
 
 class Client(Base):
@@ -32,11 +35,17 @@ class Talk(Base):
     room: Mapped[Optional[str]] = mapped_column(String(255))
     start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="waiting_for_files")
+    status: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="waiting_for_files"
+    )
 
     event: Mapped["Event"] = relationship(back_populates="talks")
-    jobs: Mapped[List["Job"]] = relationship(back_populates="talk", cascade="all, delete-orphan")
-    reviews: Mapped[List["Review"]] = relationship(back_populates="talk", cascade="all, delete-orphan")
+    jobs: Mapped[List["Job"]] = relationship(
+        back_populates="talk", cascade="all, delete-orphan"
+    )
+    reviews: Mapped[List["Review"]] = relationship(
+        back_populates="talk", cascade="all, delete-orphan"
+    )
 
 
 class Job(Base):

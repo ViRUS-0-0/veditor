@@ -28,7 +28,9 @@ def get_client(
         )
 
     hashed_key = hash_api_key(api_key)
-    client = db.query(models.Client).filter(models.Client.hashed_key == hashed_key).first()
+    client = (
+        db.query(models.Client).filter(models.Client.hashed_key == hashed_key).first()
+    )
 
     if not client:
         raise HTTPException(
