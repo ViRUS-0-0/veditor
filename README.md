@@ -87,7 +87,11 @@ The project includes an end-to-end smoke test that runs through the complete sta
    docker compose up -d --build
    ```
 2. Wait for the API to be healthy (`curl http://localhost:8000/health`).
-3. Run the smoke test:
+3. Run the database migrations against the containerized database:
+   ```bash
+   uv run alembic upgrade head
+   ```
+4. Run the smoke test:
    ```bash
    uv run pytest tests/test_smoke.py
    ```

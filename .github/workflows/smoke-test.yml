@@ -80,5 +80,7 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --frozen
+      - name: Run migrations against docker stack
+        run: uv run alembic upgrade head
       - name: Run smoke test
         run: uv run pytest tests/test_smoke.py
