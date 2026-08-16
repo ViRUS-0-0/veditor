@@ -79,7 +79,8 @@ If you prefer to run the entire stack locally without Docker (for faster reloadi
 
 The project includes an end-to-end smoke test that runs through the complete state flow of a Talk, covering the core requirements of Phase 1. 
 
-**Note**: The smoke test expects a live API server and will wipe the test database to ensure a clean state.
+**Note**: The smoke test expects a live API server and will wipe the database configured by your `POSTGRES_*` env vars to ensure a clean state.
+If your database name does not end with `_test`, set `ALLOW_SMOKE_DB_WIPE=1` to run it.
 
 ### Running against the Docker Stack
 1. Start the complete stack:

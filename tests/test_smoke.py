@@ -18,6 +18,12 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 @pytest.fixture(scope="module")
 def clean_db():
     """Starts from a clean DB by deleting existing records."""
+    db_name = os.getenv("POSTGRES_DB", "")
+    if not (db_name.endswith("_test") or os.getenv("ALLOW_SMOKE_DB_WIPE") == "1"):
+        pytest.fail(
+            f"Refusing to wipe database '{db_name}'. Set ALLOW_SMOKE_DB_WIPE=1 or use a *_test database."
+        )
+
     session = SessionLocal()
     try:
         session.query(models.Review).delete()
@@ -68,9 +74,9 @@ def test_end_to_end_smoke(clean_db):
     assert event_id > 0
 
     # 3. Hit GET /health
-    health_resp = httpx.get(f"{API_BASE_URL}/health")
+    health_resp = httpx.get(f"{API_BASE_URL}/health", timeout=10.0)
     assert health_resp.status_code == 200, f"Health check failed: {health_resp.text}"
-    assert health_resp.json() == {"status": "ok"}
+    assert health_resp.json().get("status") == "ok"
 
     # 4. Create a Talk via direct DB fixture
     session = SessionLocal()

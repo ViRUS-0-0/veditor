@@ -66,6 +66,8 @@ jobs:
   smoke-test-docker:
     name: Docker Smoke Test
     runs-on: ubuntu-latest
+    env:
+      ALLOW_SMOKE_DB_WIPE: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Copy env vars
