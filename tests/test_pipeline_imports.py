@@ -21,16 +21,18 @@ def test_pipeline_imports():
     project_root = Path(__file__).parent.parent
     pipeline_dir = project_root / "app" / "pipeline"
 
-    if not pipeline_dir.exists():
-        return
+    assert (
+        pipeline_dir.is_dir()
+    ), "app/pipeline directory is missing; import guard cannot run"
 
     violations = []
 
     for py_file in pipeline_dir.rglob("*.py"):
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"))
-        except SyntaxError:
-            continue
+        except SyntaxError as exc:
+            rel_path = py_file.relative_to(project_root)
+            raise AssertionError(f"Failed to parse {rel_path}: {exc}") from exc
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -43,7 +45,7 @@ def test_pipeline_imports():
                 module_name = node.module or ""
 
                 # Resolve relative imports from inside app/pipeline
-                if node.level == 2:  # e.g., from .. import db
+                if node.level >= 2:  # e.g., from .. import db
                     module_name = f"app.{module_name}" if module_name else "app"
 
                 for alias in node.names:
