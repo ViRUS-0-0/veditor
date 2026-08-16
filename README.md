@@ -57,6 +57,7 @@ If you prefer to run the entire stack locally without Docker (for faster reloadi
    uv venv
    source .venv/bin/activate
    uv sync
+   uv run pre-commit install
    ```
 
 6. Start the FastAPI server natively:
