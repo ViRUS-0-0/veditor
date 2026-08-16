@@ -15,6 +15,7 @@ celery.conf.update(
     }
 )
 
+
 @celery.task
 def stub_task():
     return True

@@ -1,31 +1,23 @@
-name: CI
+name: Tests
 
 on:
   push:
     branches:
       - main
-      - master
+      - dev
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches:
       - main
-      - master
+      - dev
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 jobs:
-  style:
-    name: Code Style
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-      - name: Install dependencies
-        run: uv sync --frozen
-      - name: Run pre-commit
-        run: uv run pre-commit run --all-files
-
-  tests:
+  test:
     name: Run Tests
     runs-on: ubuntu-latest
     services:
@@ -42,9 +34,19 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     env:
       DATABASE_URL: postgresql://postgres:password@localhost:5432/veditor_test
+      REDIS_URL: redis://localhost:6379/0
 
     steps:
       - uses: actions/checkout@v4
