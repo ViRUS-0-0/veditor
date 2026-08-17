@@ -1,0 +1,131 @@
+import os
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Protocol
+
+
+class StorageKeyNotFoundError(Exception):
+    """Raised when a requested key is not found in the storage backend."""
+
+    def __init__(self, key: str):
+        super().__init__(f"Storage key not found: {key}")
+        self.key = key
+
+
+class StorageBackend(Protocol):
+    def put(self, key: str, source: Path | bytes) -> None:
+        """
+        Store a file at the given key.
+        If the key already exists, it is overwritten silently.
+        """
+        ...
+
+    def get(self, key: str) -> Path:
+        """
+        Retrieve a file by key, returning a local readable Path.
+        Raises StorageKeyNotFoundError if the key does not exist.
+        """
+        ...
+
+    def url(self, key: str) -> str:
+        """
+        Return a URI or URL for the key.
+        """
+        ...
+
+    def delete(self, key: str) -> None:
+        """
+        Delete a file by key.
+        This operation is idempotent; deleting a missing key is a no-op.
+        """
+        ...
+
+    def exists(self, key: str) -> bool:
+        """
+        Check if a file exists at the given key.
+        """
+        ...
+
+    def free_bytes(self) -> int:
+        """
+        Return the available free space in bytes.
+        """
+        ...
+
+
+class LocalDiskBackend:
+    def __init__(self, data_dir: Path | str):
+        self.data_dir = Path(data_dir).resolve()
+
+    def _get_path(self, key: str) -> Path:
+        """Resolve a key to its absolute path within the data directory."""
+        # Prevent directory traversal attacks by ensuring the resolved path
+        # is relative to the data_dir, but for now we just append the key.
+        path = (self.data_dir / key).resolve()
+        if not path.is_relative_to(self.data_dir):
+            raise ValueError(f"Invalid key: {key}")
+        return path
+
+    def put(self, key: str, source: Path | bytes) -> None:
+        """
+        Store a file at the given key via atomic write.
+        Intermediate directories are created automatically.
+        """
+        target_path = self._get_path(key)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write to a temporary file in the same directory, then rename atomically
+        with tempfile.NamedTemporaryFile(delete=False, dir=target_path.parent) as tmp:
+            try:
+                if isinstance(source, bytes):
+                    tmp.write(source)
+                else:
+                    with open(source, "rb") as f_in:
+                        shutil.copyfileobj(f_in, tmp)
+            except Exception:
+                tmp.close()
+                os.unlink(tmp.name)
+                raise
+
+        # Atomically replace the target file
+        os.replace(tmp.name, target_path)
+
+    def get(self, key: str) -> Path:
+        """
+        Retrieve a file by key, returning a local readable Path.
+        Raises StorageKeyNotFoundError if the key does not exist.
+        """
+        path = self._get_path(key)
+        if not path.exists():
+            raise StorageKeyNotFoundError(key)
+        return path
+
+    def url(self, key: str) -> str:
+        """
+        Return a file:// URI for the key.
+        """
+        path = self._get_path(key)
+        return path.as_uri()
+
+    def delete(self, key: str) -> None:
+        """
+        Delete a file by key. Idempotent.
+        """
+        path = self._get_path(key)
+        path.unlink(missing_ok=True)
+
+    def exists(self, key: str) -> bool:
+        """
+        Check if a file exists at the given key.
+        """
+        path = self._get_path(key)
+        return path.exists()
+
+    def free_bytes(self) -> int:
+        """
+        Return the available free space in bytes.
+        """
+        # Ensure the data directory exists so we can get its usage
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        return shutil.disk_usage(self.data_dir).free

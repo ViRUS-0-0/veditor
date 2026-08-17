@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
 
+    data_dir: str = "data"
+    storage_backend: str = "local"
+
     @property
     def database_url(self) -> str:
         return f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
