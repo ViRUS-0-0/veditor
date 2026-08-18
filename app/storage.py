@@ -54,14 +54,14 @@ class StorageBackend(Protocol):
         ...
 
 
-class LocalDiskBackend:
+class LocalDiskBackend(StorageBackend):
     def __init__(self, data_dir: Path | str):
         self.data_dir = Path(data_dir).resolve()
 
     def _get_path(self, key: str) -> Path:
         """Resolve a key to its absolute path within the data directory."""
-        # Prevent directory traversal attacks by ensuring the resolved path
-        # is relative to the data_dir, but for now we just append the key.
+        # Prevent directory traversal attacks by ensuring the resolved path stays within
+        # data_dir.
         path = (self.data_dir / key).resolve()
         if not path.is_relative_to(self.data_dir):
             raise ValueError(f"Invalid key: {key}")
@@ -89,7 +89,11 @@ class LocalDiskBackend:
                 raise
 
         # Atomically replace the target file
-        os.replace(tmp.name, target_path)
+        try:
+            os.replace(tmp.name, target_path)
+        except Exception:
+            os.unlink(tmp.name)
+            raise
 
     def get(self, key: str) -> Path:
         """
