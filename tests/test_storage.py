@@ -81,18 +81,12 @@ def test_url(storage_backend: LocalDiskBackend):
 
 
 def test_free_bytes(storage_backend: LocalDiskBackend, tmp_path: Path):
-    # Call free_bytes
     free = storage_backend.free_bytes()
-
-    # Compare against direct shutil call
     expected_free = shutil.disk_usage(tmp_path).free
 
-    # They should be very close, typically identical, but handle slight changes
-    # over the execution time if disk is active. We just ensure it's a valid integer
-    # roughly matching the disk usage.
     assert isinstance(free, int)
     assert free > 0
-    assert abs(free - expected_free) < 1024 * 1024 * 10  # within 10MB diff
+    assert abs(free - expected_free) < 1024 * 1024 * 10
 
 
 def test_put_interrupted_write(storage_backend: LocalDiskBackend, tmp_path: Path):
