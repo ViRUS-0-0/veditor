@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 
@@ -11,7 +13,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     data_dir: str = "data"
-    storage_backend: str = "local"
+    storage_backend: Literal["local", "s3"] = "local"
 
     @property
     def database_url(self) -> str:

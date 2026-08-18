@@ -3,8 +3,16 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from pydantic import ValidationError
 
-from app.storage import LocalDiskBackend, StorageKeyNotFoundError
+from app import config
+from app.config import Settings
+from app.storage import (
+    LocalDiskBackend,
+    S3Backend,
+    StorageKeyNotFoundError,
+    get_storage_backend,
+)
 
 
 @pytest.fixture
@@ -110,3 +118,27 @@ def test_put_interrupted_write(storage_backend: LocalDiskBackend, tmp_path: Path
 def test_invalid_key_traversal(storage_backend: LocalDiskBackend):
     with pytest.raises(ValueError, match="Invalid key"):
         storage_backend._get_path("../../../etc/passwd")
+
+
+def test_storage_backend_factory_local(monkeypatch):
+    monkeypatch.setattr(config.settings, "storage_backend", "local")
+
+    backend = get_storage_backend()
+    assert isinstance(backend, LocalDiskBackend)
+
+
+def test_storage_backend_factory_s3(monkeypatch):
+    monkeypatch.setattr(config.settings, "storage_backend", "s3")
+
+    backend = get_storage_backend()
+    assert isinstance(backend, S3Backend)
+
+
+def test_storage_backend_validation():
+    # Valid
+    Settings(storage_backend="local")
+    Settings(storage_backend="s3")
+
+    # Invalid
+    with pytest.raises(ValidationError):
+        Settings(storage_backend="unknown")

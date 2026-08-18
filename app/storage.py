@@ -133,3 +133,31 @@ class LocalDiskBackend(StorageBackend):
         # Ensure the data directory exists so we can get its usage
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return shutil.disk_usage(self.data_dir).free
+
+
+class S3Backend(StorageBackend):
+    def put(self, key: str, source: Path | bytes) -> None:
+        raise NotImplementedError("S3Backend is deferred")
+
+    def get(self, key: str) -> Path:
+        raise NotImplementedError("S3Backend is deferred")
+
+    def url(self, key: str) -> str:
+        raise NotImplementedError("S3Backend is deferred")
+
+    def delete(self, key: str) -> None:
+        raise NotImplementedError("S3Backend is deferred")
+
+    def exists(self, key: str) -> bool:
+        raise NotImplementedError("S3Backend is deferred")
+
+    def free_bytes(self) -> int:
+        raise NotImplementedError("S3Backend is deferred")
+
+
+def get_storage_backend() -> StorageBackend:
+    from app.config import settings
+
+    if settings.storage_backend == "s3":
+        return S3Backend()
+    return LocalDiskBackend(settings.data_dir)
