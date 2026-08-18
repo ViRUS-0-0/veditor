@@ -74,3 +74,36 @@ If you prefer to run the entire stack locally without Docker (for faster reloadi
    ```bash
    uv run pytest
    ```
+
+## End-to-End Smoke Test
+
+The project includes an end-to-end smoke test that runs through the complete state flow of a Talk, covering the core requirements of Phase 1. 
+
+**Note**: The smoke test expects a live API server and will wipe the database configured by your `POSTGRES_*` env vars to ensure a clean state.
+If your database name does not end with `_test`, set `ALLOW_SMOKE_DB_WIPE=1` to run it.
+
+### Running against the Docker Stack
+1. Start the complete stack:
+   ```bash
+   docker compose up -d --build
+   ```
+2. Wait for the API to be healthy (`curl http://localhost:8000/health`).
+3. Run the database migrations against the containerized database:
+   ```bash
+   uv run alembic upgrade head
+   ```
+4. Run the smoke test:
+   ```bash
+   uv run pytest tests/test_smoke.py
+   ```
+
+### Running Native
+1. Ensure your local Postgres and Redis are running and configured in `.env`.
+2. Start the API natively:
+   ```bash
+   uv run uvicorn app.main:app
+   ```
+3. In a separate terminal, run the smoke test:
+   ```bash
+   uv run pytest tests/test_smoke.py
+   ```

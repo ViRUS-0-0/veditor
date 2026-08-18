@@ -1,0 +1,88 @@
+name: Smoke Test
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+jobs:
+  smoke-test-native:
+    name: Native Smoke Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: veditor_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: veditor_test
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run migrations
+        run: uv run alembic upgrade head
+      - name: Run API in background
+        run: uv run uvicorn app.main:app &
+      - name: Wait for API to be healthy
+        run: timeout 30s bash -c 'until curl -s http://localhost:8000/health > /dev/null; do sleep 1; done'
+      - name: Run smoke test
+        run: uv run pytest tests/test_smoke.py
+
+  smoke-test-docker:
+    name: Docker Smoke Test
+    runs-on: ubuntu-latest
+    env:
+      ALLOW_SMOKE_DB_WIPE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy env vars
+        run: cp .env.example .env
+      - name: Start docker-compose stack
+        run: docker compose up -d --build
+      - name: Wait for API to be healthy
+        run: timeout 60s bash -c 'until curl -s http://localhost:8000/health > /dev/null; do sleep 2; done'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run migrations against docker stack
+        run: uv run alembic upgrade head
+      - name: Run smoke test
+        run: uv run pytest tests/test_smoke.py
