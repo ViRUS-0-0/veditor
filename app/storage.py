@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Protocol
 
 
-class StorageKeyNotFoundError(Exception):
+class StorageKeyNotFoundError(FileNotFoundError):
     """Raised when a requested key is not found in the storage backend."""
 
     def __init__(self, key: str):
@@ -85,14 +85,13 @@ class LocalDiskBackend(StorageBackend):
                         shutil.copyfileobj(f_in, tmp)
             except Exception:
                 tmp.close()
-                os.unlink(tmp.name)
+                Path(tmp.name).unlink(missing_ok=True)
                 raise
 
-        # Atomically replace the target file
         try:
             os.replace(tmp.name, target_path)
         except Exception:
-            os.unlink(tmp.name)
+            Path(tmp.name).unlink(missing_ok=True)
             raise
 
     def get(self, key: str) -> Path:
