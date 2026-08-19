@@ -113,10 +113,13 @@ class LocalDiskBackend(StorageBackend):
 
     def delete(self, key: str) -> None:
         """
-        Delete a file by key. Idempotent.
+        Delete a file or directory by key. Idempotent.
         """
         path = self._get_path(key)
-        path.unlink(missing_ok=True)
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
 
     def exists(self, key: str) -> bool:
         """

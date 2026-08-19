@@ -75,4 +75,4 @@ dmypy.json
 # Project specific
 tmp/
 
-data
+/data
