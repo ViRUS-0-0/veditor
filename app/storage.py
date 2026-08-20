@@ -14,6 +14,11 @@ class StorageKeyNotFoundError(FileNotFoundError):
 
 
 class StorageBackend(Protocol):
+    """
+    Storage backend for managing files.
+    Keys should follow the convention: {talk_id}/{stage}/{filename}
+    """
+
     def put(self, key: str, source: Path | bytes) -> None:
         """
         Store a file at the given key.
@@ -24,7 +29,7 @@ class StorageBackend(Protocol):
     def get(self, key: str) -> Path:
         """
         Retrieve a file by key, returning a local readable Path.
-        Raises StorageKeyNotFoundError if the key does not exist.
+        Raises StorageKeyNotFoundError if the key does not exist or is a prefix.
         """
         ...
 
@@ -36,14 +41,14 @@ class StorageBackend(Protocol):
 
     def delete(self, key: str) -> None:
         """
-        Delete a file by key.
+        Delete a file or prefix by key.
         This operation is idempotent; deleting a missing key is a no-op.
         """
         ...
 
     def exists(self, key: str) -> bool:
         """
-        Check if a file exists at the given key.
+        Check if a file exists at the given key. Returns False for prefixes.
         """
         ...
 
@@ -97,10 +102,10 @@ class LocalDiskBackend(StorageBackend):
     def get(self, key: str) -> Path:
         """
         Retrieve a file by key, returning a local readable Path.
-        Raises StorageKeyNotFoundError if the key does not exist.
+        Raises StorageKeyNotFoundError if the key does not exist or is a prefix.
         """
         path = self._get_path(key)
-        if not path.exists():
+        if not path.is_file():
             raise StorageKeyNotFoundError(key)
         return path
 
@@ -113,7 +118,7 @@ class LocalDiskBackend(StorageBackend):
 
     def delete(self, key: str) -> None:
         """
-        Delete a file or directory by key. Idempotent.
+        Delete a file or prefix by key. Idempotent.
         """
         path = self._get_path(key)
         if path.is_dir():
@@ -123,10 +128,10 @@ class LocalDiskBackend(StorageBackend):
 
     def exists(self, key: str) -> bool:
         """
-        Check if a file exists at the given key.
+        Check if a file exists at the given key. Returns False for prefixes.
         """
         path = self._get_path(key)
-        return path.exists()
+        return path.is_file()
 
     def free_bytes(self) -> int:
         """

@@ -110,3 +110,21 @@ def test_put_interrupted_write(storage_backend: LocalDiskBackend, tmp_path: Path
 def test_invalid_key_traversal(storage_backend: LocalDiskBackend):
     with pytest.raises(ValueError, match="Invalid key"):
         storage_backend._get_path("../../../etc/passwd")
+
+
+def test_prefix_operations(storage_backend: LocalDiskBackend):
+    key = "talk_1/raw/video.mp4"
+    prefix = "talk_1/raw"
+    storage_backend.put(key, b"content")
+
+    # Prefix exists() should return False
+    assert not storage_backend.exists(prefix)
+
+    # Prefix get() should raise StorageKeyNotFoundError
+    with pytest.raises(StorageKeyNotFoundError):
+        storage_backend.get(prefix)
+
+    # Prefix delete() should remove the whole directory
+    storage_backend.delete(prefix)
+    assert not storage_backend.exists(key)
+    assert not storage_backend._get_path(prefix).exists()
