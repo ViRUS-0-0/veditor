@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 import tempfile
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -160,7 +161,9 @@ def _video_array(
     raise ValueError(f"Unsupported video pattern: {pattern}")
 
 
-def _audio_frames(duration_s, sample_rate: int, waveform: str):
+def _audio_frames(
+    duration_s: float, sample_rate: int, waveform: str
+) -> Iterator[av.AudioFrame]:
     total_samples = max(1, math.ceil(duration_s * sample_rate))
     chunk_size = 1024
 

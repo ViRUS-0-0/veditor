@@ -53,12 +53,17 @@ def assert_playable(path: Path | str) -> None:
         streams = [*container.streams.video, *container.streams.audio]
         assert streams, f"{path} has no media streams"
 
-        for stream in streams:
-            decoded = False
-            for _frame in container.decode(stream):
-                decoded = True
+        decoded_indices = set()
+        for packet in container.demux(*streams):
+            for _frame in packet.decode():
+                decoded_indices.add(packet.stream.index)
+            if len(decoded_indices) == len(streams):
                 break
-            assert decoded, f"{path} has no decodable {stream.type} frame"
+
+        for stream in streams:
+            assert stream.index in decoded_indices, (
+                f"{path} has no decodable {stream.type} frame"
+            )
 
 
 def _container_duration_seconds(container) -> float | None:
