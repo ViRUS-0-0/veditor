@@ -1,8 +1,11 @@
+import logging
 from pathlib import Path
 
 import pytest
 
 from app.storage import StorageBackend, StorageKeyNotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 class FakePath:
@@ -39,9 +42,11 @@ class FakeStorageBackend(StorageBackend):
     state transitions, retention).
     """
 
+    DEFAULT_FREE_BYTES = 1024 * 1024 * 1024 * 100  # 100GB default
+
     def __init__(self):
         self.storage: dict[str, bytes] = {}
-        self._free_bytes: int = 1024 * 1024 * 1024 * 100  # 100GB default
+        self._free_bytes: int = self.DEFAULT_FREE_BYTES
 
     def set_free_bytes(self, size: int) -> None:
         """Helper to simulate low disk space conditions in tests."""
@@ -92,5 +97,8 @@ def override_storage_backend(app, fake_backend: FakeStorageBackend):
         from app.routes.ops import get_storage_backend
 
         app.dependency_overrides[get_storage_backend] = lambda: fake_backend
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.warning(
+            "Could not override get_storage_backend. It may not be implemented yet. Error: %s",
+            e,
+        )

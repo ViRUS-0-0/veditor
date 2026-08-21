@@ -95,7 +95,7 @@ def test_free_bytes(storage_backend: StorageBackend, tmp_path: Path):
         assert free > 0
         assert abs(free - expected_free) < 1024 * 1024 * 10
     else:
-        assert free == 1024 * 1024 * 1024 * 100
+        assert free == FakeStorageBackend.DEFAULT_FREE_BYTES
 
 
 def test_put_interrupted_write(tmp_path: Path):
@@ -117,8 +117,8 @@ def test_put_interrupted_write(tmp_path: Path):
         assert len(list(target_path.parent.glob("*"))) == 0
 
 
-def test_invalid_key_traversal():
-    storage_backend = LocalDiskBackend(data_dir="/tmp/test_dir")
+def test_invalid_key_traversal(tmp_path: Path):
+    storage_backend = LocalDiskBackend(data_dir=tmp_path)
     with pytest.raises(ValueError, match="Invalid key"):
         storage_backend._get_path("../../../etc/passwd")
 
@@ -144,6 +144,6 @@ def test_prefix_operations(storage_backend: StorageBackend):
 
 def test_fake_set_free_bytes():
     fake = FakeStorageBackend()
-    assert fake.free_bytes() == 1024 * 1024 * 1024 * 100
+    assert fake.free_bytes() == FakeStorageBackend.DEFAULT_FREE_BYTES
     fake.set_free_bytes(500)
     assert fake.free_bytes() == 500
