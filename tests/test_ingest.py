@@ -177,3 +177,41 @@ def test_adversarial_prefix_collision(tmp_path, mock_backend):
 
     mock_backend.put.assert_not_called()
     settings.ingest_roots = original_roots
+
+
+def test_source_path_rejects_relative_path(ingest_root, mock_backend):
+    payload = RecordingIngestRequest(source_path="relative/path.mp4")
+    with pytest.raises(IngestPathRejectedError):
+        stage_recording(1, payload, mock_backend)
+
+
+def test_empty_ingest_roots_rejects_all(tmp_path, mock_backend):
+    original_roots = settings.ingest_roots
+    settings.ingest_roots = []
+
+    target = tmp_path / "video.mp4"
+    target.touch()
+
+    try:
+        payload = RecordingIngestRequest(source_path=str(target))
+        with pytest.raises(IngestPathRejectedError):
+            stage_recording(1, payload, mock_backend)
+
+        payload2 = RecordingIngestRequest(relative_key="video.mp4")
+        with pytest.raises(IngestPathRejectedError):
+            stage_recording(1, payload2, mock_backend)
+    finally:
+        settings.ingest_roots = original_roots
+
+
+def test_ingest_directory_rejected(ingest_root, mock_backend):
+    target_dir = ingest_root / "subdir"
+    target_dir.mkdir(exist_ok=True)
+
+    payload = RecordingIngestRequest(source_path=str(target_dir))
+    with pytest.raises(IngestPathRejectedError):
+        stage_recording(1, payload, mock_backend)
+
+    payload2 = RecordingIngestRequest(relative_key="subdir")
+    with pytest.raises(IngestPathRejectedError):
+        stage_recording(1, payload2, mock_backend)
