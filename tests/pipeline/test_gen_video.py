@@ -92,11 +92,11 @@ def test_generates_audio_only_clip(tmp_path: Path):
     assert_playable(path)
 
 
-def test_corrupt_clip_raises_on_open(tmp_path: Path):
+def test_corrupt_clip_fails_playback(tmp_path: Path):
     path = generate_corrupt_clip(output_dir=tmp_path)
 
     with pytest.raises(av.FFmpegError):
-        open_and_inspect(path)
+        assert_playable(path)
 
 
 def test_generates_mismatched_duration_clip(tmp_path: Path):
