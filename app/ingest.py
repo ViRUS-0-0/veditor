@@ -23,6 +23,8 @@ def stage_recording(
     roots = [Path(r).resolve() for r in settings.ingest_roots]
 
     if payload.source_path:
+        if not target_path.is_absolute():
+            raise IngestPathRejectedError("source_path must be absolute")
         try:
             candidate = target_path.resolve(strict=True)
             if any(candidate.is_relative_to(root) for root in roots):
