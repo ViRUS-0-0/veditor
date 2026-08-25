@@ -14,12 +14,14 @@ class IngestPathRejectedError(ValueError):
 def validate_media_file(path: Path) -> None:
     try:
         with av.open(str(path)) as container:
-            if not any(s.type == "video" for s in container.streams):
-                raise IngestPathRejectedError(
-                    "File is not a valid video (no video stream found)"
-                )
-    except (av.FFmpegError, IngestPathRejectedError) as exc:
+            has_video = any(s.type == "video" for s in container.streams)
+    except av.FFmpegError as exc:
         raise IngestPathRejectedError(f"Invalid media file: {exc}") from exc
+
+    if not has_video:
+        raise IngestPathRejectedError(
+            "File is not a valid video (no video stream found)"
+        )
 
 
 def stage_recording(
