@@ -15,7 +15,7 @@ import av
 import numpy as np
 import pytest
 
-from app.pipeline.detect import _container_duration_seconds
+from app.pipeline.detect import container_duration_seconds
 from app.storage import StorageBackend, StorageKeyNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -232,7 +232,7 @@ def open_and_inspect(path: Path | str) -> ClipInfo:
             resolution = (video.codec_context.width, video.codec_context.height)
 
         return ClipInfo(
-            duration=_container_duration_seconds(container),
+            duration=container_duration_seconds(container),
             has_video=bool(video_streams),
             has_audio=bool(audio_streams),
             codec_names=codec_names,

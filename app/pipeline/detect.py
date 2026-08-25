@@ -42,7 +42,7 @@ def detect(
 
     try:
         with av.open(str(file_path)) as container:
-            duration = _container_duration_seconds(container)
+            duration = container_duration_seconds(container)
             actual_duration = duration if duration is not None else 0.0
             has_video = bool(container.streams.video)
             has_audio = bool(container.streams.audio)
@@ -100,7 +100,7 @@ def _failed(reason: str) -> DetectResult:
     )
 
 
-def _container_duration_seconds(container) -> float | None:
+def container_duration_seconds(container) -> float | None:
     if container.duration is not None:
         return container.duration / av.time_base
 
