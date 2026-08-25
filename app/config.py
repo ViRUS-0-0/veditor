@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -16,6 +17,14 @@ class Settings(BaseSettings):
     data_dir: str = "data"
     storage_backend: Literal["local"] = "local"
     ingest_roots: list[Path] = []
+
+    @field_validator("ingest_roots", mode="after")
+    @classmethod
+    def validate_ingest_roots(cls, roots: list[Path]) -> list[Path]:
+        for r in roots:
+            if not r.is_absolute():
+                raise ValueError(f"ingest_roots entries must be absolute paths: {r}")
+        return [r.resolve() for r in roots]
 
     @property
     def database_url(self) -> str:

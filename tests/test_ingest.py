@@ -1,12 +1,29 @@
 import os
+from pathlib import Path
 from unittest.mock import Mock
 
+import av
 import pytest
 from pydantic import ValidationError
 
 from app.config import settings
 from app.ingest import IngestPathRejectedError, stage_recording
 from app.schemas import RecordingIngestRequest
+
+
+def create_test_video(path: Path) -> Path:
+    container = av.open(str(path), mode="w")
+    stream = container.add_stream("h264", rate=30)
+    stream.width = 64
+    stream.height = 64
+    stream.pix_fmt = "yuv420p"
+    frame = av.VideoFrame(64, 64, "yuv420p")
+    for packet in stream.encode(frame):
+        container.mux(packet)
+    for packet in stream.encode():
+        container.mux(packet)
+    container.close()
+    return path
 
 
 @pytest.fixture
@@ -39,7 +56,7 @@ def test_schema_validation_exactly_one():
 
 def test_happy_path_source_path(ingest_root, mock_backend):
     target = ingest_root / "video.mp4"
-    target.touch()
+    create_test_video(target)
 
     payload = RecordingIngestRequest(source_path=str(target))
     key = stage_recording(1, payload, mock_backend)
@@ -53,15 +70,35 @@ def test_happy_path_source_path(ingest_root, mock_backend):
 def test_happy_path_relative_key(ingest_root, mock_backend):
     target = ingest_root / "subdir" / "video.mp4"
     target.parent.mkdir()
-    target.touch()
+    create_test_video(target)
 
     payload = RecordingIngestRequest(relative_key="subdir/video.mp4")
     key = stage_recording(2, payload, mock_backend)
 
-    assert key == "2/raw/video.mp4"
+    assert key == "2/raw/subdir/video.mp4"
     mock_backend.put.assert_called_once_with(
         key=key, source=target.resolve(strict=True)
     )
+
+
+def test_disambiguated_storage_keys_same_basename(ingest_root, mock_backend):
+    cam1 = ingest_root / "cam1" / "video.mp4"
+    cam2 = ingest_root / "cam2" / "video.mp4"
+    cam1.parent.mkdir()
+    cam2.parent.mkdir()
+    create_test_video(cam1)
+    create_test_video(cam2)
+
+    key1 = stage_recording(
+        1, RecordingIngestRequest(relative_key="cam1/video.mp4"), mock_backend
+    )
+    key2 = stage_recording(
+        1, RecordingIngestRequest(relative_key="cam2/video.mp4"), mock_backend
+    )
+
+    assert key1 == "1/raw/cam1/video.mp4"
+    assert key2 == "1/raw/cam2/video.mp4"
+    assert key1 != key2
 
 
 def test_adversarial_relative_traversal(ingest_root, mock_backend):
@@ -129,17 +166,19 @@ def test_adversarial_chained_symlinks(ingest_root, mock_backend):
 def test_adversarial_trailing_slash_double_slash(ingest_root, mock_backend):
     target = ingest_root / "subdir" / "video.mp4"
     target.parent.mkdir(exist_ok=True)
-    target.touch()
+    create_test_video(target)
 
     # Valid traversal logic should resolve correctly to a file inside root
     payload_valid = RecordingIngestRequest(relative_key="subdir//..//subdir//video.mp4")
     key = stage_recording(1, payload_valid, mock_backend)
-    assert key == "1/raw/video.mp4"
+    assert key == "1/raw/subdir/video.mp4"
+    assert mock_backend.put.call_count == 1
 
     # Invalid traversal outside root
     payload_invalid = RecordingIngestRequest(relative_key="subdir//..//..//secret.txt")
     with pytest.raises(IngestPathRejectedError):
         stage_recording(1, payload_invalid, mock_backend)
+    assert mock_backend.put.call_count == 1
 
 
 def test_adversarial_url_encoded_traversal(ingest_root, mock_backend):
@@ -171,18 +210,28 @@ def test_adversarial_prefix_collision(tmp_path, mock_backend):
     original_roots = settings.ingest_roots
     settings.ingest_roots = [ingest_root]
 
-    payload = RecordingIngestRequest(source_path=str(evil_file))
-    with pytest.raises(IngestPathRejectedError):
-        stage_recording(1, payload, mock_backend)
+    try:
+        payload = RecordingIngestRequest(source_path=str(evil_file))
+        with pytest.raises(IngestPathRejectedError):
+            stage_recording(1, payload, mock_backend)
 
-    mock_backend.put.assert_not_called()
-    settings.ingest_roots = original_roots
+        mock_backend.put.assert_not_called()
+    finally:
+        settings.ingest_roots = original_roots
 
 
 def test_source_path_rejects_relative_path(ingest_root, mock_backend):
     payload = RecordingIngestRequest(source_path="relative/path.mp4")
     with pytest.raises(IngestPathRejectedError):
         stage_recording(1, payload, mock_backend)
+    mock_backend.put.assert_not_called()
+
+
+def test_relative_key_rejects_absolute_path(ingest_root, mock_backend):
+    payload = RecordingIngestRequest(relative_key="/absolute/path.mp4")
+    with pytest.raises(IngestPathRejectedError):
+        stage_recording(1, payload, mock_backend)
+    mock_backend.put.assert_not_called()
 
 
 def test_empty_ingest_roots_rejects_all(tmp_path, mock_backend):
@@ -200,6 +249,7 @@ def test_empty_ingest_roots_rejects_all(tmp_path, mock_backend):
         payload2 = RecordingIngestRequest(relative_key="video.mp4")
         with pytest.raises(IngestPathRejectedError):
             stage_recording(1, payload2, mock_backend)
+        mock_backend.put.assert_not_called()
     finally:
         settings.ingest_roots = original_roots
 
@@ -215,3 +265,39 @@ def test_ingest_directory_rejected(ingest_root, mock_backend):
     payload2 = RecordingIngestRequest(relative_key="subdir")
     with pytest.raises(IngestPathRejectedError):
         stage_recording(1, payload2, mock_backend)
+    mock_backend.put.assert_not_called()
+
+
+def test_settings_ingest_roots_validation(tmp_path):
+    from app.config import Settings
+
+    abs_path = tmp_path / "recordings"
+    cfg = Settings(ingest_roots=[abs_path])
+    assert cfg.ingest_roots == [abs_path.resolve()]
+
+    with pytest.raises(ValidationError):
+        Settings(ingest_roots=["relative/recordings"])
+
+
+def test_non_media_file_rejected(ingest_root, mock_backend):
+    text_file = ingest_root / "document.txt"
+    text_file.write_text("Hello, World!")
+
+    payload = RecordingIngestRequest(relative_key="document.txt")
+    with pytest.raises(IngestPathRejectedError):
+        stage_recording(1, payload, mock_backend)
+
+    mock_backend.put.assert_not_called()
+
+
+def test_audio_only_file_rejected(ingest_root, mock_backend):
+    audio_file = ingest_root / "audio.mp3"
+    container = av.open(str(audio_file), mode="w")
+    container.add_stream("mp3")
+    container.close()
+
+    payload = RecordingIngestRequest(relative_key="audio.mp3")
+    with pytest.raises(IngestPathRejectedError):
+        stage_recording(1, payload, mock_backend)
+
+    mock_backend.put.assert_not_called()
