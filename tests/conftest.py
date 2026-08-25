@@ -15,6 +15,7 @@ import av
 import numpy as np
 import pytest
 
+from app.pipeline.detect import _container_duration_seconds
 from app.storage import StorageBackend, StorageKeyNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -270,18 +271,6 @@ def assert_playable(path: Path | str) -> None:
             assert stream.index in decoded_indices, (
                 f"{path} has no decodable {stream.type} frame"
             )
-
-
-def _container_duration_seconds(container) -> float | None:
-    if container.duration is not None:
-        return container.duration / av.time_base
-
-    durations = [
-        float(stream.duration * stream.time_base)
-        for stream in container.streams
-        if stream.duration is not None and stream.time_base is not None
-    ]
-    return max(durations) if durations else None
 
 
 def _target_path(output_dir: Path | str | None) -> Path:

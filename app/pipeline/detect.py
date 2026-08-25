@@ -25,6 +25,7 @@ def detect(
     file_path: Path,
     scheduled_start: datetime,
     scheduled_end: datetime,
+    tolerance_seconds: float = DETECT_DURATION_TOLERANCE_SECONDS,
 ) -> DetectResult:
     """Inspect a media file and return a pass/fail validation result.
 
@@ -41,7 +42,8 @@ def detect(
 
     try:
         with av.open(str(file_path)) as container:
-            actual_duration = _container_duration_seconds(container)
+            duration = _container_duration_seconds(container)
+            actual_duration = duration if duration is not None else 0.0
             has_video = bool(container.streams.video)
             has_audio = bool(container.streams.audio)
     except FFmpegError, OSError, ValueError:
@@ -67,7 +69,7 @@ def detect(
 
     scheduled_duration = (scheduled_end - scheduled_start).total_seconds()
     duration_delta = abs(actual_duration - scheduled_duration)
-    if duration_delta > DETECT_DURATION_TOLERANCE_SECONDS:
+    if duration_delta > tolerance_seconds:
         return DetectResult(
             passed=False,
             actual_duration_seconds=actual_duration,
@@ -98,7 +100,7 @@ def _failed(reason: str) -> DetectResult:
     )
 
 
-def _container_duration_seconds(container) -> float:
+def _container_duration_seconds(container) -> float | None:
     if container.duration is not None:
         return container.duration / av.time_base
 
@@ -107,4 +109,4 @@ def _container_duration_seconds(container) -> float:
         for stream in container.streams
         if stream.duration is not None and stream.time_base is not None
     ]
-    return max(stream_durations, default=0.0)
+    return max(stream_durations) if stream_durations else None
