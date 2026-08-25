@@ -4,14 +4,12 @@ from pathlib import Path
 import av
 import pytest
 
-from tests.pipeline.gen_video import (
+from tests.conftest import (
+    assert_duration_close,
+    assert_playable,
     generate_clip,
     generate_corrupt_clip,
     generate_mismatched_duration_clip,
-)
-from tests.pipeline.helpers import (
-    assert_duration_close,
-    assert_playable,
     open_and_inspect,
 )
 
@@ -131,17 +129,16 @@ def test_assert_duration_close_within_tolerance(tmp_path: Path):
         output_dir=tmp_path,
     )
 
-    # Positive path: offset of 0.05 is within the 0.1 tolerance, so this should not raise.
     assert_duration_close(scheduled_clip, within_tolerance_clip, tolerance_seconds=0.1)
 
 
-def test_pipeline_directory_contains_no_binary_media_assets():
-    pipeline_dir = Path(__file__).parent
+def test_tests_directory_contains_no_binary_media_assets():
+    tests_dir = Path(__file__).parent
     media_suffixes = {".avi", ".m4a", ".mkv", ".mov", ".mp3", ".mp4", ".ogg", ".wav"}
 
     committed_media = [
         path
-        for path in pipeline_dir.rglob("*")
+        for path in tests_dir.rglob("*")
         if path.is_file()
         and "__pycache__" not in path.parts
         and path.suffix.lower() in media_suffixes
