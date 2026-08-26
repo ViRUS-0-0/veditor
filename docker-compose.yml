@@ -18,7 +18,7 @@ services:
 
   worker-light:
     build: .
-    command: uv run rq worker --url redis://redis:6379/0 light
+    command: uv run python scripts/run_worker.py light
     environment:
       - POSTGRES_USER=veditor
       - POSTGRES_PASSWORD=password
@@ -34,7 +34,7 @@ services:
 
   worker-heavy:
     build: .
-    command: uv run rq worker --url redis://redis:6379/0 heavy
+    command: uv run python scripts/run_worker.py heavy
     environment:
       - POSTGRES_USER=veditor
       - POSTGRES_PASSWORD=password
