@@ -20,6 +20,7 @@ RUN uv venv && uv sync --no-dev --no-install-project
 # Copy application files
 COPY app/ app/
 COPY migrations/ migrations/
+COPY scripts/ scripts/
 COPY alembic.ini .
 
 # Expose the API port
