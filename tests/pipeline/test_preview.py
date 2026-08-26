@@ -16,8 +16,8 @@ from tests.conftest import (
 )
 
 
-def test_generate_preview_standard_preset(tmp_path: Path):
-    """Verify preview generation with the standard preset on video+audio clip."""
+def test_generate_preview_small_video_preset(tmp_path: Path):
+    """Verify preview generation with the small_video preset on video+audio clip."""
     # Create higher-resolution synthetic source (720p) with video and audio
     input_clip = generate_clip(
         2.0,
@@ -25,9 +25,9 @@ def test_generate_preview_standard_preset(tmp_path: Path):
         pattern="gradient",
         output_dir=tmp_path,
     )
-    output_clip = tmp_path / "standard_preview.mp4"
+    output_clip = tmp_path / "small_video_preview.mp4"
 
-    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["standard"])
+    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["small_video"])
 
     assert output_clip.is_file()
     assert_playable(output_clip)
@@ -42,13 +42,13 @@ def test_generate_preview_standard_preset(tmp_path: Path):
     assert output_clip.stat().st_size < input_clip.stat().st_size
 
 
-def test_generate_preview_long_session_preset(tmp_path: Path):
+def test_generate_preview_big_video_preset(tmp_path: Path):
     """
-    Verify preview generation with the long_session preset.
+    Verify preview generation with the big_video preset (lower bitrate/resolution for long recordings).
 
     Note on simulating a long session:
     Since real 60-minute fixtures are impractical for unit tests, a short synthetic clip
-    is used to exercise the 'long_session' preset directly. The preset's encoding and
+    is used to exercise the 'big_video' preset directly. The preset's encoding and
     compression behavior is what is under test, not the literal wall-clock duration.
     """
     input_clip = generate_clip(
@@ -57,9 +57,9 @@ def test_generate_preview_long_session_preset(tmp_path: Path):
         pattern="gradient",
         output_dir=tmp_path,
     )
-    output_clip = tmp_path / "long_session_preview.mp4"
+    output_clip = tmp_path / "big_video_preview.mp4"
 
-    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["long_session"])
+    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["big_video"])
 
     assert output_clip.is_file()
     assert_playable(output_clip)
@@ -74,7 +74,7 @@ def test_generate_preview_long_session_preset(tmp_path: Path):
 
 def test_presets_are_differentiated(tmp_path: Path):
     """
-    Verify that standard and long_session presets produce measurably different output
+    Verify that small_video and big_video presets produce measurably different output
     (resolution and file size/bitrate) on the exact same input clip.
     """
     input_clip = generate_clip(
@@ -83,20 +83,20 @@ def test_presets_are_differentiated(tmp_path: Path):
         pattern="gradient",
         output_dir=tmp_path,
     )
-    std_output = tmp_path / "diff_std.mp4"
-    long_output = tmp_path / "diff_long.mp4"
+    small_output = tmp_path / "diff_small.mp4"
+    big_output = tmp_path / "diff_big.mp4"
 
-    generate_preview(input_clip, std_output, PREVIEW_PRESETS["standard"])
-    generate_preview(input_clip, long_output, PREVIEW_PRESETS["long_session"])
+    generate_preview(input_clip, small_output, PREVIEW_PRESETS["small_video"])
+    generate_preview(input_clip, big_output, PREVIEW_PRESETS["big_video"])
 
-    std_info = open_and_inspect(std_output)
-    long_info = open_and_inspect(long_output)
+    small_info = open_and_inspect(small_output)
+    big_info = open_and_inspect(big_output)
 
-    assert std_info.resolution == (640, 360)
-    assert long_info.resolution == (320, 180)
+    assert small_info.resolution == (640, 360)
+    assert big_info.resolution == (320, 180)
 
-    # long_session preset must produce a smaller file size than standard preset
-    assert long_output.stat().st_size < std_output.stat().st_size
+    # big_video preset (for long sessions) must produce a smaller file size than small_video preset
+    assert big_output.stat().st_size < small_output.stat().st_size
 
 
 def test_generate_preview_video_only(tmp_path: Path):
@@ -111,7 +111,7 @@ def test_generate_preview_video_only(tmp_path: Path):
     )
     output_clip = tmp_path / "video_only_preview.mp4"
 
-    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["standard"])
+    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["small_video"])
 
     assert output_clip.is_file()
     assert_playable(output_clip)
@@ -129,7 +129,7 @@ def test_generate_preview_rejects_corrupt_input(tmp_path: Path):
     output_clip = tmp_path / "corrupt_output.mp4"
 
     with pytest.raises(av.FFmpegError):
-        generate_preview(corrupt_clip, output_clip, PREVIEW_PRESETS["standard"])
+        generate_preview(corrupt_clip, output_clip, PREVIEW_PRESETS["small_video"])
 
 
 def test_generate_preview_custom_preset(tmp_path: Path):
