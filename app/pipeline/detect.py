@@ -101,12 +101,14 @@ def _failed(reason: str) -> DetectResult:
 
 
 def container_duration_seconds(container) -> float | None:
-    if container.duration is not None:
+    if container.duration is not None and container.duration > 0:
         return container.duration / av.time_base
 
     stream_durations = [
         float(stream.duration * stream.time_base)
         for stream in container.streams
-        if stream.duration is not None and stream.time_base is not None
+        if stream.duration is not None
+        and stream.duration > 0
+        and stream.time_base is not None
     ]
     return max(stream_durations) if stream_durations else None
