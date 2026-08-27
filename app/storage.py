@@ -4,6 +4,8 @@ import tempfile
 from pathlib import Path
 from typing import Protocol
 
+from app.config import settings
+
 
 class StorageKeyNotFoundError(FileNotFoundError):
     """Raised when a requested key is not found in the storage backend."""
@@ -140,3 +142,8 @@ class LocalDiskBackend(StorageBackend):
         # Ensure the data directory exists so we can get its usage
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return shutil.disk_usage(self.data_dir).free
+
+
+def get_storage() -> StorageBackend:
+    """Dependency provider returning the configured storage backend."""
+    return LocalDiskBackend(data_dir=settings.data_dir)

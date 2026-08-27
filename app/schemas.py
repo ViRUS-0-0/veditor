@@ -37,6 +37,12 @@ class TalkBase(BaseModel):
     end: datetime
     status: str = "waiting_for_files"
 
+    @model_validator(mode="after")
+    def validate_time_window(self):
+        if self.end <= self.start:
+            raise ValueError("Talk end time must be after start time")
+        return self
+
 
 class TalkCreate(TalkBase):
     event_id: int
@@ -81,6 +87,10 @@ class ReviewRead(ReviewBase):
 
 class TalkWithJobsRead(TalkRead):
     jobs: list[JobRead] = []
+
+
+class TalkDetailRead(TalkRead):
+    preview_urls: list[str] = []
 
 
 class RecordingIngestRequest(BaseModel):
