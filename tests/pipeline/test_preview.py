@@ -34,7 +34,7 @@ def test_generate_preview_small_video_preset(tmp_path: Path):
     assert_duration_close(input_clip, output_clip, tolerance_seconds=0.25)
 
     info = open_and_inspect(output_clip)
-    assert info.resolution == (640, 360)
+    assert info.resolution == (320, 180)
     assert info.has_video
     assert info.has_audio
 
@@ -43,14 +43,7 @@ def test_generate_preview_small_video_preset(tmp_path: Path):
 
 
 def test_generate_preview_big_video_preset(tmp_path: Path):
-    """
-    Verify preview generation with the big_video preset (lower bitrate/resolution for long recordings).
-
-    Note on simulating a long session:
-    Since real 60-minute fixtures are impractical for unit tests, a short synthetic clip
-    is used to exercise the 'big_video' preset directly. The preset's encoding and
-    compression behavior is what is under test, not the literal wall-clock duration.
-    """
+    """Verify preview generation with the big_video preset."""
     input_clip = generate_clip(
         2.0,
         resolution=(1280, 720),
@@ -66,7 +59,7 @@ def test_generate_preview_big_video_preset(tmp_path: Path):
     assert_duration_close(input_clip, output_clip, tolerance_seconds=0.25)
 
     info = open_and_inspect(output_clip)
-    assert info.resolution == (320, 180)
+    assert info.resolution == (640, 360)
     assert info.has_video
     assert info.has_audio
     assert output_clip.stat().st_size < input_clip.stat().st_size
@@ -92,11 +85,11 @@ def test_presets_are_differentiated(tmp_path: Path):
     small_info = open_and_inspect(small_output)
     big_info = open_and_inspect(big_output)
 
-    assert small_info.resolution == (640, 360)
-    assert big_info.resolution == (320, 180)
+    assert small_info.resolution == (320, 180)
+    assert big_info.resolution == (640, 360)
 
-    # big_video preset (for long sessions) must produce a smaller file size than small_video preset
-    assert big_output.stat().st_size < small_output.stat().st_size
+    # small_video preset must produce a smaller file size than big_video preset
+    assert small_output.stat().st_size < big_output.stat().st_size
 
 
 def test_generate_preview_video_only(tmp_path: Path):
@@ -111,7 +104,7 @@ def test_generate_preview_video_only(tmp_path: Path):
     )
     output_clip = tmp_path / "video_only_preview.mp4"
 
-    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["small_video"])
+    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["big_video"])
 
     assert output_clip.is_file()
     assert_playable(output_clip)

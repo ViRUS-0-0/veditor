@@ -18,15 +18,15 @@ class PreviewPreset:
 PREVIEW_PRESETS: dict[str, PreviewPreset] = {
     "small_video": PreviewPreset(
         name="small_video",
-        resolution=(640, 360),
-        video_bitrate=500_000,
-        audio_bitrate=64_000,
-    ),
-    "big_video": PreviewPreset(
-        name="big_video",
         resolution=(320, 180),
         video_bitrate=150_000,
         audio_bitrate=32_000,
+    ),
+    "big_video": PreviewPreset(
+        name="big_video",
+        resolution=(640, 360),
+        video_bitrate=500_000,
+        audio_bitrate=64_000,
     ),
 }
 
