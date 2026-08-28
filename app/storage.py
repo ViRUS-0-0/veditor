@@ -140,3 +140,10 @@ class LocalDiskBackend(StorageBackend):
         # Ensure the data directory exists so we can get its usage
         self.data_dir.mkdir(parents=True, exist_ok=True)
         return shutil.disk_usage(self.data_dir).free
+
+
+def get_storage_backend() -> StorageBackend:
+    """FastAPI dependency returning the configured StorageBackend."""
+    from app.config import settings
+
+    return LocalDiskBackend(settings.data_dir)
