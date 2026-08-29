@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,11 @@ class Client(Base):
 
 class Talk(Base):
     __tablename__ = "talks"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "title", "start", name="uq_talks_event_id_title_start"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[int] = mapped_column(ForeignKey("events.id"), nullable=False)

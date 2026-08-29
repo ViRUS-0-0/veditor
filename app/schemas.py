@@ -45,6 +45,7 @@ class TalkCreate(TalkBase):
 class TalkRead(TalkBase):
     id: int
     event_id: int
+    preview_urls: list[str] = []
     model_config = ConfigDict(from_attributes=True)
 
 
