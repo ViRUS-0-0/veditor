@@ -98,3 +98,34 @@ def test_client_model(db_session):
     assert client.id is not None
     assert client.hashed_key == "hash123"
     assert client.event_ids == [1, 2, 3]
+
+
+def test_talk_unique_constraint_enforced(db_session):
+    event = Event(name="Unique Test Event")
+    db_session.add(event)
+    db_session.flush()
+
+    start_time = datetime(2026, 5, 10, 9, 0, tzinfo=UTC)
+    end_time = datetime(2026, 5, 10, 10, 0, tzinfo=UTC)
+
+    talk1 = Talk(
+        event_id=event.id,
+        title="Duplicate Check",
+        room="Room 1",
+        start=start_time,
+        end=end_time,
+    )
+    db_session.add(talk1)
+    db_session.flush()
+
+    talk2 = Talk(
+        event_id=event.id,
+        title="Duplicate Check",
+        room="Room 2",
+        start=start_time,
+        end=end_time,
+    )
+    db_session.add(talk2)
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app import models
 from app.auth import get_client
@@ -142,6 +143,60 @@ def test_post_talks_upsert_update_success():
 
     assert not mock_db.add.called
     assert mock_db.commit.called
+
+    app.dependency_overrides.clear()
+
+
+def test_post_talks_concurrent_race_handled():
+    """Verify that a race condition on insert (IntegrityError) recovers and performs upsert."""
+    mock_db = MagicMock()
+    mock_client = models.Client(id=1, event_ids=[1])
+
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    start_time = datetime(2026, 9, 1, 10, 0, tzinfo=UTC)
+    updated_end = datetime(2026, 9, 1, 11, 0, tzinfo=UTC)
+
+    existing_talk = models.Talk(
+        id=20,
+        event_id=1,
+        title="Concurrent Talk",
+        room="Original Room",
+        start=start_time,
+        end=datetime(2026, 9, 1, 10, 30, tzinfo=UTC),
+        status="waiting_for_files",
+    )
+
+    mock_db.query.return_value.filter.return_value.first.side_effect = [
+        None,
+        existing_talk,
+    ]
+
+    mock_db.commit.side_effect = [
+        IntegrityError("duplicate key", params=None, orig=Exception("uq")),
+        None,
+    ]
+
+    response = client.post(
+        "/talks",
+        json={
+            "event_id": 1,
+            "title": "Concurrent Talk",
+            "room": "Updated Concurrent Room",
+            "start": start_time.isoformat(),
+            "end": updated_end.isoformat(),
+        },
+        headers={"X-API-Key": "valid_key"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == 20
+    assert data["room"] == "Updated Concurrent Room"
+    assert existing_talk.room == "Updated Concurrent Room"
+    assert existing_talk.end == updated_end
+    assert mock_db.rollback.called
 
     app.dependency_overrides.clear()
 

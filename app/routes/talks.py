@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -57,10 +58,30 @@ def create_or_update_talk(
         status="waiting_for_files",
     )
     db.add(talk)
-    db.commit()
-    db.refresh(talk)
-    response.status_code = status.HTTP_201_CREATED
-    return talk
+    try:
+        db.commit()
+        db.refresh(talk)
+        response.status_code = status.HTTP_201_CREATED
+        return talk
+    except IntegrityError:
+        db.rollback()
+        talk = (
+            db.query(models.Talk)
+            .filter(
+                models.Talk.event_id == payload.event_id,
+                models.Talk.title == payload.title,
+                models.Talk.start == payload.start,
+            )
+            .first()
+        )
+        if not talk:
+            raise
+        talk.room = payload.room
+        talk.end = payload.end
+        db.commit()
+        db.refresh(talk)
+        response.status_code = status.HTTP_200_OK
+        return talk
 
 
 @router.get("/{talk_id}", response_model=schemas.TalkRead)
