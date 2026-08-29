@@ -5,6 +5,7 @@ Redis configuration from app.config.settings and eagerly importing task modules.
 """
 
 import argparse
+import multiprocessing
 import sys
 
 import redis
@@ -15,6 +16,14 @@ from rq import Worker
 # rather than re-imported per job fork (RQ performance recommendation).
 import app.tasks  # noqa: F401
 from app.config import settings
+
+
+def _run_single_worker(
+    queues: list[str], redis_url: str, name: str | None, burst: bool
+) -> None:
+    redis_conn = redis.from_url(redis_url)
+    worker = Worker(queues, connection=redis_conn, name=name)
+    worker.work(burst=burst)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -38,6 +47,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Custom worker name",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of worker processes to spawn (default: 1)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -57,8 +72,21 @@ def main(argv: list[str] | None = None) -> None:
         )
         sys.exit(1)
 
-    worker = Worker(queues, connection=redis_conn, name=args.name)
-    worker.work(burst=args.burst)
+    if args.concurrency > 1:
+        processes = []
+        for i in range(args.concurrency):
+            worker_name = f"{args.name}-{i + 1}" if args.name else None
+            p = multiprocessing.Process(
+                target=_run_single_worker,
+                args=(queues, settings.redis_url, worker_name, args.burst),
+            )
+            p.start()
+            processes.append(p)
+        for p in processes:
+            p.join()
+    else:
+        worker = Worker(queues, connection=redis_conn, name=args.name)
+        worker.work(burst=args.burst)
 
 
 if __name__ == "__main__":
