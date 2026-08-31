@@ -52,6 +52,12 @@ class StorageBackend(Protocol):
         """
         ...
 
+    def list_keys(self, prefix: str = "") -> list[str]:
+        """
+        List all file keys matching the given prefix.
+        """
+        ...
+
     def free_bytes(self) -> int:
         """
         Return the available free space in bytes.
@@ -132,6 +138,21 @@ class LocalDiskBackend(StorageBackend):
         """
         path = self._get_path(key)
         return path.is_file()
+
+    def list_keys(self, prefix: str = "") -> list[str]:
+        """
+        List all file keys matching the given prefix.
+        """
+        path = self._get_path(prefix)
+        if not path.exists():
+            return []
+        if path.is_file():
+            return [path.relative_to(self.data_dir).as_posix()]
+        keys = []
+        for p in sorted(path.rglob("*")):
+            if p.is_file():
+                keys.append(p.relative_to(self.data_dir).as_posix())
+        return keys
 
     def free_bytes(self) -> int:
         """

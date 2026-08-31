@@ -147,3 +147,30 @@ def test_fake_set_free_bytes():
     assert fake.free_bytes() == FakeStorageBackend.DEFAULT_FREE_BYTES
     fake.set_free_bytes(500)
     assert fake.free_bytes() == 500
+
+
+def test_list_keys(storage_backend: StorageBackend):
+    storage_backend.put("talk_1/raw/video1.mp4", b"v1")
+    storage_backend.put("talk_1/raw/nested/video2.mp4", b"v2")
+    storage_backend.put("talk_1/cut/cut.mp4", b"cut")
+    storage_backend.put("talk_2/raw/other.mp4", b"other")
+
+    raw_keys = storage_backend.list_keys("talk_1/raw")
+    assert "talk_1/raw/video1.mp4" in raw_keys
+    assert "talk_1/raw/nested/video2.mp4" in raw_keys
+    assert len(raw_keys) == 2
+
+    talk_1_keys = storage_backend.list_keys("talk_1")
+    assert len(talk_1_keys) == 3
+
+    exact_key = storage_backend.list_keys("talk_1/cut/cut.mp4")
+    assert exact_key == ["talk_1/cut/cut.mp4"]
+
+    non_existent = storage_backend.list_keys("non_existent")
+    assert non_existent == []
+
+
+def test_list_keys_traversal(tmp_path: Path):
+    backend = LocalDiskBackend(data_dir=tmp_path)
+    with pytest.raises(ValueError, match="Invalid key"):
+        backend.list_keys("../../../etc")

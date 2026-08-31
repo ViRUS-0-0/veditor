@@ -93,6 +93,9 @@ class FakeStorageBackend(StorageBackend):
     def exists(self, key: str) -> bool:
         return key in self.storage
 
+    def list_keys(self, prefix: str = "") -> list[str]:
+        return [k for k in sorted(self.storage.keys()) if k.startswith(prefix)]
+
     def free_bytes(self) -> int:
         return self._free_bytes
 

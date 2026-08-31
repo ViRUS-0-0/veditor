@@ -93,3 +93,7 @@ class RecordingIngestRequest(BaseModel):
         if bool(self.source_path) == bool(self.relative_key):
             raise ValueError("exactly one of source_path or relative_key is required")
         return self
+
+
+class TalkApproveRequest(BaseModel):
+    raw_key: str | None = None
