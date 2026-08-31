@@ -17,7 +17,7 @@ from app.models import Job, Talk
 from app.pipeline.cut import cut
 from app.pipeline.detect import detect
 from app.pipeline.intro import generate_intro_clip
-from app.pipeline.loudness import normalize_loudness
+from app.pipeline.loudness import normalize as normalize_loudness
 from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
