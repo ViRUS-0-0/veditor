@@ -380,10 +380,7 @@ def job_publish(talk_id: int, final_key: str) -> None:
             job_id = job.id
 
         final_path = storage.get(final_key)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_out = Path(tmpdir) / "published.mp4"
-            publish(final_path, tmp_out)
+        publish(final_path, talk_id=talk_id, backend=storage)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
