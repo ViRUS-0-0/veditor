@@ -16,7 +16,9 @@ from app.db import SessionLocal
 from app.models import Job, Talk
 from app.pipeline.cut import cut
 from app.pipeline.detect import detect
+from app.pipeline.intro import generate_intro_clip
 from app.pipeline.loudness import normalize_loudness
+from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
 from app.pipeline.transcode import transcode
@@ -30,6 +32,8 @@ logger = logging.getLogger(__name__)
 STAGE_CONFIG: dict[str, dict[str, str | int]] = {
     "detect": {"queue": "light", "job_timeout": 300},
     "cut": {"queue": "light", "job_timeout": 900},
+    "intro": {"queue": "light", "job_timeout": 300},
+    "outro": {"queue": "light", "job_timeout": 300},
     "preview": {"queue": "light", "job_timeout": 1800},
     "loudness": {"queue": "light", "job_timeout": 900},
     "transcode": {"queue": "heavy", "job_timeout": 14400},
@@ -42,7 +46,7 @@ def _handle_failure(talk_id: int, job_id: int | None, exc: Exception, storage) -
     log_key = f"{talk_id}/logs/job_{job_id if job_id is not None else 'unknown'}.log"
     try:
         storage.put(log_key, log_text.encode("utf-8"))
-    except OSError as log_err:
+    except Exception as log_err:  # noqa: BLE001
         logger.warning("Failed to persist job log to storage: %s", log_err)
 
     with SessionLocal() as db:
@@ -52,7 +56,7 @@ def _handle_failure(talk_id: int, job_id: int | None, exc: Exception, storage) -
                 job.status = "failed"
                 job.log_path = log_key
         talk = db.get(Talk, talk_id)
-        if talk and talk.status != "broken":
+        if talk and talk.status not in ("broken", "done", "rejected"):
             advance(talk, "broken")
         db.commit()
 
@@ -130,6 +134,102 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
                 job.status = "done"
             db.commit()
 
+        intro_key = f"{talk_id}/intro/intro.mp4"
+        light_queue.enqueue(
+            job_intro,
+            talk_id,
+            intro_key,
+            job_timeout=STAGE_CONFIG["intro"]["job_timeout"],
+        )
+    except Exception as exc:
+        _handle_failure(talk_id, job_id, exc, storage)
+        raise
+
+
+def job_intro(talk_id: int, intro_key: str | None = None) -> None:
+    intro_key = intro_key or f"{talk_id}/intro/intro.mp4"
+    job_id = None
+    storage = get_storage()
+    try:
+        with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
+            if not talk:
+                raise ValueError(f"Talk {talk_id} not found")
+            job = Job(talk_id=talk_id, kind="intro", status="running")
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_id = job.id
+            title = talk.title
+            event_name = talk.event.name if talk.event else ""
+            if talk.room and talk.start:
+                room_date = f"{talk.room} • {talk.start.strftime('%Y-%m-%d')}"
+            elif talk.start:
+                room_date = talk.start.strftime("%Y-%m-%d")
+            elif talk.room:
+                room_date = talk.room
+            else:
+                room_date = ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_out = Path(tmpdir) / "intro.mp4"
+            generate_intro_clip(
+                tmp_out,
+                title=title,
+                event_name=event_name,
+                room_date=room_date,
+            )
+            storage.put(intro_key, tmp_out)
+
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if job:
+                job.status = "done"
+            db.commit()
+
+        outro_key = f"{talk_id}/outro/outro.mp4"
+        light_queue.enqueue(
+            job_outro,
+            talk_id,
+            outro_key,
+            job_timeout=STAGE_CONFIG["outro"]["job_timeout"],
+        )
+    except Exception as exc:
+        _handle_failure(talk_id, job_id, exc, storage)
+        raise
+
+
+def job_outro(talk_id: int, outro_key: str | None = None) -> None:
+    outro_key = outro_key or f"{talk_id}/outro/outro.mp4"
+    job_id = None
+    storage = get_storage()
+    try:
+        with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
+            if not talk:
+                raise ValueError(f"Talk {talk_id} not found")
+            job = Job(talk_id=talk_id, kind="outro", status="running")
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_id = job.id
+            event_name = talk.event.name if talk.event else ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_out = Path(tmpdir) / "outro.mp4"
+            generate_outro_clip(
+                tmp_out,
+                event_name=event_name,
+            )
+            storage.put(outro_key, tmp_out)
+
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if job:
+                job.status = "done"
+            db.commit()
+
+        cut_key = f"{talk_id}/cut/cut.mp4"
         preview_key = f"{talk_id}/preview/preview.mp4"
         light_queue.enqueue(
             job_preview,
