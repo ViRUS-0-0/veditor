@@ -17,14 +17,14 @@ from app.models import Job, Talk
 from app.pipeline.cut import cut
 from app.pipeline.detect import detect
 from app.pipeline.intro import generate_intro_clip
-from app.pipeline.loudness import normalize as normalize_loudness
+from app.pipeline.loudness import normalize
 from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
 from app.pipeline.transcode import transcode
 from app.queue import heavy_queue, light_queue
 from app.states import advance
-from app.storage import get_storage
+from app.storage import get_storage_backend
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def _handle_failure(talk_id: int, job_id: int | None, exc: Exception, storage) -
 
 def job_detect(talk_id: int, raw_key: str) -> None:
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -102,7 +102,7 @@ def job_detect(talk_id: int, raw_key: str) -> None:
 def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
     cut_key = cut_key or f"{talk_id}/cut/cut.mp4"
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -149,7 +149,7 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
 def job_intro(talk_id: int, intro_key: str | None = None) -> None:
     intro_key = intro_key or f"{talk_id}/intro/intro.mp4"
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -202,7 +202,7 @@ def job_intro(talk_id: int, intro_key: str | None = None) -> None:
 def job_outro(talk_id: int, outro_key: str | None = None) -> None:
     outro_key = outro_key or f"{talk_id}/outro/outro.mp4"
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -246,7 +246,7 @@ def job_outro(talk_id: int, outro_key: str | None = None) -> None:
 def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> None:
     preview_key = preview_key or f"{talk_id}/preview/preview.mp4"
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -285,7 +285,7 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
 def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> None:
     loud_key = loud_key or f"{talk_id}/cut/cut_loud.mp4"
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -301,7 +301,7 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "loudness.mp4"
-            normalize_loudness(cut_path, tmp_out)
+            normalize(cut_path, tmp_out)
             storage.put(loud_key, tmp_out)
 
         with SessionLocal() as db:
@@ -326,7 +326,7 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
 def job_transcode(talk_id: int, loud_key: str, final_key: str | None = None) -> None:
     final_key = final_key or f"{talk_id}/final/final.mp4"
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -367,7 +367,7 @@ def job_transcode(talk_id: int, loud_key: str, final_key: str | None = None) -> 
 
 def job_publish(talk_id: int, final_key: str) -> None:
     job_id = None
-    storage = get_storage()
+    storage = get_storage_backend()
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)

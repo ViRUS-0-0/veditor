@@ -153,6 +153,3 @@ def normalize(
             # Flush audio encoder
             for enc_packet in out_audio.encode():
                 out_container.mux(enc_packet)
-
-
-normalize_loudness = normalize
