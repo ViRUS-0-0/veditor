@@ -1,13 +1,21 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import yaml
 
-from app.tasks import STAGE_CONFIG, job_detect, job_transcode
+from app.tasks import STAGE_CONFIG
 
 
 def test_stage_config_contains_all_stages():
-    expected_stages = {"detect", "cut", "preview", "loudness", "transcode", "publish"}
+    expected_stages = {
+        "detect",
+        "cut",
+        "intro",
+        "outro",
+        "preview",
+        "loudness",
+        "transcode",
+        "publish",
+    }
     assert set(STAGE_CONFIG.keys()) == expected_stages
 
 
@@ -20,6 +28,8 @@ def test_stage_config_queue_assignments():
 
     assert STAGE_CONFIG["detect"]["queue"] == "light"
     assert STAGE_CONFIG["cut"]["queue"] == "light"
+    assert STAGE_CONFIG["intro"]["queue"] == "light"
+    assert STAGE_CONFIG["outro"]["queue"] == "light"
     assert STAGE_CONFIG["preview"]["queue"] == "light"
     assert STAGE_CONFIG["loudness"]["queue"] == "light"
     assert STAGE_CONFIG["transcode"]["queue"] == "heavy"
@@ -31,44 +41,23 @@ def test_transcode_timeout_profile():
     assert STAGE_CONFIG["transcode"]["job_timeout"] >= 3600
     assert STAGE_CONFIG["detect"]["job_timeout"] <= 600
     assert STAGE_CONFIG["cut"]["job_timeout"] <= 1800
+    assert STAGE_CONFIG["intro"]["job_timeout"] <= 600
+    assert STAGE_CONFIG["outro"]["job_timeout"] <= 600
 
 
-@patch("app.tasks.light_queue.enqueue")
-def test_light_queue_enqueue_job_timeout(mock_enqueue):
-    mock_enqueue.return_value = MagicMock()
-    mock_enqueue(
-        job_detect,
-        1,
-        "1/raw/video.mp4",
-        job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
-    )
-
-    mock_enqueue.assert_called_once_with(
-        job_detect,
-        1,
-        "1/raw/video.mp4",
-        job_timeout=300,
-    )
-
-
-@patch("app.tasks.heavy_queue.enqueue")
-def test_heavy_queue_enqueue_job_timeout(mock_enqueue):
-    mock_enqueue.return_value = MagicMock()
-    mock_enqueue(
-        job_transcode,
-        1,
-        "1/cut/cut_loud.mp4",
-        "1/final/final.mp4",
-        job_timeout=STAGE_CONFIG["transcode"]["job_timeout"],
-    )
-
-    mock_enqueue.assert_called_once_with(
-        job_transcode,
-        1,
-        "1/cut/cut_loud.mp4",
-        "1/final/final.mp4",
-        job_timeout=14400,
-    )
+def test_stage_config_exact_timeouts():
+    expected_timeouts = {
+        "detect": 300,
+        "cut": 900,
+        "intro": 300,
+        "outro": 300,
+        "preview": 1800,
+        "loudness": 900,
+        "transcode": 14400,
+        "publish": 300,
+    }
+    for stage, expected_timeout in expected_timeouts.items():
+        assert STAGE_CONFIG[stage]["job_timeout"] == expected_timeout
 
 
 def test_docker_compose_worker_concurrency():

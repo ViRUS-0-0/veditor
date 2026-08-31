@@ -10,7 +10,9 @@ from app.tasks import (
     STAGE_CONFIG,
     job_cut,
     job_detect,
+    job_intro,
     job_loudness,
+    job_outro,
     job_preview,
     job_publish,
     job_transcode,
@@ -157,7 +159,64 @@ def test_failure_on_already_broken_talk_does_not_crash(dummy_talk, mock_storage)
     assert job.status == "failed"
 
 
-def test_no_db_session_held_during_cut_and_enqueues_preview(dummy_talk, mock_storage):
+def test_failure_on_done_talk_does_not_transition_to_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "done"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.detect", side_effect=RuntimeError("Late job error")),
+        pytest.raises(RuntimeError, match="Late job error"),
+    ):
+        job_detect(1, "1/raw/raw.mp4")
+
+    assert dummy_talk.status == "done"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+
+
+def test_failure_on_rejected_talk_does_not_transition_to_broken(
+    dummy_talk, mock_storage
+):
+    dummy_talk.status = "rejected"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.detect", side_effect=RuntimeError("Late job error")),
+        pytest.raises(RuntimeError, match="Late job error"),
+    ):
+        job_detect(1, "1/raw/raw.mp4")
+
+    assert dummy_talk.status == "rejected"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+
+
+def test_failure_when_storage_put_raises_exception(dummy_talk, mock_storage):
+    dummy_talk.status = "cutting"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+    mock_storage.put.side_effect = RuntimeError("Storage cluster unreachable")
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.cut", side_effect=RuntimeError("Cut failed")),
+        pytest.raises(RuntimeError, match="Cut failed"),
+    ):
+        job_cut(1, "1/raw/raw.mp4")
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+
+
+def test_no_db_session_held_during_cut_and_enqueues_intro(dummy_talk, mock_storage):
     dummy_talk.status = "cutting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
@@ -177,12 +236,116 @@ def test_no_db_session_held_during_cut_and_enqueues_preview(dummy_talk, mock_sto
     job = next(iter(jobs.values()))
     assert job.status == "done"
     mock_enqueue.assert_called_once_with(
+        job_intro,
+        1,
+        "1/intro/intro.mp4",
+        job_timeout=STAGE_CONFIG["intro"]["job_timeout"],
+    )
+
+
+def test_no_db_session_held_during_intro_and_enqueues_outro(dummy_talk, mock_storage):
+    dummy_talk.status = "generating_previews"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_generate_intro_clip(output_path, **kwargs):
+        assert db_ctx.open_sessions == 0, "DB session was open during intro generation!"
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.generate_intro_clip", side_effect=fake_generate_intro_clip),
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+    ):
+        job_intro(1, "1/intro/intro.mp4")
+
+    job = next(iter(jobs.values()))
+    assert job.status == "done"
+    assert job.kind == "intro"
+    mock_enqueue.assert_called_once_with(
+        job_outro,
+        1,
+        "1/outro/outro.mp4",
+        job_timeout=STAGE_CONFIG["outro"]["job_timeout"],
+    )
+
+
+def test_intro_exception_leads_to_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "generating_previews"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch(
+            "app.tasks.generate_intro_clip",
+            side_effect=RuntimeError("Intro rendering failed"),
+        ),
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+        pytest.raises(RuntimeError, match="Intro rendering failed"),
+    ):
+        job_intro(1)
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "intro"
+    assert job.log_path is not None
+    mock_enqueue.assert_not_called()
+
+
+def test_no_db_session_held_during_outro_and_enqueues_preview(dummy_talk, mock_storage):
+    dummy_talk.status = "generating_previews"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_generate_outro_clip(output_path, **kwargs):
+        assert db_ctx.open_sessions == 0, "DB session was open during outro generation!"
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.generate_outro_clip", side_effect=fake_generate_outro_clip),
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+    ):
+        job_outro(1, "1/outro/outro.mp4")
+
+    job = next(iter(jobs.values()))
+    assert job.status == "done"
+    assert job.kind == "outro"
+    mock_enqueue.assert_called_once_with(
         job_preview,
         1,
         "1/cut/cut.mp4",
         "1/preview/preview.mp4",
         job_timeout=STAGE_CONFIG["preview"]["job_timeout"],
     )
+
+
+def test_outro_exception_leads_to_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "generating_previews"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch(
+            "app.tasks.generate_outro_clip",
+            side_effect=RuntimeError("Outro rendering failed"),
+        ),
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+        pytest.raises(RuntimeError, match="Outro rendering failed"),
+    ):
+        job_outro(1)
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "outro"
+    assert job.log_path is not None
+    mock_enqueue.assert_not_called()
 
 
 def test_cut_exception_leads_to_broken(dummy_talk, mock_storage):
