@@ -109,7 +109,7 @@ def override_storage_backend(app, fake_backend: FakeStorageBackend):
         override_storage_backend(app, fake_storage)
     """
     try:
-        from app.routes.ops import get_storage_backend
+        from app.storage import get_storage_backend
 
         app.dependency_overrides[get_storage_backend] = lambda: fake_backend
     except ImportError as e:
