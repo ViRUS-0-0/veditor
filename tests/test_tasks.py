@@ -97,7 +97,7 @@ def test_no_db_session_held_during_detect(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.detect", side_effect=fake_detect),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
     ):
@@ -117,7 +117,7 @@ def test_detect_failure_advances_to_broken(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch(
             "app.tasks.detect",
             return_value=DetectResult(
@@ -147,7 +147,7 @@ def test_failure_on_already_broken_talk_does_not_crash(dummy_talk, mock_storage)
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.detect", side_effect=RuntimeError("Unexpected error")),
         pytest.raises(RuntimeError, match="Unexpected error"),
     ):
@@ -166,7 +166,7 @@ def test_failure_on_done_talk_does_not_transition_to_broken(dummy_talk, mock_sto
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.detect", side_effect=RuntimeError("Late job error")),
         pytest.raises(RuntimeError, match="Late job error"),
     ):
@@ -186,7 +186,7 @@ def test_failure_on_rejected_talk_does_not_transition_to_broken(
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.detect", side_effect=RuntimeError("Late job error")),
         pytest.raises(RuntimeError, match="Late job error"),
     ):
@@ -205,7 +205,7 @@ def test_failure_when_storage_put_raises_exception(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.cut", side_effect=RuntimeError("Cut failed")),
         pytest.raises(RuntimeError, match="Cut failed"),
     ):
@@ -226,7 +226,7 @@ def test_no_db_session_held_during_cut_and_enqueues_intro(dummy_talk, mock_stora
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.cut", side_effect=fake_cut),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
     ):
@@ -253,7 +253,7 @@ def test_no_db_session_held_during_intro_and_enqueues_outro(dummy_talk, mock_sto
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.generate_intro_clip", side_effect=fake_generate_intro_clip),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
     ):
@@ -277,7 +277,7 @@ def test_intro_exception_leads_to_broken(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch(
             "app.tasks.generate_intro_clip",
             side_effect=RuntimeError("Intro rendering failed"),
@@ -305,7 +305,7 @@ def test_no_db_session_held_during_outro_and_enqueues_preview(dummy_talk, mock_s
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.generate_outro_clip", side_effect=fake_generate_outro_clip),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
     ):
@@ -330,7 +330,7 @@ def test_outro_exception_leads_to_broken(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch(
             "app.tasks.generate_outro_clip",
             side_effect=RuntimeError("Outro rendering failed"),
@@ -355,7 +355,7 @@ def test_cut_exception_leads_to_broken(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.cut", side_effect=RuntimeError("FFmpeg cut failed")),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
         pytest.raises(RuntimeError, match="FFmpeg cut failed"),
@@ -379,7 +379,7 @@ def test_no_db_session_held_during_preview_and_halts(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.generate_preview", side_effect=fake_preview),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
     ):
@@ -401,8 +401,8 @@ def test_loudness_enqueues_transcode_on_heavy(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
-        patch("app.tasks.normalize_loudness", side_effect=fake_loudness),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.normalize", side_effect=fake_loudness),
         patch("app.tasks.heavy_queue.enqueue") as mock_heavy_enqueue,
     ):
         job_loudness(1, "1/cut/cut.mp4", "1/cut/cut_loud.mp4")
@@ -429,7 +429,7 @@ def test_transcode_enqueues_publish_on_light(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.transcode", side_effect=fake_transcode),
         patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
     ):
@@ -456,7 +456,7 @@ def test_publish_advances_to_done_and_halts(dummy_talk, mock_storage):
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
-        patch("app.tasks.get_storage", return_value=mock_storage),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
         patch("app.tasks.publish", side_effect=fake_publish),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
     ):

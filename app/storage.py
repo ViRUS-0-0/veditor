@@ -147,6 +147,3 @@ def get_storage_backend() -> StorageBackend:
     from app.config import settings
 
     return LocalDiskBackend(settings.data_dir)
-
-
-get_storage = get_storage_backend
