@@ -11,26 +11,44 @@ from scripts.run_worker import main
 
 
 def test_eager_import_tasks_rationale():
-    """Verify that scripts/run_worker.py statically imports app.tasks
+    """Verify that scripts/run_worker.py imports app.tasks inside worker boot
 
-    for boot-time preloading.
+    rather than at module top-level to prevent pre-fork socket leaks.
     """
     script_path = Path(__file__).parent.parent / "scripts" / "run_worker.py"
     tree = ast.parse(script_path.read_text(encoding="utf-8"))
 
-    imports = []
-    for node in ast.walk(tree):
+    # Verify no top-level app.tasks import (prevents parent process socket leaks)
+    top_level_imports = []
+    for node in tree.body:
         if isinstance(node, ast.Import):
             for alias in node.names:
-                imports.append(alias.name)
+                top_level_imports.append(alias.name)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             for alias in node.names:
-                imports.append(f"{module}.{alias.name}" if module else alias.name)
+                top_level_imports.append(
+                    f"{module}.{alias.name}" if module else alias.name
+                )
 
-    assert any(imp == "app.tasks" or imp.startswith("app.tasks.") for imp in imports), (
-        "scripts/run_worker.py must eagerly import app.tasks"
-    )
+    assert not any(
+        imp == "app.tasks" or imp.startswith("app.tasks.") for imp in top_level_imports
+    ), "scripts/run_worker.py must not import app.tasks at module top-level"
+
+    # Verify app.tasks is imported inside the file (e.g. inside _run_single_worker)
+    all_imports = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                all_imports.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                all_imports.append(f"{module}.{alias.name}" if module else alias.name)
+
+    assert any(
+        imp == "app.tasks" or imp.startswith("app.tasks.") for imp in all_imports
+    ), "scripts/run_worker.py must import app.tasks in worker process boot"
 
 
 @patch("scripts.run_worker.redis.from_url")
@@ -124,3 +142,44 @@ def test_worker_cli_help():
     assert result.returncode == 0
     assert "Run an RQ worker for VEditor" in result.stdout
     assert "queues" in result.stdout
+
+
+@patch("scripts.run_worker.redis.from_url")
+@patch("scripts.run_worker.multiprocessing.get_context")
+def test_worker_concurrency_spawns_processes(mock_get_context, mock_redis_from_url):
+    mock_redis = MagicMock()
+    mock_redis_from_url.return_value = mock_redis
+    mock_ctx = MagicMock()
+    mock_get_context.return_value = mock_ctx
+    mock_proc = MagicMock()
+    mock_ctx.Process.return_value = mock_proc
+
+    main(["light", "--concurrency", "3", "--name", "worker-light"])
+
+    mock_redis.ping.assert_called_once()
+    mock_redis.close.assert_called_once()
+    mock_get_context.assert_called_once_with("spawn")
+    assert mock_ctx.Process.call_count == 3
+    assert mock_proc.start.call_count == 3
+    assert mock_proc.join.call_count == 3
+
+
+@patch("scripts.run_worker.redis.from_url")
+@patch("scripts.run_worker.Worker")
+@patch("app.db.engine.dispose")
+def test_run_single_worker(mock_dispose, mock_worker_cls, mock_redis_from_url):
+    from scripts.run_worker import _run_single_worker
+
+    mock_redis = MagicMock()
+    mock_redis_from_url.return_value = mock_redis
+    mock_worker = MagicMock()
+    mock_worker_cls.return_value = mock_worker
+
+    _run_single_worker(["light"], "redis://localhost:6379/0", "test-w", burst=True)
+
+    mock_dispose.assert_called_once_with(close=False)
+    mock_redis_from_url.assert_called_once_with("redis://localhost:6379/0")
+    mock_worker_cls.assert_called_once_with(
+        ["light"], connection=mock_redis, name="test-w"
+    )
+    mock_worker.work.assert_called_once_with(burst=True)

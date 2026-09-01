@@ -451,18 +451,43 @@ def test_publish_advances_to_done_and_halts(dummy_talk, mock_storage):
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_publish(input_path, output_path):
+    def fake_publish(local_path, talk_id, backend):
         assert db_ctx.open_sessions == 0, "DB session was open during publish!"
+        assert talk_id == 1
+        assert backend == mock_storage
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
         patch("app.tasks.get_storage_backend", return_value=mock_storage),
-        patch("app.tasks.publish", side_effect=fake_publish),
+        patch("app.tasks.publish", side_effect=fake_publish) as mock_pub,
         patch("app.tasks.light_queue.enqueue") as mock_enqueue,
     ):
         job_publish(1, "1/final/final.mp4")
 
+    mock_pub.assert_called_once()
     assert dummy_talk.status == "done"
     job = next(iter(jobs.values()))
     assert job.status == "done"
     mock_enqueue.assert_not_called()  # Terminal state
+
+
+def test_publish_exception_leads_to_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "uploading"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.publish", side_effect=RuntimeError("Publish failed")),
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+        pytest.raises(RuntimeError, match="Publish failed"),
+    ):
+        job_publish(1, "1/final/final.mp4")
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "publish"
+    assert job.log_path is not None
+    mock_enqueue.assert_not_called()
