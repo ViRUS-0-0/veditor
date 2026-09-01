@@ -479,7 +479,8 @@ def test_post_recording_success_enqueues_detect():
         assert response.status_code == 202
         data = response.json()
         assert data["id"] == 1
-        assert data["status"] == "waiting_for_files"
+        assert data["status"] == "detecting"
+        assert mock_talk.status == "detecting"
 
         mock_stage.assert_called_once()
         mock_enqueue.assert_called_once_with(
@@ -488,6 +489,39 @@ def test_post_recording_success_enqueues_detect():
             "1/raw/video.mp4",
             job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
         )
+
+    app.dependency_overrides.clear()
+
+
+def test_post_recording_duplicate_ingest_rejected_with_409():
+    """Duplicate POST /recordings when talk is already in detecting state returns 409 Conflict."""
+    mock_db = MagicMock()
+    mock_client = models.Client(id=1, event_ids=[1])
+
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    mock_talk = models.Talk(
+        id=1,
+        event_id=1,
+        title="Test Talk",
+        room="Room 1",
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+        status="detecting",
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+
+    response = client.post(
+        "/talks/1/recordings",
+        json={"source_path": "/some/path/video.mp4"},
+        headers={"X-API-Key": "valid_key"},
+    )
+    assert response.status_code == 409
+    assert (
+        "Cannot ingest recording for talk in status 'detecting'"
+        in response.json()["detail"]
+    )
 
     app.dependency_overrides.clear()
 
@@ -779,6 +813,8 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
             headers={"X-API-Key": "key"},
         )
         assert resp.status_code == 202
+        assert resp.json()["status"] == "detecting"
+        assert talk.status == "detecting"
         mock_enqueue_detect.assert_called_once_with(
             job_detect,
             1,

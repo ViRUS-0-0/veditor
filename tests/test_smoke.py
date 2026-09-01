@@ -113,7 +113,9 @@ def test_end_to_end_smoke(clean_db):
 
     # 6. Exercise advance() through a happy-path sequence of transitions
     states = [
+        "detecting",
         "pending_approval",
+        "pending_bounds",
         "cutting",
         "generating_previews",
         "preview",

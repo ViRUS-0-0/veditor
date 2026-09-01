@@ -156,6 +156,10 @@ def ingest_recording(
             detail=str(exc),
         ) from exc
 
+    advance(talk, "detecting")
+    db.commit()
+    db.refresh(talk)
+
     light_queue.enqueue(
         job_detect,
         talk.id,
@@ -163,7 +167,7 @@ def ingest_recording(
         job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
     )
 
-    return talk
+    return schemas.TalkRead.model_validate(talk)
 
 
 @router.post(
