@@ -1,6 +1,14 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,6 +51,9 @@ class Talk(Base):
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="waiting_for_files"
     )
+    raw_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cut_start: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cut_end: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     event: Mapped[Event] = relationship(back_populates="talks")
     jobs: Mapped[list[Job]] = relationship(

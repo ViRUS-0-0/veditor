@@ -21,7 +21,9 @@ def test_advance_illegal_transitions():
     # Test at least one illegal transition per state
     illegal_moves = {
         "waiting_for_files": "cutting",
-        "pending_approval": "generating_previews",
+        "detecting": "cutting",
+        "pending_approval": "cutting",  # must go via pending_bounds now
+        "pending_bounds": "pending_approval",
         "cutting": "needs_work",
         "generating_previews": "transcoding",
         "preview": "done",
@@ -43,16 +45,37 @@ def test_advance_illegal_transitions():
         assert talk.status == current_state  # State should not mutate
 
 
-def test_explicit_paths_per_acceptance_criteria():
-    # pending_approval -> rejected
+def test_phase4_happy_path():
+    """Full happy path: waiting_for_files → detecting → pending_approval → pending_bounds → cutting → generating_previews → preview."""
+    talk = DummyTalk("waiting_for_files")
+    for state in (
+        "detecting",
+        "pending_approval",
+        "pending_bounds",
+        "cutting",
+        "generating_previews",
+        "preview",
+    ):
+        advance(talk, state)
+        assert talk.status == state
+
+
+def test_pending_approval_to_rejected():
     talk = DummyTalk("pending_approval")
     advance(talk, "rejected")
     assert talk.status == "rejected"
 
-    # preview -> needs_work -> cutting
-    talk2 = DummyTalk("preview")
-    advance(talk2, "needs_work")
-    assert talk2.status == "needs_work"
 
-    advance(talk2, "cutting")
-    assert talk2.status == "cutting"
+def test_rejected_is_terminal():
+    talk = DummyTalk("rejected")
+    with pytest.raises(InvalidTransitionError):
+        advance(talk, "waiting_for_files")
+
+
+def test_explicit_paths_per_acceptance_criteria():
+    # preview → needs_work → cutting (Phase 5+ loop — still wired, just not built yet)
+    talk = DummyTalk("preview")
+    advance(talk, "needs_work")
+    assert talk.status == "needs_work"
+    advance(talk, "cutting")
+    assert talk.status == "cutting"

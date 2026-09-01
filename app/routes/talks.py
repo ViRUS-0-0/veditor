@@ -9,7 +9,7 @@ from app.auth import get_client, verify_event_access
 from app.config import settings
 from app.db import get_db
 from app.ingest import IngestPathRejectedError, stage_recording
-from app.queue import light_queue
+from app.queue import heavy_queue, light_queue
 from app.states import advance
 from app.storage import StorageBackend, get_storage_backend
 from app.tasks import STAGE_CONFIG, job_cut, job_detect
@@ -175,14 +175,14 @@ def approve_talk(
     talk_id: int,
     client: Annotated[models.Client, Depends(get_client)],
     db: Annotated[Session, Depends(get_db)],
-    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
-    payload: schemas.TalkApproveRequest | None = None,
+    payload: schemas.ApproveRequest | None = None,
 ):
     """
-    Approves a talk in pending_approval state, advances state to cutting, and queues the cut job.
+    Approves or rejects a talk in pending_approval state.
+    - decision=approve (default): transitions to pending_bounds. Human must submit cut bounds next.
+    - decision=reject: transitions to rejected (terminal). No downstream jobs.
     Returns 404 if talk not found or not in caller's event_ids.
     Returns 409 if talk status is not 'pending_approval'.
-    Returns 400 if no raw recording file is found.
     """
     talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
     if not talk or talk.event_id not in client.event_ids:
@@ -193,27 +193,126 @@ def approve_talk(
     if talk.status != "pending_approval":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot approve talk in status '{talk.status}'",
+            detail=f"Cannot approve/reject talk in status '{talk.status}'",
         )
 
-    raw_key = payload.raw_key if payload and payload.raw_key else None
-    if raw_key and not raw_key.startswith(f"{talk.id}/"):
+    decision = payload.decision if payload else "approve"
+
+    if decision == "reject":
+        advance(talk, "rejected")
+    else:
+        advance(talk, "pending_bounds")
+
+    db.commit()
+    db.refresh(talk)
+    return schemas.TalkRead.model_validate(talk)
+
+
+RAW_PREVIEW_ALLOWED_STATES = frozenset(
+    {
+        "pending_bounds",
+        "cutting",
+        "generating_previews",
+        "preview",
+        "needs_work",
+        "transcoding",
+        "uploading",
+        "done",
+    }
+)
+
+
+@router.get(
+    "/{talk_id}/raw-preview",
+    status_code=status.HTTP_200_OK,
+)
+def raw_preview(
+    talk_id: int,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Returns the raw-file storage URL for human review.
+    Only accessible once the talk has been approved (pending_bounds or later).
+    Returns 403 for any state before pending_bounds.
+    Returns 404 if talk not found or no raw file exists.
+    """
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid raw_key: must belong to talk {talk.id}",
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
 
-    if not raw_key:
-        raw_keys = storage.list_keys(f"{talk.id}/raw/")
-        if raw_keys:
-            raw_key = raw_keys[0]
+    if talk.status not in RAW_PREVIEW_ALLOWED_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Raw preview not available in current state",
+        )
 
-    if not raw_key:
+    raw_keys = storage.list_keys(f"{talk.id}/raw/")
+    if not raw_keys:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No raw recording found"
+        )
+
+    return {"url": storage.url(raw_keys[0])}
+
+
+@router.post(
+    "/{talk_id}/cut-bounds",
+    response_model=schemas.TalkRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def submit_cut_bounds(
+    talk_id: int,
+    payload: schemas.CutBoundsRequest,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Submits file-relative cut bounds for a talk in pending_bounds state.
+    Validates cut_end > cut_start and both within the detected file duration.
+    Persists bounds on Talk, advances state to cutting, enqueues job_cut.
+    Returns 409 if not in pending_bounds. Returns 422 if bounds are invalid.
+    """
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+
+    if talk.status != "pending_bounds":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot submit cut bounds for talk in status '{talk.status}'",
+        )
+
+    cut_start_s, cut_end_s = payload.parsed_seconds()
+
+    if talk.raw_duration_seconds is not None and (
+        cut_start_s >= talk.raw_duration_seconds
+        or cut_end_s > talk.raw_duration_seconds
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Cut bounds [{cut_start_s}s, {cut_end_s}s] exceed "
+                f"raw file duration {talk.raw_duration_seconds:.3f}s"
+            ),
+        )
+
+    raw_keys = storage.list_keys(f"{talk.id}/raw/")
+    if not raw_keys:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No raw recording found for talk",
         )
+    raw_key = raw_keys[0]
 
+    talk.cut_start = cut_start_s
+    talk.cut_end = cut_end_s
     advance(talk, "cutting")
     db.commit()
     db.refresh(talk)
@@ -225,4 +324,55 @@ def approve_talk(
         job_timeout=STAGE_CONFIG["cut"]["job_timeout"],
     )
 
-    return talk
+    return schemas.TalkRead.model_validate(talk)
+
+
+@router.post(
+    "/{talk_id}/abort",
+    response_model=schemas.TalkRead,
+    status_code=status.HTTP_200_OK,
+)
+def abort_talk(
+    talk_id: int,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Aborts all running/queued processes for the talk, cancels RQ jobs,
+    deletes all associated storage files, clears DB jobs and reviews,
+    and resets talk status back to 'waiting_for_files'.
+    """
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+
+    # Cancel and remove any enqueued RQ jobs for this talk
+    for q in (light_queue, heavy_queue):
+        try:
+            for job_id in list(q.job_ids):
+                job = q.fetch_job(job_id)
+                if job and job.args and len(job.args) > 0 and job.args[0] == talk.id:
+                    job.cancel()
+                    job.delete()
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    # Delete all storage artifacts for this talk
+    storage.delete(str(talk.id))
+
+    # Clear DB jobs and reviews
+    db.query(models.Job).filter(models.Job.talk_id == talk.id).delete()
+    db.query(models.Review).filter(models.Review.talk_id == talk.id).delete()
+
+    # Reset talk state and bounds back to waiting_for_files
+    talk.status = "waiting_for_files"
+    talk.raw_duration_seconds = None
+    talk.cut_start = None
+    talk.cut_end = None
+    db.commit()
+    db.refresh(talk)
+
+    return schemas.TalkRead.model_validate(talk)

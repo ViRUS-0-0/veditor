@@ -70,6 +70,8 @@ def dummy_talk():
         start=datetime(2026, 8, 29, 10, 0, tzinfo=UTC),
         end=datetime(2026, 8, 29, 10, 30, tzinfo=UTC),
         status="waiting_for_files",
+        cut_start=0.0,
+        cut_end=1800.0,
     )
 
 
@@ -216,7 +218,7 @@ def test_failure_when_storage_put_raises_exception(dummy_talk, mock_storage):
     assert job.status == "failed"
 
 
-def test_no_db_session_held_during_cut_and_enqueues_intro(dummy_talk, mock_storage):
+def test_no_db_session_held_during_cut_and_enqueues_preview(dummy_talk, mock_storage):
     dummy_talk.status = "cutting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
@@ -236,10 +238,11 @@ def test_no_db_session_held_during_cut_and_enqueues_intro(dummy_talk, mock_stora
     job = next(iter(jobs.values()))
     assert job.status == "done"
     mock_enqueue.assert_called_once_with(
-        job_intro,
+        job_preview,
         1,
-        "1/intro/intro.mp4",
-        job_timeout=STAGE_CONFIG["intro"]["job_timeout"],
+        "1/cut/cut.mp4",
+        "1/preview/preview.mp4",
+        job_timeout=STAGE_CONFIG["preview"]["job_timeout"],
     )
 
 

@@ -56,7 +56,12 @@ def _handle_failure(talk_id: int, job_id: int | None, exc: Exception, storage) -
                 job.status = "failed"
                 job.log_path = log_key
         talk = db.get(Talk, talk_id)
-        if talk and talk.status not in ("broken", "done", "rejected"):
+        if talk and talk.status not in (
+            "waiting_for_files",
+            "broken",
+            "done",
+            "rejected",
+        ):
             advance(talk, "broken")
         db.commit()
 
@@ -71,6 +76,8 @@ def job_detect(talk_id: int, raw_key: str) -> None:
                 raise ValueError(f"Talk {talk_id} not found")
             job = Job(talk_id=talk_id, kind="detect", status="running")
             db.add(job)
+            if talk.status == "waiting_for_files":
+                advance(talk, "detecting")
             db.commit()
             db.refresh(job)
             job_id = job.id
@@ -90,6 +97,7 @@ def job_detect(talk_id: int, raw_key: str) -> None:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
             if talk:
+                talk.raw_duration_seconds = result.actual_duration_seconds
                 advance(talk, "pending_approval")
             if job:
                 job.status = "done"
@@ -108,17 +116,17 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
             talk = db.get(Talk, talk_id)
             if not talk:
                 raise ValueError(f"Talk {talk_id} not found")
+            if talk.cut_start is None or talk.cut_end is None:
+                raise ValueError(f"Talk {talk_id} has no cut bounds set")
             job = Job(talk_id=talk_id, kind="cut", status="running")
             db.add(job)
             db.commit()
             db.refresh(job)
             job_id = job.id
-            scheduled_start = talk.start
-            scheduled_end = talk.end
+            start_seconds = talk.cut_start
+            end_seconds = talk.cut_end
 
         raw_path = storage.get(raw_key)
-        start_seconds = 0.0
-        end_seconds = (scheduled_end - scheduled_start).total_seconds()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "cut.mp4"
@@ -134,12 +142,13 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
                 job.status = "done"
             db.commit()
 
-        intro_key = f"{talk_id}/intro/intro.mp4"
+        preview_key = f"{talk_id}/preview/preview.mp4"
         light_queue.enqueue(
-            job_intro,
+            job_preview,
             talk_id,
-            intro_key,
-            job_timeout=STAGE_CONFIG["intro"]["job_timeout"],
+            cut_key,
+            preview_key,
+            job_timeout=STAGE_CONFIG["preview"]["job_timeout"],
         )
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)

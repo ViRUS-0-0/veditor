@@ -18,6 +18,7 @@ if config.config_file_name is not None:
 
 from app.config import settings  # noqa: E402
 from app.db import Base  # noqa: E402
+import app.models  # noqa: E402, F401
 
 config.set_main_option("sqlalchemy.url", settings.database_url)
 

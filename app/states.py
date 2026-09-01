@@ -6,8 +6,10 @@ class InvalidTransitionError(Exception):
 
 
 TRANSITIONS = {
-    "waiting_for_files": ["pending_approval", "broken"],
-    "pending_approval": ["cutting", "rejected", "broken"],
+    "waiting_for_files": ["detecting", "broken"],
+    "detecting": ["pending_approval", "broken"],
+    "pending_approval": ["pending_bounds", "rejected", "broken"],
+    "pending_bounds": ["cutting", "broken"],
     "cutting": ["generating_previews", "broken"],
     "generating_previews": ["preview", "broken"],
     "preview": ["transcoding", "needs_work", "rejected", "broken"],

@@ -15,8 +15,6 @@ from app.tasks import (
     STAGE_CONFIG,
     job_cut,
     job_detect,
-    job_intro,
-    job_outro,
     job_preview,
 )
 from tests.conftest import FakeStorageBackend
@@ -554,20 +552,20 @@ def test_post_approve_invalid_state_conflict():
     )
     assert response.status_code == 409
     assert (
-        "Cannot approve talk in status 'waiting_for_files'" in response.json()["detail"]
+        "Cannot approve/reject talk in status 'waiting_for_files'"
+        in response.json()["detail"]
     )
 
     app.dependency_overrides.clear()
 
 
 def test_post_approve_no_raw_recording_fails():
+    """Approve no longer checks for raw recording existence; it just transitions to pending_bounds."""
     mock_db = MagicMock()
     mock_client = models.Client(id=1, event_ids=[1])
-    fake_storage = FakeStorageBackend()
 
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
-    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
     mock_talk = models.Talk(
         id=1,
@@ -584,21 +582,20 @@ def test_post_approve_no_raw_recording_fails():
         "/talks/1/approve",
         headers={"X-API-Key": "valid_key"},
     )
-    assert response.status_code == 400
-    assert "No raw recording found for talk" in response.json()["detail"]
+    # Approve no longer requires a raw file — just transitions to pending_bounds
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending_bounds"
 
     app.dependency_overrides.clear()
 
 
 def test_post_approve_success_enqueues_cut():
+    """Approve now transitions to pending_bounds; job_cut is enqueued later from cut-bounds."""
     mock_db = MagicMock()
     mock_client = models.Client(id=1, event_ids=[1])
-    fake_storage = FakeStorageBackend()
-    fake_storage.put("1/raw/clip.mp4", b"raw video data")
 
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
-    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
     mock_talk = models.Talk(
         id=1,
@@ -619,28 +616,23 @@ def test_post_approve_success_enqueues_cut():
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == 1
-        assert data["status"] == "cutting"
-        assert mock_talk.status == "cutting"
+        assert data["status"] == "pending_bounds"
+        assert mock_talk.status == "pending_bounds"
         assert mock_db.commit.called
-
-        mock_enqueue.assert_called_once_with(
-            job_cut,
-            1,
-            "1/raw/clip.mp4",
-            job_timeout=STAGE_CONFIG["cut"]["job_timeout"],
-        )
+        # Approve no longer enqueues job_cut immediately
+        mock_enqueue.assert_not_called()
 
     app.dependency_overrides.clear()
 
 
 def test_post_approve_with_custom_raw_key():
+    """Approve body no longer accepts raw_key; extra fields are ignored by Pydantic (extra=ignore) or result in 422.
+    Since ApproveRequest has no raw_key field, sending it just uses the default approve decision."""
     mock_db = MagicMock()
     mock_client = models.Client(id=1, event_ids=[1])
-    fake_storage = FakeStorageBackend()
 
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
-    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
     mock_talk = models.Talk(
         id=1,
@@ -653,35 +645,25 @@ def test_post_approve_with_custom_raw_key():
     )
     mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
 
-    with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue:
-        response = client.post(
-            "/talks/1/approve",
-            json={"raw_key": "1/raw/custom_cam2.mp4"},
-            headers={"X-API-Key": "valid_key"},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["id"] == 1
-        assert data["status"] == "cutting"
-
-        mock_enqueue.assert_called_once_with(
-            job_cut,
-            1,
-            "1/raw/custom_cam2.mp4",
-            job_timeout=STAGE_CONFIG["cut"]["job_timeout"],
-        )
+    # Old raw_key field is ignored — body parsed as ApproveRequest(decision="approve")
+    response = client.post(
+        "/talks/1/approve",
+        json={"decision": "approve"},
+        headers={"X-API-Key": "valid_key"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending_bounds"
 
     app.dependency_overrides.clear()
 
 
 def test_post_approve_with_mismatched_talk_raw_key_rejected():
+    """Old raw_key validation is gone. Sending decision=reject now terminates the talk."""
     mock_db = MagicMock()
     mock_client = models.Client(id=1, event_ids=[1])
-    fake_storage = FakeStorageBackend()
 
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
-    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
     mock_talk = models.Talk(
         id=1,
@@ -696,11 +678,11 @@ def test_post_approve_with_mismatched_talk_raw_key_rejected():
 
     response = client.post(
         "/talks/1/approve",
-        json={"raw_key": "999/raw/other.mp4"},
+        json={"decision": "reject"},
         headers={"X-API-Key": "valid_key"},
     )
-    assert response.status_code == 400
-    assert "Invalid raw_key: must belong to talk 1" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
 
     app.dependency_overrides.clear()
 
@@ -710,15 +692,18 @@ def test_post_approve_with_mismatched_talk_raw_key_rejected():
 
 def test_full_pipeline_flow_recordings_to_preview_halt():
     """
-    Simulates full pipeline flow from ingest to preview halt:
+    Simulates full pipeline flow from ingest to preview halt (Phase 4):
     1. Create talk -> 'waiting_for_files'
     2. POST /recordings -> stages raw file, enqueues job_detect
-    3. Execute job_detect -> advances talk to 'pending_approval', halts
-    4. POST /approve -> advances talk to 'cutting', enqueues job_cut
-    5. Execute job_cut -> advances talk to 'generating_previews', enqueues job_preview
-    6. Execute job_preview -> advances talk to 'preview', halts
-    7. GET /talks/{id} -> returns 'preview' state and preview_urls
+    3. Execute job_detect -> advances talk to 'detecting' then 'pending_approval', halts
+    4. POST /approve -> advances talk to 'pending_bounds'
+    5. POST /cut-bounds -> advances talk to 'cutting', enqueues job_cut
+    6. Execute job_cut -> advances talk to 'generating_previews', enqueues job_intro chain
+    7. Execute job_preview -> advances talk to 'preview', halts
+    8. GET /talks/{id} -> returns 'preview' state and preview_urls
     """
+    from app.pipeline.detect import DetectResult
+
     mock_client = models.Client(id=1, event_ids=[1])
     fake_storage = FakeStorageBackend()
     fake_storage.put("1/raw/session.mp4", b"synthetic video bytes")
@@ -731,6 +716,9 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
         start=datetime(2026, 9, 1, 10, 0, tzinfo=UTC),
         end=datetime(2026, 9, 1, 10, 30, tzinfo=UTC),
         status="waiting_for_files",
+        cut_start=None,
+        cut_end=None,
+        raw_duration_seconds=None,
     )
     jobs = {}
 
@@ -799,24 +787,45 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
         )
 
     # 3. Simulate job_detect running in worker
+    detect_result = DetectResult(
+        passed=True,
+        actual_duration_seconds=1800.0,
+        has_video=True,
+        has_audio=True,
+        reason=None,
+    )
     with (
         patch("app.tasks.SessionLocal", side_effect=worker_db),
-        patch("app.tasks.get_storage", return_value=fake_storage),
-        patch("app.tasks.detect", return_value=MagicMock(passed=True)),
+        patch("app.tasks.get_storage_backend", return_value=fake_storage),
+        patch("app.tasks.detect", return_value=detect_result),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue_after_detect,
     ):
         job_detect(1, "1/raw/session.mp4")
         assert talk.status == "pending_approval"
+        assert talk.raw_duration_seconds == 1800.0
         mock_enqueue_after_detect.assert_not_called()  # Halts at pending_approval gate
 
-    # 4. POST /talks/1/approve
-    with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue_cut:
+    # 4. POST /talks/1/approve -> pending_bounds (no job enqueue)
+    with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue_approve:
         resp = client.post(
             "/talks/1/approve",
             headers={"X-API-Key": "key"},
         )
         assert resp.status_code == 200
+        assert talk.status == "pending_bounds"
+        mock_enqueue_approve.assert_not_called()
+
+    # 5. POST /talks/1/cut-bounds -> cutting, enqueues job_cut
+    with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue_cut:
+        resp = client.post(
+            "/talks/1/cut-bounds",
+            json={"cut_start": "00:00:10", "cut_end": "00:30:00"},
+            headers={"X-API-Key": "key"},
+        )
+        assert resp.status_code == 202
         assert talk.status == "cutting"
+        assert talk.cut_start == 10.0
+        assert talk.cut_end == 1800.0
         mock_enqueue_cut.assert_called_once_with(
             job_cut,
             1,
@@ -824,55 +833,17 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
             job_timeout=900,
         )
 
-    # 5. Simulate job_cut running in worker
+    # 6. Simulate job_cut running in worker
     def fake_cut(inp, out, start_s, end_s):
         Path(out).write_bytes(b"cut media")
 
     with (
         patch("app.tasks.SessionLocal", side_effect=worker_db),
-        patch("app.tasks.get_storage", return_value=fake_storage),
+        patch("app.tasks.get_storage_backend", return_value=fake_storage),
         patch("app.tasks.cut", side_effect=fake_cut),
-        patch("app.tasks.light_queue.enqueue") as mock_enqueue_intro,
-    ):
-        job_cut(1, "1/raw/session.mp4")
-        assert talk.status == "generating_previews"
-        mock_enqueue_intro.assert_called_once_with(
-            job_intro,
-            1,
-            "1/intro/intro.mp4",
-            job_timeout=300,
-        )
-
-    # 6. Simulate job_intro running in worker
-    def fake_intro(out, **kwargs):
-        Path(out).write_bytes(b"intro media")
-
-    with (
-        patch("app.tasks.SessionLocal", side_effect=worker_db),
-        patch("app.tasks.get_storage", return_value=fake_storage),
-        patch("app.tasks.generate_intro_clip", side_effect=fake_intro),
-        patch("app.tasks.light_queue.enqueue") as mock_enqueue_outro,
-    ):
-        job_intro(1, "1/intro/intro.mp4")
-        assert talk.status == "generating_previews"
-        mock_enqueue_outro.assert_called_once_with(
-            job_outro,
-            1,
-            "1/outro/outro.mp4",
-            job_timeout=300,
-        )
-
-    # 7. Simulate job_outro running in worker
-    def fake_outro(out, **kwargs):
-        Path(out).write_bytes(b"outro media")
-
-    with (
-        patch("app.tasks.SessionLocal", side_effect=worker_db),
-        patch("app.tasks.get_storage", return_value=fake_storage),
-        patch("app.tasks.generate_outro_clip", side_effect=fake_outro),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue_preview,
     ):
-        job_outro(1, "1/outro/outro.mp4")
+        job_cut(1, "1/raw/session.mp4")
         assert talk.status == "generating_previews"
         mock_enqueue_preview.assert_called_once_with(
             job_preview,
@@ -882,13 +853,13 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
             job_timeout=1800,
         )
 
-    # 8. Simulate job_preview running in worker
+    # 7. Simulate job_preview running in worker
     def fake_preview(inp, out, preset):
         Path(out).write_bytes(b"preview media")
 
     with (
         patch("app.tasks.SessionLocal", side_effect=worker_db),
-        patch("app.tasks.get_storage", return_value=fake_storage),
+        patch("app.tasks.get_storage_backend", return_value=fake_storage),
         patch("app.tasks.generate_preview", side_effect=fake_preview),
         patch("app.tasks.light_queue.enqueue") as mock_enqueue_after_preview,
     ):
@@ -896,7 +867,7 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
         assert talk.status == "preview"
         mock_enqueue_after_preview.assert_not_called()  # Halts at preview gate for human review
 
-    # 9. Query GET /talks/1 and verify status is 'preview' and preview URL exists
+    # 10. Query GET /talks/1 and verify status is 'preview' and preview URL exists
     resp = client.get("/talks/1", headers={"X-API-Key": "key"})
     assert resp.status_code == 200
     data = resp.json()
