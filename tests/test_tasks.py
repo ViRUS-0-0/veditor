@@ -494,3 +494,73 @@ def test_publish_exception_leads_to_broken(dummy_talk, mock_storage):
     assert job.kind == "publish"
     assert job.log_path is not None
     mock_enqueue.assert_not_called()
+
+
+def test_job_detect_discards_when_talk_aborted(dummy_talk, mock_storage):
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_detect(raw_path, scheduled_start, scheduled_end):
+        # Simulate /abort occurring during pure video processing
+        dummy_talk.status = "waiting_for_files"
+        jobs.clear()
+        return DetectResult(
+            passed=True,
+            actual_duration_seconds=1800.0,
+            has_video=True,
+            has_audio=True,
+            reason=None,
+        )
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.detect", side_effect=fake_detect),
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+    ):
+        job_detect(1, "1/raw/raw.mp4")
+
+    # Status remains waiting_for_files and no further transitions occurred
+    assert dummy_talk.status == "waiting_for_files"
+    mock_enqueue.assert_not_called()
+
+
+def test_job_cut_discards_when_talk_aborted(dummy_talk, mock_storage):
+    dummy_talk.status = "cutting"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_cut(input_path, output_path, start_s, end_s):
+        # Simulate /abort occurring during pure video processing
+        dummy_talk.status = "waiting_for_files"
+        jobs.clear()
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.cut", side_effect=fake_cut),
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+    ):
+        job_cut(1, "1/raw/raw.mp4", "1/cut/cut.mp4")
+
+    # Talk should not have been advanced to generating_previews or broken
+    assert dummy_talk.status == "waiting_for_files"
+    mock_enqueue.assert_not_called()
+
+
+def test_handle_failure_on_deleted_job_does_not_mark_talk_broken(
+    dummy_talk, mock_storage
+):
+    dummy_talk.status = "waiting_for_files"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    from app.tasks import _handle_failure
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+    ):
+        _handle_failure(1, 999, RuntimeError("Aborted failure"), mock_storage)
+
+    assert dummy_talk.status == "waiting_for_files"

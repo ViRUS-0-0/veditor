@@ -306,6 +306,51 @@ def test_cut_bounds_exceeds_duration():
         _clear_deps()
 
 
+def test_cut_bounds_missing_raw_duration():
+    mock_db = MagicMock()
+    mock_storage = MagicMock()
+    talk = _mock_talk(status="pending_bounds", raw_duration_seconds=None)
+    mock_db.query.return_value.filter.return_value.first.return_value = talk
+    _setup_deps(mock_db, mock_storage)
+    try:
+        resp = client.post(
+            "/talks/1/cut-bounds",
+            json={"cut_start": "00:00:05", "cut_end": "00:00:55"},
+            headers={"X-API-Key": "valid"},
+        )
+        assert resp.status_code == 422
+        assert "no detected raw duration" in resp.json()["detail"]
+    finally:
+        _clear_deps()
+
+
+@pytest.mark.parametrize(
+    "invalid_start,invalid_end",
+    [
+        ("00:10", "00:20:00"),  # missing seconds
+        ("00:00:10+05:00", "00:20:00"),  # timezone offset
+        ("1:2:3", "00:20:00"),  # single digit fields
+        ("99:99:99", "00:20:00"),  # invalid time values
+        ("not-a-time", "00:20:00"),  # non-time string
+    ],
+)
+def test_cut_bounds_invalid_time_formats(invalid_start, invalid_end):
+    mock_db = MagicMock()
+    mock_storage = MagicMock()
+    talk = _mock_talk(status="pending_bounds", raw_duration_seconds=3600.0)
+    mock_db.query.return_value.filter.return_value.first.return_value = talk
+    _setup_deps(mock_db, mock_storage)
+    try:
+        resp = client.post(
+            "/talks/1/cut-bounds",
+            json={"cut_start": invalid_start, "cut_end": invalid_end},
+            headers={"X-API-Key": "valid"},
+        )
+        assert resp.status_code == 422
+    finally:
+        _clear_deps()
+
+
 def test_cut_bounds_wrong_state():
     mock_db = MagicMock()
     mock_storage = MagicMock()
@@ -419,6 +464,51 @@ def test_abort_talk_success():
             # DB jobs and reviews cleared
             assert mock_db.query.return_value.filter.return_value.delete.call_count >= 2
             assert mock_db.commit.called
+        finally:
+            _clear_deps()
+
+
+def test_abort_talk_cancels_jobs_in_registries():
+    mock_db = MagicMock()
+    mock_storage = MagicMock()
+    talk = _mock_talk(
+        talk_id=1,
+        status="cutting",
+        raw_duration_seconds=3600.0,
+        cut_start=10.0,
+        cut_end=1800.0,
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = talk
+    _setup_deps(mock_db, mock_storage)
+
+    mock_started_job = MagicMock()
+    mock_started_job.id = "job_running"
+    mock_started_job.args = (1, "1/raw/test.mp4")
+
+    mock_light = MagicMock()
+    mock_light.job_ids = []
+    mock_light.started_job_registry.get_job_ids.return_value = ["job_running"]
+    mock_light.deferred_job_registry.get_job_ids.return_value = []
+    mock_light.scheduled_job_registry.get_job_ids.return_value = []
+    mock_light.fetch_job.return_value = mock_started_job
+
+    mock_heavy = MagicMock()
+    mock_heavy.job_ids = []
+    mock_heavy.started_job_registry.get_job_ids.return_value = []
+    mock_heavy.deferred_job_registry.get_job_ids.return_value = []
+    mock_heavy.scheduled_job_registry.get_job_ids.return_value = []
+
+    with (
+        patch("app.routes.talks.light_queue", mock_light),
+        patch("app.routes.talks.heavy_queue", mock_heavy),
+        patch("app.routes.talks.send_stop_job_command") as mock_send_stop,
+    ):
+        try:
+            resp = client.post("/talks/1/abort", headers={"X-API-Key": "valid"})
+            assert resp.status_code == 200
+            mock_send_stop.assert_called_once_with(mock_light.connection, "job_running")
+            mock_started_job.cancel.assert_called_once()
+            mock_started_job.delete.assert_called_once()
         finally:
             _clear_deps()
 

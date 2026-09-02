@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from rq.command import send_stop_job_command
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -295,7 +296,13 @@ def submit_cut_bounds(
 
     cut_start_s, cut_end_s = payload.parsed_seconds()
 
-    if talk.raw_duration_seconds is not None and (
+    if talk.raw_duration_seconds is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Talk has no detected raw duration; cannot validate cut bounds",
+        )
+
+    if (
         cut_start_s >= talk.raw_duration_seconds
         or cut_end_s > talk.raw_duration_seconds
     ):
@@ -353,14 +360,37 @@ def abort_talk(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
 
-    # Cancel and remove any enqueued RQ jobs for this talk
+    # Cancel and remove any enqueued or active RQ jobs for this talk
     for q in (light_queue, heavy_queue):
         try:
-            for job_id in list(q.job_ids):
-                job = q.fetch_job(job_id)
-                if job and job.args and len(job.args) > 0 and job.args[0] == talk.id:
-                    job.cancel()
-                    job.delete()
+            job_ids_to_check = set(q.job_ids)
+            for reg in (
+                q.started_job_registry,
+                q.deferred_job_registry,
+                q.scheduled_job_registry,
+            ):
+                try:
+                    job_ids_to_check.update(reg.get_job_ids())
+                except Exception:  # noqa: BLE001, S110
+                    pass
+
+            for job_id in job_ids_to_check:
+                try:
+                    job = q.fetch_job(job_id)
+                    if (
+                        job
+                        and job.args
+                        and len(job.args) > 0
+                        and job.args[0] == talk.id
+                    ):
+                        try:
+                            send_stop_job_command(q.connection, job.id)
+                        except Exception:  # noqa: BLE001, S110
+                            pass
+                        job.cancel()
+                        job.delete()
+                except Exception:  # noqa: BLE001, S110
+                    pass
         except Exception:  # noqa: BLE001, S110
             pass
 

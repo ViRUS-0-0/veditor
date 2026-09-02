@@ -52,9 +52,10 @@ def _handle_failure(talk_id: int, job_id: int | None, exc: Exception, storage) -
     with SessionLocal() as db:
         if job_id is not None:
             job = db.get(Job, job_id)
-            if job:
-                job.status = "failed"
-                job.log_path = log_key
+            if not job:
+                return
+            job.status = "failed"
+            job.log_path = log_key
         talk = db.get(Talk, talk_id)
         if talk and talk.status not in (
             "waiting_for_files",
@@ -96,11 +97,16 @@ def job_detect(talk_id: int, raw_key: str) -> None:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if talk:
-                talk.raw_duration_seconds = result.actual_duration_seconds
-                advance(talk, "pending_approval")
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "detecting":
+                logger.info(
+                    "Talk %s detect job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            talk.raw_duration_seconds = result.actual_duration_seconds
+            advance(talk, "pending_approval")
+            job.status = "done"
             db.commit()
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)
@@ -136,10 +142,15 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if talk:
-                advance(talk, "generating_previews")
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "cutting":
+                logger.info(
+                    "Talk %s cut job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            advance(talk, "generating_previews")
+            job.status = "done"
             db.commit()
 
         preview_key = f"{talk_id}/preview/preview.mp4"
@@ -191,9 +202,16 @@ def job_intro(talk_id: int, intro_key: str | None = None) -> None:
             storage.put(intro_key, tmp_out)
 
         with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "generating_previews":
+                logger.info(
+                    "Talk %s intro job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            job.status = "done"
             db.commit()
 
         outro_key = f"{talk_id}/outro/outro.mp4"
@@ -233,9 +251,16 @@ def job_outro(talk_id: int, outro_key: str | None = None) -> None:
             storage.put(outro_key, tmp_out)
 
         with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "generating_previews":
+                logger.info(
+                    "Talk %s outro job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            job.status = "done"
             db.commit()
 
         cut_key = f"{talk_id}/cut/cut.mp4"
@@ -281,10 +306,15 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if talk:
-                advance(talk, "preview")
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "generating_previews":
+                logger.info(
+                    "Talk %s preview job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            advance(talk, "preview")
+            job.status = "done"
             db.commit()
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)
@@ -314,9 +344,16 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
             storage.put(loud_key, tmp_out)
 
         with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "transcoding":
+                logger.info(
+                    "Talk %s loudness job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            job.status = "done"
             db.commit()
 
         final_key = f"{talk_id}/final/final.mp4"
@@ -357,10 +394,15 @@ def job_transcode(talk_id: int, loud_key: str, final_key: str | None = None) -> 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if talk:
-                advance(talk, "uploading")
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "transcoding":
+                logger.info(
+                    "Talk %s transcode job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            advance(talk, "uploading")
+            job.status = "done"
             db.commit()
 
         light_queue.enqueue(
@@ -394,10 +436,15 @@ def job_publish(talk_id: int, final_key: str) -> None:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if talk:
-                advance(talk, "done")
-            if job:
-                job.status = "done"
+            if not talk or not job or talk.status != "uploading":
+                logger.info(
+                    "Talk %s publish job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            advance(talk, "done")
+            job.status = "done"
             db.commit()
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)

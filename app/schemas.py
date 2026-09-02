@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, time
 from typing import Literal
 
@@ -103,8 +104,13 @@ class ApproveRequest(BaseModel):
     decision: Literal["approve", "reject"] = "approve"
 
 
+HHMMSS_PATTERN = re.compile(r"^\d{2}:\d{2}:\d{2}(?:\.\d+)?$")
+
+
 def _parse_hhmmss(value: str) -> float:
     """Parse HH:MM:SS (with optional subseconds) into seconds (float)."""
+    if not isinstance(value, str) or not HHMMSS_PATTERN.match(value):
+        raise ValueError(f"Invalid time format '{value}', expected HH:MM:SS")
     try:
         t = time.fromisoformat(value)
         return t.hour * 3600 + t.minute * 60 + t.second + t.microsecond / 1_000_000
