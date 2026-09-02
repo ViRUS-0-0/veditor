@@ -84,6 +84,7 @@ def mock_storage():
 
 
 def test_no_db_session_held_during_detect(dummy_talk, mock_storage):
+    dummy_talk.status = "detecting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
@@ -114,6 +115,7 @@ def test_no_db_session_held_during_detect(dummy_talk, mock_storage):
 
 
 def test_detect_failure_advances_to_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "detecting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
@@ -143,14 +145,18 @@ def test_detect_failure_advances_to_broken(dummy_talk, mock_storage):
 
 
 def test_failure_on_already_broken_talk_does_not_crash(dummy_talk, mock_storage):
-    dummy_talk.status = "broken"
+    dummy_talk.status = "detecting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_detect(raw_path, scheduled_start, scheduled_end):
+        dummy_talk.status = "broken"
+        raise RuntimeError("Unexpected error")
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
         patch("app.tasks.get_storage_backend", return_value=mock_storage),
-        patch("app.tasks.detect", side_effect=RuntimeError("Unexpected error")),
+        patch("app.tasks.detect", side_effect=fake_detect),
         pytest.raises(RuntimeError, match="Unexpected error"),
     ):
         job_detect(1, "1/raw/raw.mp4")
@@ -162,14 +168,18 @@ def test_failure_on_already_broken_talk_does_not_crash(dummy_talk, mock_storage)
 
 
 def test_failure_on_done_talk_does_not_transition_to_broken(dummy_talk, mock_storage):
-    dummy_talk.status = "done"
+    dummy_talk.status = "detecting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_detect(raw_path, scheduled_start, scheduled_end):
+        dummy_talk.status = "done"
+        raise RuntimeError("Late job error")
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
         patch("app.tasks.get_storage_backend", return_value=mock_storage),
-        patch("app.tasks.detect", side_effect=RuntimeError("Late job error")),
+        patch("app.tasks.detect", side_effect=fake_detect),
         pytest.raises(RuntimeError, match="Late job error"),
     ):
         job_detect(1, "1/raw/raw.mp4")
@@ -182,14 +192,18 @@ def test_failure_on_done_talk_does_not_transition_to_broken(dummy_talk, mock_sto
 def test_failure_on_rejected_talk_does_not_transition_to_broken(
     dummy_talk, mock_storage
 ):
-    dummy_talk.status = "rejected"
+    dummy_talk.status = "detecting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_detect(raw_path, scheduled_start, scheduled_end):
+        dummy_talk.status = "rejected"
+        raise RuntimeError("Late job error")
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
         patch("app.tasks.get_storage_backend", return_value=mock_storage),
-        patch("app.tasks.detect", side_effect=RuntimeError("Late job error")),
+        patch("app.tasks.detect", side_effect=fake_detect),
         pytest.raises(RuntimeError, match="Late job error"),
     ):
         job_detect(1, "1/raw/raw.mp4")
@@ -486,6 +500,7 @@ def test_publish_exception_leads_to_broken(dummy_talk, mock_storage):
 
 
 def test_job_detect_discards_when_talk_aborted(dummy_talk, mock_storage):
+    dummy_talk.status = "detecting"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
@@ -511,6 +526,43 @@ def test_job_detect_discards_when_talk_aborted(dummy_talk, mock_storage):
 
     # Status remains waiting_for_files and no further transitions occurred
     assert dummy_talk.status == "waiting_for_files"
+    mock_enqueue.assert_not_called()
+
+
+def test_job_detect_discards_when_talk_in_waiting_for_files(dummy_talk, mock_storage):
+    dummy_talk.status = "waiting_for_files"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.detect") as mock_detect,
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+    ):
+        job_detect(1, "1/raw/raw.mp4")
+
+    # Job discarded prior to processing; no db records created and no detection executed
+    assert dummy_talk.status == "waiting_for_files"
+    assert len(jobs) == 0
+    mock_detect.assert_not_called()
+    mock_enqueue.assert_not_called()
+
+
+def test_job_detect_discards_when_talk_not_found(dummy_talk, mock_storage):
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.detect") as mock_detect,
+        patch("app.tasks.light_queue.enqueue") as mock_enqueue,
+    ):
+        job_detect(999, "999/raw/raw.mp4")
+
+    assert len(jobs) == 0
+    mock_detect.assert_not_called()
     mock_enqueue.assert_not_called()
 
 

@@ -728,8 +728,8 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
     """
     Simulates full pipeline flow from ingest to preview halt (Phase 4):
     1. Create talk -> 'waiting_for_files'
-    2. POST /recordings -> stages raw file, enqueues job_detect
-    3. Execute job_detect -> advances talk to 'detecting' then 'pending_approval', halts
+    2. POST /recordings -> stages raw file, advances to 'detecting', enqueues job_detect
+    3. Execute job_detect -> advances talk to 'pending_approval', halts
     4. POST /approve -> advances talk to 'pending_bounds'
     5. POST /cut -> advances talk to 'cutting', enqueues job_cut
     6. Execute job_cut -> advances talk to 'generating_previews', enqueues job_preview

@@ -73,12 +73,14 @@ def job_detect(talk_id: int, raw_key: str) -> None:
     try:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
-            if not talk:
-                raise ValueError(f"Talk {talk_id} not found")
+            if not talk or talk.status != "detecting":
+                logger.info(
+                    "Talk %s detect job was aborted or state changed prior to start; discarding",
+                    talk_id,
+                )
+                return
             job = Job(talk_id=talk_id, kind="detect", status="running")
             db.add(job)
-            if talk.status == "waiting_for_files":
-                advance(talk, "detecting")
             db.commit()
             db.refresh(job)
             job_id = job.id
