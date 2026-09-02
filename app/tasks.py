@@ -204,7 +204,7 @@ def job_intro(talk_id: int, intro_key: str | None = None) -> None:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if not talk or not job or talk.status != "generating_previews":
+            if not talk or not job:
                 logger.info(
                     "Talk %s intro job %s was aborted or state changed; discarding",
                     talk_id,
@@ -213,14 +213,6 @@ def job_intro(talk_id: int, intro_key: str | None = None) -> None:
                 return
             job.status = "done"
             db.commit()
-
-        outro_key = f"{talk_id}/outro/outro.mp4"
-        light_queue.enqueue(
-            job_outro,
-            talk_id,
-            outro_key,
-            job_timeout=STAGE_CONFIG["outro"]["job_timeout"],
-        )
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)
         raise
@@ -253,7 +245,7 @@ def job_outro(talk_id: int, outro_key: str | None = None) -> None:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if not talk or not job or talk.status != "generating_previews":
+            if not talk or not job:
                 logger.info(
                     "Talk %s outro job %s was aborted or state changed; discarding",
                     talk_id,
@@ -262,16 +254,6 @@ def job_outro(talk_id: int, outro_key: str | None = None) -> None:
                 return
             job.status = "done"
             db.commit()
-
-        cut_key = f"{talk_id}/cut/cut.mp4"
-        preview_key = f"{talk_id}/preview/preview.mp4"
-        light_queue.enqueue(
-            job_preview,
-            talk_id,
-            cut_key,
-            preview_key,
-            job_timeout=STAGE_CONFIG["preview"]["job_timeout"],
-        )
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)
         raise

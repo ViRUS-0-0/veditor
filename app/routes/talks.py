@@ -265,7 +265,7 @@ def raw_preview(
 
 
 @router.post(
-    "/{talk_id}/cut-bounds",
+    "/{talk_id}/cut",
     response_model=schemas.TalkRead,
     status_code=status.HTTP_202_ACCEPTED,
 )

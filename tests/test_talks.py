@@ -624,7 +624,7 @@ def test_post_approve_no_raw_recording_fails():
 
 
 def test_post_approve_success_enqueues_cut():
-    """Approve now transitions to pending_bounds; job_cut is enqueued later from cut-bounds."""
+    """Approve now transitions to pending_bounds; job_cut is enqueued later from /cut."""
     mock_db = MagicMock()
     mock_client = models.Client(id=1, event_ids=[1])
 
@@ -731,8 +731,8 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
     2. POST /recordings -> stages raw file, enqueues job_detect
     3. Execute job_detect -> advances talk to 'detecting' then 'pending_approval', halts
     4. POST /approve -> advances talk to 'pending_bounds'
-    5. POST /cut-bounds -> advances talk to 'cutting', enqueues job_cut
-    6. Execute job_cut -> advances talk to 'generating_previews', enqueues job_intro chain
+    5. POST /cut -> advances talk to 'cutting', enqueues job_cut
+    6. Execute job_cut -> advances talk to 'generating_previews', enqueues job_preview
     7. Execute job_preview -> advances talk to 'preview', halts
     8. GET /talks/{id} -> returns 'preview' state and preview_urls
     """
@@ -851,10 +851,10 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
         assert talk.status == "pending_bounds"
         mock_enqueue_approve.assert_not_called()
 
-    # 5. POST /talks/1/cut-bounds -> cutting, enqueues job_cut
+    # 5. POST /talks/1/cut -> cutting, enqueues job_cut
     with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue_cut:
         resp = client.post(
-            "/talks/1/cut-bounds",
+            "/talks/1/cut",
             json={"cut_start": "00:00:10", "cut_end": "00:30:00"},
             headers={"X-API-Key": "key"},
         )

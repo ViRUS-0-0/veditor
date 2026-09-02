@@ -210,7 +210,7 @@ def test_cut_bounds_happy_path():
     with patch("app.routes.talks.light_queue") as mock_queue:
         try:
             resp = client.post(
-                "/talks/1/cut-bounds",
+                "/talks/1/cut",
                 json={"cut_start": "00:00:10", "cut_end": "00:45:00"},
                 headers={"X-API-Key": "valid"},
             )
@@ -240,7 +240,7 @@ def test_cut_bounds_subsecond_precision():
     with patch("app.routes.talks.light_queue"):
         try:
             resp = client.post(
-                "/talks/1/cut-bounds",
+                "/talks/1/cut",
                 json={"cut_start": "00:00:10.500", "cut_end": "00:00:45.250"},
                 headers={"X-API-Key": "valid"},
             )
@@ -260,7 +260,7 @@ def test_cut_bounds_end_before_start():
     _setup_deps(mock_db, mock_storage)
     try:
         resp = client.post(
-            "/talks/1/cut-bounds",
+            "/talks/1/cut",
             json={"cut_start": "00:30:00", "cut_end": "00:10:00"},
             headers={"X-API-Key": "valid"},
         )
@@ -278,7 +278,7 @@ def test_cut_bounds_equal_start_end():
     _setup_deps(mock_db, mock_storage)
     try:
         resp = client.post(
-            "/talks/1/cut-bounds",
+            "/talks/1/cut",
             json={"cut_start": "00:10:00", "cut_end": "00:10:00"},
             headers={"X-API-Key": "valid"},
         )
@@ -297,7 +297,7 @@ def test_cut_bounds_exceeds_duration():
     _setup_deps(mock_db, mock_storage)
     try:
         resp = client.post(
-            "/talks/1/cut-bounds",
+            "/talks/1/cut",
             json={"cut_start": "00:00:05", "cut_end": "00:05:00"},  # 300s > 60s
             headers={"X-API-Key": "valid"},
         )
@@ -314,7 +314,7 @@ def test_cut_bounds_missing_raw_duration():
     _setup_deps(mock_db, mock_storage)
     try:
         resp = client.post(
-            "/talks/1/cut-bounds",
+            "/talks/1/cut",
             json={"cut_start": "00:00:05", "cut_end": "00:00:55"},
             headers={"X-API-Key": "valid"},
         )
@@ -342,7 +342,7 @@ def test_cut_bounds_invalid_time_formats(invalid_start, invalid_end):
     _setup_deps(mock_db, mock_storage)
     try:
         resp = client.post(
-            "/talks/1/cut-bounds",
+            "/talks/1/cut",
             json={"cut_start": invalid_start, "cut_end": invalid_end},
             headers={"X-API-Key": "valid"},
         )
@@ -359,7 +359,7 @@ def test_cut_bounds_wrong_state():
     _setup_deps(mock_db, mock_storage)
     try:
         resp = client.post(
-            "/talks/1/cut-bounds",
+            "/talks/1/cut",
             json={"cut_start": "00:00:05", "cut_end": "00:00:55"},
             headers={"X-API-Key": "valid"},
         )
@@ -398,7 +398,7 @@ def test_full_phase4_happy_path():
         # 3. Submit cut bounds → cutting
         with patch("app.routes.talks.light_queue") as mock_queue:
             resp = client.post(
-                "/talks/1/cut-bounds",
+                "/talks/1/cut",
                 json={"cut_start": "00:00:10", "cut_end": "01:00:00"},
                 headers={"X-API-Key": "valid"},
             )

@@ -246,7 +246,7 @@ def test_no_db_session_held_during_cut_and_enqueues_preview(dummy_talk, mock_sto
     )
 
 
-def test_no_db_session_held_during_intro_and_enqueues_outro(dummy_talk, mock_storage):
+def test_no_db_session_held_during_intro(dummy_talk, mock_storage):
     dummy_talk.status = "generating_previews"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
@@ -265,12 +265,7 @@ def test_no_db_session_held_during_intro_and_enqueues_outro(dummy_talk, mock_sto
     job = next(iter(jobs.values()))
     assert job.status == "done"
     assert job.kind == "intro"
-    mock_enqueue.assert_called_once_with(
-        job_outro,
-        1,
-        "1/outro/outro.mp4",
-        job_timeout=STAGE_CONFIG["outro"]["job_timeout"],
-    )
+    mock_enqueue.assert_not_called()
 
 
 def test_intro_exception_leads_to_broken(dummy_talk, mock_storage):
@@ -298,7 +293,7 @@ def test_intro_exception_leads_to_broken(dummy_talk, mock_storage):
     mock_enqueue.assert_not_called()
 
 
-def test_no_db_session_held_during_outro_and_enqueues_preview(dummy_talk, mock_storage):
+def test_no_db_session_held_during_outro(dummy_talk, mock_storage):
     dummy_talk.status = "generating_previews"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
@@ -317,13 +312,7 @@ def test_no_db_session_held_during_outro_and_enqueues_preview(dummy_talk, mock_s
     job = next(iter(jobs.values()))
     assert job.status == "done"
     assert job.kind == "outro"
-    mock_enqueue.assert_called_once_with(
-        job_preview,
-        1,
-        "1/cut/cut.mp4",
-        "1/preview/preview.mp4",
-        job_timeout=STAGE_CONFIG["preview"]["job_timeout"],
-    )
+    mock_enqueue.assert_not_called()
 
 
 def test_outro_exception_leads_to_broken(dummy_talk, mock_storage):
