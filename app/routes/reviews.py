@@ -26,7 +26,12 @@ def review_talk(
     client: Annotated[models.Client, Depends(get_client)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    talk = (
+        db.query(models.Talk)
+        .filter(models.Talk.id == talk_id)
+        .with_for_update()
+        .first()
+    )
     if not talk:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

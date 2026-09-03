@@ -31,6 +31,16 @@ def clean_dependency_overrides():
 def mock_db():
     db = MagicMock()
 
+    def fake_flush():
+        for call in db.add.call_args_list:
+            obj = call[0][0]
+            if getattr(obj, "id", None) is None:
+                obj.id = 1
+            if getattr(obj, "created_at", None) is None:
+                obj.created_at = datetime.now(UTC)
+
+    db.flush.side_effect = fake_flush
+
     def fake_refresh(obj):
         if getattr(obj, "id", None) is None:
             obj.id = 1
@@ -38,6 +48,11 @@ def mock_db():
             obj.created_at = datetime.now(UTC)
 
     db.refresh.side_effect = fake_refresh
+
+    # Allow chaining of .filter(...).with_for_update().first() to resolve to filter's first
+    mock_filter = db.query.return_value.filter.return_value
+    mock_filter.with_for_update.return_value = mock_filter
+
     return db
 
 
@@ -195,6 +210,7 @@ def test_review_valid_decisions_success(
     assert "created_at" in data["review"]
     assert data["review"]["created_at"] is not None
     mock_db.add.assert_called_once()
+    mock_db.flush.assert_called_once()
     mock_db.commit.assert_called_once()
 
 
@@ -293,6 +309,54 @@ def test_simulated_commit_failure_rolls_back_review_insert(preview_talk, mock_db
     mock_db.rollback.assert_called_once()
 
 
+def test_simulated_flush_failure_rolls_back_review_insert(preview_talk, mock_db):
+    """Simulated failure of the DB flush rolls back the Review insert and talk transition."""
+    mock_db.flush.side_effect = RuntimeError("Simulated DB flush failure")
+    req = schemas.ReviewRequest(decision=schemas.ReviewDecision.approve)
+
+    with pytest.raises(RuntimeError, match="Simulated DB flush failure"):
+        handle_approve(preview_talk, req, mock_db)
+
+    mock_db.rollback.assert_called_once()
+    mock_db.commit.assert_not_called()
+
+
+def test_review_locks_talk_row_with_for_update(mock_db, preview_talk):
+    """POST /talks/{id}/review acquires row-level lock via with_for_update() on talk query."""
+    mock_client = models.Client(id=1, event_ids=[1])
+    mock_db.query.return_value.filter.return_value.first.return_value = preview_talk
+
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    response = client.post(
+        "/talks/1/review",
+        json={"decision": "approve"},
+        headers={"X-API-Key": "valid_key"},
+    )
+    assert response.status_code == 200
+    mock_db.query.return_value.filter.return_value.with_for_update.assert_called_once()
+
+
+def test_flush_before_commit_and_no_refresh(mock_db, preview_talk):
+    """Review handler flushes before commit and makes zero db.refresh calls."""
+    mock_client = models.Client(id=1, event_ids=[1])
+    mock_db.query.return_value.filter.return_value.first.return_value = preview_talk
+
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    response = client.post(
+        "/talks/1/review",
+        json={"decision": "approve"},
+        headers={"X-API-Key": "valid_key"},
+    )
+    assert response.status_code == 200
+    mock_db.flush.assert_called_once()
+    mock_db.commit.assert_called_once()
+    mock_db.refresh.assert_not_called()
+
+
 def test_simulated_advance_failure_rolls_back_review_insert(preview_talk, mock_db):
     """Simulated failure of the state transition rolls back the Review insert."""
     preview_talk.status = (
@@ -345,3 +409,86 @@ def test_append_only_audit_trail_relationship():
         "Bounds wrong",
         "All good",
     ]
+
+
+def test_concurrent_reviews_atomic_transition_and_single_review():
+    """Verify concurrent review submissions result in exactly one success and one 409."""
+    import concurrent.futures
+
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.auth import hash_api_key
+    from app.db import SessionLocal
+
+    # Check database availability
+    try:
+        probe_db = SessionLocal()
+        probe_db.execute(select(1))
+    except SQLAlchemyError, OSError:
+        pytest.skip("Database connection unavailable for concurrent integration test")
+    finally:
+        probe_db.close()
+
+    db = SessionLocal()
+    event = models.Event(name="Concurrent Review Test Event")
+    db.add(event)
+    db.flush()
+    event_id = event.id
+
+    client_record = models.Client(
+        hashed_key=hash_api_key("concurrent_key"), event_ids=[event_id]
+    )
+    db.add(client_record)
+    db.flush()
+    client_id = client_record.id
+
+    talk = models.Talk(
+        event_id=event_id,
+        title="Concurrent Review Talk",
+        room="Room Concurrent",
+        start=datetime(2026, 9, 1, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 9, 1, 10, 30, tzinfo=UTC),
+        status="preview",
+    )
+    db.add(talk)
+    db.commit()
+    talk_id = talk.id
+    db.close()
+
+    try:
+
+        def post_review(decision: str):
+            test_client = TestClient(app)
+            return test_client.post(
+                f"/talks/{talk_id}/review",
+                json={"decision": decision, "note": f"Concurrent decision {decision}"},
+                headers={"X-API-Key": "concurrent_key"},
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            fut1 = executor.submit(post_review, "approve")
+            fut2 = executor.submit(post_review, "needs_work")
+            res1 = fut1.result()
+            res2 = fut2.result()
+
+        status_codes = sorted([res1.status_code, res2.status_code])
+        assert status_codes == [200, 409]
+
+        db = SessionLocal()
+        reviews = db.query(models.Review).filter(models.Review.talk_id == talk_id).all()
+        assert len(reviews) == 1
+
+        final_talk = db.query(models.Talk).filter(models.Talk.id == talk_id).one()
+        assert final_talk.status in ("transcoding", "needs_work")
+        assert final_talk.status != "preview"
+        assert reviews[0].decision in ("approve", "needs_work")
+        db.close()
+    finally:
+        clean_db = SessionLocal()
+        clean_db.query(models.Review).filter(models.Review.talk_id == talk_id).delete()
+        clean_db.query(models.Talk).filter(models.Talk.id == talk_id).delete()
+        clean_db.query(models.Client).filter(models.Client.id == client_id).delete()
+        clean_db.query(models.Event).filter(models.Event.id == event_id).delete()
+        clean_db.commit()
+        clean_db.close()

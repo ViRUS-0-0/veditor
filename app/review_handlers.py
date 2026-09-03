@@ -22,17 +22,16 @@ def _record_review_and_advance(
         )
         db.add(review)
         advance(talk, target_state)
+        db.flush()
+        response = schemas.ReviewResponse(
+            talk=schemas.TalkRead.model_validate(talk),
+            review=schemas.ReviewRead.model_validate(review),
+        )
         db.commit()
+        return response
     except Exception:
         db.rollback()
         raise
-
-    db.refresh(talk)
-    db.refresh(review)
-    return schemas.ReviewResponse(
-        talk=schemas.TalkRead.model_validate(talk),
-        review=schemas.ReviewRead.model_validate(review),
-    )
 
 
 def handle_approve(
