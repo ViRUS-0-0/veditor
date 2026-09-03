@@ -79,3 +79,8 @@ def test_explicit_paths_per_acceptance_criteria():
     assert talk.status == "needs_work"
     advance(talk, "cutting")
     assert talk.status == "cutting"
+
+    # preview → pending_bounds (review rejection records a reset to pending_bounds)
+    talk_reset = DummyTalk("preview")
+    advance(talk_reset, "pending_bounds")
+    assert talk_reset.status == "pending_bounds"
