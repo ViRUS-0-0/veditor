@@ -55,6 +55,8 @@ def handle_reject(
     payload: schemas.ReviewRequest,
     db: Session,
 ) -> schemas.ReviewResponse:
+    talk.cut_start = None
+    talk.cut_end = None
     return _record_review_and_advance(talk, payload, "pending_bounds", db)
 
 
