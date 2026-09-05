@@ -457,8 +457,9 @@ def concat(
     segments = [p for p in (intro_p, cut_p, outro_p) if p is not None]
 
     # Render into a temporary file, then persist via StorageBackend
+    out_suffix = out_p.suffix or cut_p.suffix or ".mp4"
     with tempfile.TemporaryDirectory(prefix="veditor-concat-") as tmpdir:
-        tmp_target = Path(tmpdir) / "concat_tmp.mp4"
+        tmp_target = Path(tmpdir) / f"concat_tmp{out_suffix}"
 
         if not force_reencode and _can_stream_copy(segments):
             try:

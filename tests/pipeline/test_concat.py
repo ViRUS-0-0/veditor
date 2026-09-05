@@ -335,3 +335,16 @@ def test_concat_passthrough_persists_via_storage_backend(tmp_path: Path):
     concat(cut_path, output_path=key, backend=fake_backend)
     assert fake_backend.exists(key)
     assert len(fake_backend.get(key).read_bytes()) > 0
+
+
+def test_concat_respects_custom_output_container_format(tmp_path: Path):
+    """Verify that specifying a custom container format (e.g. .mkv) creates the matching container."""
+    cut_path = generate_clip(1.5, output_dir=tmp_path)
+    intro_path = generate_clip(1.0, output_dir=tmp_path)
+    output_path = tmp_path / "custom_container.mkv"
+
+    result = concat(cut_path, intro_path=intro_path, output_path=output_path)
+    assert result == str(output_path)
+    assert output_path.is_file()
+    with av.open(str(output_path)) as container:
+        assert "matroska" in container.format.name
