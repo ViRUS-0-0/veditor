@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.states import advance
+from app.storage import StorageBackend
 
 
 def _record_review_and_advance(
@@ -38,6 +39,7 @@ def handle_approve(
     talk: models.Talk,
     payload: schemas.ReviewRequest,
     db: Session,
+    storage: StorageBackend | None = None,
 ) -> schemas.ReviewResponse:
     return _record_review_and_advance(talk, payload, "transcoding", db)
 
@@ -46,6 +48,7 @@ def handle_needs_work(
     talk: models.Talk,
     payload: schemas.ReviewRequest,
     db: Session,
+    storage: StorageBackend | None = None,
 ) -> schemas.ReviewResponse:
     return _record_review_and_advance(talk, payload, "needs_work", db)
 
@@ -54,15 +57,20 @@ def handle_reject(
     talk: models.Talk,
     payload: schemas.ReviewRequest,
     db: Session,
+    storage: StorageBackend | None = None,
 ) -> schemas.ReviewResponse:
     talk.cut_start = None
     talk.cut_end = None
-    return _record_review_and_advance(talk, payload, "pending_bounds", db)
+    response = _record_review_and_advance(talk, payload, "pending_bounds", db)
+    if storage is not None:
+        storage.delete(f"{talk.id}/cut")
+        storage.delete(f"{talk.id}/preview")
+    return response
 
 
 DECISION_HANDLERS: dict[
     schemas.ReviewDecision,
-    Callable[[models.Talk, schemas.ReviewRequest, Session], schemas.ReviewResponse],
+    Callable[..., schemas.ReviewResponse],
 ] = {
     schemas.ReviewDecision.approve: handle_approve,
     schemas.ReviewDecision.needs_work: handle_needs_work,

@@ -16,6 +16,7 @@ from app.review_handlers import (
     handle_needs_work,
     handle_reject,
 )
+from app.storage import get_storage_backend
 
 client = TestClient(app)
 
@@ -181,7 +182,7 @@ def test_review_conflict_non_preview_state(mock_db, preview_talk, invalid_status
     ],
 )
 def test_review_valid_decisions_success(
-    mock_db, preview_talk, decision, note, expected_status
+    mock_db, preview_talk, fake_storage, decision, note, expected_status
 ):
     """POST /talks/{id}/review returns 200 with ReviewResponse and atomic Review audit trail."""
     mock_client = models.Client(id=1, event_ids=[1])
@@ -189,6 +190,7 @@ def test_review_valid_decisions_success(
 
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
     body = {"decision": decision}
     if note is not None:
@@ -232,6 +234,7 @@ def test_review_dispatch_invokes_correct_handler(
     mock_db, preview_talk, decision, handler_name
 ):
     """Verify that route dispatches to the registered handler in DECISION_HANDLERS."""
+    assert DECISION_HANDLERS[decision].__name__ == handler_name
     mock_client = models.Client(id=1, event_ids=[1])
     mock_db.query.return_value.filter.return_value.first.return_value = preview_talk
 
@@ -308,8 +311,8 @@ def test_handlers_direct_persistence_and_advance(preview_talk, mock_db):
     assert resp_reject.review.note == "Reset bounds"
 
 
-def test_handle_reject_clears_cut_bounds_reset_to_raw(mock_db):
-    """Rejecting a talk in preview clears cut bounds to null, transitions to pending_bounds, and enqueues no jobs."""
+def test_handle_reject_clears_cut_bounds_reset_to_raw(mock_db, fake_storage):
+    """Rejecting a talk in preview clears cut bounds, resets to pending_bounds, purges cut/preview files, and enqueues no jobs."""
     talk = models.Talk(
         id=42,
         event_id=1,
@@ -324,8 +327,13 @@ def test_handle_reject_clears_cut_bounds_reset_to_raw(mock_db):
     mock_client = models.Client(id=1, event_ids=[1])
     mock_db.query.return_value.filter.return_value.first.return_value = talk
 
+    fake_storage.put("42/raw/video.mp4", b"raw footage")
+    fake_storage.put("42/cut/cut.mp4", b"cut footage")
+    fake_storage.put("42/preview/preview.mp4", b"preview video")
+
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
     with (
         patch("app.queue.light_queue.enqueue") as mock_light_enqueue,
@@ -347,6 +355,10 @@ def test_handle_reject_clears_cut_bounds_reset_to_raw(mock_db):
         assert talk.cut_start is None
         assert talk.cut_end is None
         assert talk.status == "pending_bounds"
+
+        assert not fake_storage.exists("42/cut/cut.mp4")
+        assert not fake_storage.exists("42/preview/preview.mp4")
+        assert fake_storage.exists("42/raw/video.mp4")
 
         mock_light_enqueue.assert_not_called()
         mock_heavy_enqueue.assert_not_called()
@@ -480,7 +492,10 @@ def test_concurrent_reviews_atomic_transition_and_single_review():
     try:
         probe_db = SessionLocal()
         probe_db.execute(select(1))
-    except SQLAlchemyError, OSError:
+    except (
+        SQLAlchemyError,
+        OSError,
+    ):
         pytest.skip("Database connection unavailable for concurrent integration test")
     finally:
         if probe_db is not None:
