@@ -64,6 +64,7 @@ def test_create_event_and_talk_relationships(db_session):
     assert talk.jobs[0] == job
     assert len(talk.reviews) == 1
     assert talk.reviews[0] == review
+    assert review.created_at is not None
 
 
 def test_required_fields_enforced(db_session):

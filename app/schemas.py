@@ -1,5 +1,6 @@
 import re
 from datetime import datetime, time
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -82,6 +83,24 @@ class ReviewCreate(ReviewBase):
 class ReviewRead(ReviewBase):
     id: int
     talk_id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReviewDecision(str, Enum):
+    approve = "approve"
+    needs_work = "needs_work"
+    reject = "reject"
+
+
+class ReviewRequest(BaseModel):
+    decision: ReviewDecision
+    note: str | None = None
+
+
+class ReviewResponse(BaseModel):
+    talk: TalkRead
+    review: ReviewRead | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
