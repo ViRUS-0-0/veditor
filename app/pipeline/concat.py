@@ -9,12 +9,15 @@ adaptation when codecs, resolutions, frame rates, or sample rates differ.
 from __future__ import annotations
 
 import logging
+import tempfile
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 import av
 import numpy as np
+
+from app.storage import LocalDiskBackend, StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +75,7 @@ def _can_stream_copy(segments: list[Path]) -> bool:
                 else:
                     if video_props != ref_video_props or audio_props != ref_audio_props:
                         return False
-        except av.FFmpegError, ValueError, OSError:
+        except (av.FFmpegError, ValueError, OSError) as _:
             return False
 
     return True
@@ -241,8 +244,29 @@ def _concat_reencode(
         v_pts = 0
         a_pts = 0
 
+        def emit_video_frame(f: av.VideoFrame) -> None:
+            nonlocal v_pts
+            rf = f.reformat(width=can_w, height=can_h, format="yuv420p")
+            rf.pts = v_pts
+            rf.time_base = Fraction(1, can_fps)
+            v_pts += 1
+            if out_video is not None:
+                for enc_p in out_video.encode(rf):
+                    out_container.mux(enc_p)
+
+        def emit_audio_frame(f: av.AudioFrame) -> None:
+            nonlocal a_pts
+            f.pts = a_pts
+            f.time_base = Fraction(1, can_sr)
+            a_pts += f.samples
+            if out_audio is not None:
+                for enc_p in out_audio.encode(f):
+                    out_container.mux(enc_p)
+
         for seg_p in segments:
             seg_v_start = v_pts
+            seg_a_start = a_pts
+            seg_had_video = False
             seg_had_audio = False
 
             resampler = None
@@ -255,6 +279,8 @@ def _concat_reencode(
 
             with av.open(str(seg_p)) as in_c:
                 v_stream = in_c.streams.video[0] if in_c.streams.video else None
+                a_stream = in_c.streams.audio[0] if in_c.streams.audio else None
+
                 fps_graph = None
                 if v_stream is not None and out_video is not None:
                     in_rate = v_stream.average_rate or v_stream.guessed_rate
@@ -267,38 +293,20 @@ def _concat_reencode(
                         fps_filter.link_to(sink)
                         fps_graph.configure()
 
-                streams = [s for s in [*in_c.streams.video, *in_c.streams.audio]]
+                streams = [s for s in (v_stream, a_stream) if s is not None]
                 for packet in in_c.demux(*streams):
                     for frame in packet.decode():
                         if isinstance(frame, av.VideoFrame) and out_video is not None:
+                            seg_had_video = True
                             if fps_graph is not None:
                                 fps_graph.push(frame)
                                 while True:
                                     try:
-                                        filt_frame = fps_graph.pull()
-                                    except av.BlockingIOError, av.EOFError:
+                                        emit_video_frame(fps_graph.pull())
+                                    except (av.BlockingIOError, av.EOFError) as _:
                                         break
-                                    rf = filt_frame.reformat(
-                                        width=can_w,
-                                        height=can_h,
-                                        format="yuv420p",
-                                    )
-                                    rf.pts = v_pts
-                                    rf.time_base = Fraction(1, can_fps)
-                                    v_pts += 1
-                                    for enc_p in out_video.encode(rf):
-                                        out_container.mux(enc_p)
                             else:
-                                rf = frame.reformat(
-                                    width=can_w,
-                                    height=can_h,
-                                    format="yuv420p",
-                                )
-                                rf.pts = v_pts
-                                rf.time_base = Fraction(1, can_fps)
-                                v_pts += 1
-                                for enc_p in out_video.encode(rf):
-                                    out_container.mux(enc_p)
+                                emit_video_frame(frame)
 
                         elif (
                             isinstance(frame, av.AudioFrame)
@@ -307,38 +315,20 @@ def _concat_reencode(
                         ):
                             seg_had_audio = True
                             for r_frame in resampler.resample(frame):
-                                r_frame.pts = a_pts
-                                r_frame.time_base = Fraction(1, can_sr)
-                                a_pts += r_frame.samples
-                                for enc_p in out_audio.encode(r_frame):
-                                    out_container.mux(enc_p)
+                                emit_audio_frame(r_frame)
 
                 if fps_graph is not None and out_video is not None:
                     fps_graph.push(None)
                     while True:
                         try:
-                            filt_frame = fps_graph.pull()
-                        except av.BlockingIOError, av.EOFError:
+                            emit_video_frame(fps_graph.pull())
+                        except (av.BlockingIOError, av.EOFError) as _:
                             break
-                        rf = filt_frame.reformat(
-                            width=can_w,
-                            height=can_h,
-                            format="yuv420p",
-                        )
-                        rf.pts = v_pts
-                        rf.time_base = Fraction(1, can_fps)
-                        v_pts += 1
-                        for enc_p in out_video.encode(rf):
-                            out_container.mux(enc_p)
 
             if resampler is not None:
                 for r_frame in resampler.resample(None):
                     seg_had_audio = True
-                    r_frame.pts = a_pts
-                    r_frame.time_base = Fraction(1, can_sr)
-                    a_pts += r_frame.samples
-                    for enc_p in out_audio.encode(r_frame):
-                        out_container.mux(enc_p)
+                    emit_audio_frame(r_frame)
 
             # Pad silence if segment had no audio frames but audio stream is active
             if out_audio is not None and not seg_had_audio and v_pts > seg_v_start:
@@ -356,12 +346,19 @@ def _concat_reencode(
                         silence_arr, format="fltp", layout=can_layout
                     )
                     silence_frame.sample_rate = can_sr
-                    silence_frame.pts = a_pts
-                    silence_frame.time_base = Fraction(1, can_sr)
-                    a_pts += cur_chunk
+                    emit_audio_frame(silence_frame)
                     samples_left -= cur_chunk
-                    for enc_p in out_audio.encode(silence_frame):
-                        out_container.mux(enc_p)
+
+            # Pad black frames if segment had no video frames but video stream is active
+            if out_video is not None and not seg_had_video and a_pts > seg_a_start:
+                seg_duration_s = (a_pts - seg_a_start) / float(can_sr)
+                needed_frames = round(seg_duration_s * float(can_fps))
+                if needed_frames > 0:
+                    black_frame = av.VideoFrame.from_ndarray(
+                        np.zeros((can_h, can_w, 3), dtype=np.uint8), format="rgb24"
+                    ).reformat(format="yuv420p")
+                    for _ in range(needed_frames):
+                        emit_video_frame(black_frame)
 
         if out_video is not None:
             for enc_p in out_video.encode():
@@ -380,25 +377,37 @@ def concat(
     outro_path: Path | str | None = None,
     output_path: Path | str | None = None,
     *,
+    backend: StorageBackend | None = None,
+    storage: StorageBackend | None = None,
     force_reencode: bool = False,
 ) -> str:
     """Concatenate talk media segments (cut recording with optional intro and outro).
+
+    Persists the concatenated output via StorageBackend, producing the exact artifact
+    consumed by subsequent transcoding.
 
     Args:
         cut_path: Path to the main trimmed talk recording.
         intro_path: Optional path to an intro title slate media file.
         outro_path: Optional path to an outro closing media file.
-        output_path: Destination path for concatenated output. If omitted,
-            defaults to `{cut_stem}_concat{cut_suffix}` in cut's directory.
+        output_path: Destination path or storage key for concatenated output. If omitted,
+            defaults to `{cut_stem}_concat{cut_suffix}` in cut's directory. For
+            cut-only calls without a custom output destination, returns `cut_path`
+            unchanged instead.
+        backend: Optional StorageBackend abstraction to persist output. If omitted,
+            defaults to a LocalDiskBackend scoped to the output destination directory.
+        storage: Alias for backend.
         force_reencode: If True, bypass stream-copy remuxing and force re-encoding.
 
     Returns:
-        str: Absolute or relative string path of the concatenated output file.
+        str: Absolute or relative string path or key of the concatenated output file.
 
     Raises:
         FileNotFoundError: If any specified input file does not exist.
         ValueError: If output path matches any input path, or invalid stream configurations.
     """
+    storage_backend = backend or storage
+
     cut_p = Path(cut_path)
     if not cut_p.is_file():
         raise FileNotFoundError(f"Cut file not found: {cut_p}")
@@ -424,26 +433,43 @@ def concat(
         return str(cut_p)
 
     if output_path is None:
-        out_path = cut_p.parent / f"{cut_p.stem}_concat{cut_p.suffix}"
+        out_p = cut_p.parent / f"{cut_p.stem}_concat{cut_p.suffix}"
+        output_key = out_p.name
     else:
-        out_path = Path(output_path)
+        out_p = Path(output_path)
+        output_key = str(output_path)
 
     input_paths = [p for p in (intro_p, cut_p, outro_p) if p is not None]
-    if any(out_path.resolve() == p.resolve() for p in input_paths):
-        raise ValueError(f"Output path matches input path: {out_path}")
+    if any(out_p.resolve() == p.resolve() for p in input_paths):
+        raise ValueError(f"Output path matches input path: {out_p}")
 
-    # storage-boundary-exempt: creating parent directory for pipeline output
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    def _persist(src: Path) -> str:
+        if storage_backend is not None:
+            storage_backend.put(output_key, src)
+            stored = storage_backend.get(output_key)
+            return getattr(stored, "key", str(stored))
+        LocalDiskBackend(out_p.parent).put(out_p.name, src)
+        return str(out_p)
+
+    if intro_p is None and outro_p is None:
+        return _persist(cut_p)
 
     segments = [p for p in (intro_p, cut_p, outro_p) if p is not None]
 
-    if not force_reencode and _can_stream_copy(segments):
-        try:
-            return _concat_stream_copy(segments, out_path, canonical_cut_path=cut_p)
-        except (av.FFmpegError, ValueError, RuntimeError, OSError) as exc:
-            logger.warning(
-                "Stream-copy concat failed (%s); falling back to full re-encode.",
-                exc,
-            )
+    # Render into a temporary file, then persist via StorageBackend
+    with tempfile.TemporaryDirectory(prefix="veditor-concat-") as tmpdir:
+        tmp_target = Path(tmpdir) / "concat_tmp.mp4"
 
-    return _concat_reencode(segments, cut_p, out_path)
+        if not force_reencode and _can_stream_copy(segments):
+            try:
+                _concat_stream_copy(segments, tmp_target, canonical_cut_path=cut_p)
+            except (av.FFmpegError, ValueError, RuntimeError, OSError) as exc:
+                logger.warning(
+                    "Stream-copy concat failed (%s); falling back to full re-encode.",
+                    exc,
+                )
+                _concat_reencode(segments, cut_p, tmp_target)
+        else:
+            _concat_reencode(segments, cut_p, tmp_target)
+
+        return _persist(tmp_target)

@@ -9,7 +9,9 @@ from app.pipeline.concat import (
     _can_stream_copy,
     concat,
 )
+from app.storage import LocalDiskBackend
 from tests.conftest import (
+    FakeStorageBackend,
     assert_playable,
     generate_clip,
     open_and_inspect,
@@ -265,3 +267,71 @@ def test_can_stream_copy_validation(tmp_path: Path):
     assert _can_stream_copy([c1, c_fps]) is False
     assert _can_stream_copy([c1, c_sr]) is False
     assert _can_stream_copy([]) is False
+
+
+def test_concat_audio_only_intro_pads_video_black_frames(tmp_path: Path):
+    """Verify that concatenating an audio-only intro with a video/audio cut pads black frames so timelines align."""
+    intro_path = generate_clip(
+        1.5, has_video=False, has_audio=True, output_dir=tmp_path
+    )
+    cut_path = generate_clip(2.0, has_video=True, has_audio=True, output_dir=tmp_path)
+    output_path = tmp_path / "audio_only_intro_padded.mp4"
+
+    result = concat(cut_path, intro_path=intro_path, output_path=output_path)
+
+    assert result == str(output_path)
+    assert output_path.is_file()
+    assert_playable(output_path)
+
+    info = open_and_inspect(output_path)
+    assert info.has_video is True
+    assert info.has_audio is True
+    assert info.duration is not None
+    assert abs(info.duration - 3.5) <= 0.35
+
+
+def test_concat_persists_via_storage_backend(tmp_path: Path):
+    """Verify that concatenated output is written and persisted via StorageBackend."""
+    cut_path = generate_clip(1.5, output_dir=tmp_path)
+    intro_path = generate_clip(1.0, output_dir=tmp_path)
+
+    # 1. LocalDiskBackend
+    storage_dir = tmp_path / "managed_storage"
+    local_backend = LocalDiskBackend(storage_dir)
+    key = "talk_42/concat/assembled.mp4"
+
+    result = concat(
+        cut_path,
+        intro_path=intro_path,
+        output_path=key,
+        backend=local_backend,
+    )
+
+    assert local_backend.exists(key)
+    dest_path = local_backend.get(key)
+    assert str(dest_path) == result
+    assert dest_path.is_file()
+    assert_playable(dest_path)
+
+    # 2. FakeStorageBackend
+    fake_backend = FakeStorageBackend()
+    fake_key = "talk_99/concat/assembled.mp4"
+    concat(
+        cut_path,
+        intro_path=intro_path,
+        output_path=fake_key,
+        backend=fake_backend,
+    )
+    assert fake_backend.exists(fake_key)
+    assert len(fake_backend.get(fake_key).read_bytes()) > 0
+
+
+def test_concat_passthrough_persists_via_storage_backend(tmp_path: Path):
+    """Verify that cut alone with an explicit destination writes via StorageBackend."""
+    cut_path = generate_clip(1.5, output_dir=tmp_path)
+    fake_backend = FakeStorageBackend()
+    key = "talk_1/cut/passthrough.mp4"
+
+    concat(cut_path, output_path=key, backend=fake_backend)
+    assert fake_backend.exists(key)
+    assert len(fake_backend.get(key).read_bytes()) > 0
