@@ -1,6 +1,7 @@
 """Tests for speaker review endpoint (POST /talks/{talk_id}/review) and review handlers."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -642,12 +643,44 @@ def test_needs_work_subsequent_cut_overwrites_outputs():
         # Verify job_cut was enqueued
         mock_cut_enqueue.assert_called_once()
         call_args = mock_cut_enqueue.call_args
+        queued_cut = call_args[0][0]
+        cut_args = call_args[0][1:]
         assert call_args[0][1] == 1  # talk_id
         assert call_args[0][2] == "1/raw/video.mp4"  # raw_key
 
-    # Step 3: Overwrite cut and preview artifacts
-    fake_storage.put("1/cut/cut.mp4", b"new cut content v2")
-    fake_storage.put("1/preview/preview.mp4", b"new preview content v2")
+    # Step 3: Run queued cut and preview workers to overwrite artifacts
+    mock_db.__enter__.return_value = mock_db
+    mock_db.get.side_effect = lambda model, obj_id: (
+        talk if model == models.Talk else MagicMock()
+    )
+
+    with (
+        patch("app.tasks.SessionLocal", return_value=mock_db),
+        patch("app.tasks.get_storage_backend", return_value=fake_storage),
+        patch(
+            "app.tasks.cut",
+            side_effect=lambda inp, out, s, e: Path(out).write_bytes(
+                b"new cut content v2"
+            ),
+        ),
+        patch(
+            "app.tasks.generate_preview",
+            side_effect=lambda inp, out, preset: Path(out).write_bytes(
+                b"new preview content v2"
+            ),
+        ),
+        patch("app.tasks.light_queue.enqueue") as mock_preview_enqueue,
+    ):
+        queued_cut(*cut_args)
+        assert talk.status == "generating_previews"
+
+        mock_preview_enqueue.assert_called_once()
+        queued_preview = mock_preview_enqueue.call_args[0][0]
+        preview_args = mock_preview_enqueue.call_args[0][1:]
+
+        queued_preview(*preview_args)
+        assert talk.status == "preview"
+        assert mock_preview_enqueue.call_count == 1
 
     assert fake_storage.get("1/cut/cut.mp4").read_bytes() == b"new cut content v2"
     assert fake_storage.get("1/preview/preview.mp4").read_bytes() == (
