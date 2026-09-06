@@ -120,6 +120,7 @@ def test_end_to_end_smoke(clean_db):
         "generating_previews",
         "preview",
         "pending_intro_outro",
+        "assembling",
         "transcoding",
         "uploading",
         "done",
