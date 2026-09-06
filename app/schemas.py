@@ -3,7 +3,7 @@ from datetime import datetime, time
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class EventBase(BaseModel):
@@ -52,7 +52,18 @@ class TalkRead(TalkBase):
     raw_duration_seconds: float | None = None
     cut_start: float | None = None
     cut_end: float | None = None
+    include_intro: bool = False
+    include_outro: bool = False
+    intro_source: str | None = None
+    outro_source: str | None = None
+    custom_intro_path: str | None = None
+    custom_outro_path: str | None = None
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("include_intro", "include_outro", mode="before")
+    @classmethod
+    def _coerce_bool(cls, v):
+        return False if v is None else bool(v)
 
 
 class JobBase(BaseModel):
@@ -152,3 +163,32 @@ class CutBoundsRequest(BaseModel):
 
     def parsed_seconds(self) -> tuple[float, float]:
         return _parse_hhmmss(self.cut_start), _parse_hhmmss(self.cut_end)
+
+
+class IntroOutroRequest(BaseModel):
+    include_intro: bool = False
+    include_outro: bool = False
+    intro_source: Literal["generated", "custom"] = "generated"
+    outro_source: Literal["generated", "custom"] = "generated"
+    custom_intro_path: str | None = None
+    custom_outro_path: str | None = None
+
+    @model_validator(mode="after")
+    def validate_custom_paths(self):
+        if (
+            self.include_intro
+            and self.intro_source == "custom"
+            and (not self.custom_intro_path or not self.custom_intro_path.strip())
+        ):
+            raise ValueError(
+                "custom_intro_path is required when intro_source is 'custom'"
+            )
+        if (
+            self.include_outro
+            and self.outro_source == "custom"
+            and (not self.custom_outro_path or not self.custom_outro_path.strip())
+        ):
+            raise ValueError(
+                "custom_outro_path is required when outro_source is 'custom'"
+            )
+        return self

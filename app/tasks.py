@@ -15,6 +15,7 @@ from pathlib import Path
 from app.config import PREVIEW_PRESETS, settings
 from app.db import SessionLocal
 from app.models import Job, Talk
+from app.pipeline.concat import concat
 from app.pipeline.cut import cut
 from app.pipeline.detect import detect
 from app.pipeline.intro import generate_intro_clip
@@ -35,6 +36,7 @@ STAGE_CONFIG: dict[str, dict[str, str | int]] = {
     "cut": {"queue": "light", "job_timeout": 900},
     "intro": {"queue": "light", "job_timeout": 300},
     "outro": {"queue": "light", "job_timeout": 300},
+    "concat": {"queue": "light", "job_timeout": 1800},
     "preview": {"queue": "light", "job_timeout": 1800},
     "loudness": {"queue": "light", "job_timeout": 900},
     "transcode": {"queue": "heavy", "job_timeout": 14400},
@@ -169,7 +171,73 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
         raise
 
 
-def job_intro(talk_id: int, intro_key: str | None = None) -> None:
+def dispatch_assembly(talk_id: int, cut_key: str) -> None:
+    """Dispatches the next background stage in the assembly workflow."""
+    with SessionLocal() as db:
+        talk = db.get(Talk, talk_id)
+        if not talk or talk.status not in ("assembling", "generating_previews"):
+            return
+
+        # 1. Check if generated intro is required and not yet completed
+        intro_needed = talk.include_intro and talk.intro_source == "generated"
+        intro_done = (
+            db.query(Job)
+            .filter(Job.talk_id == talk_id, Job.kind == "intro", Job.status == "done")
+            .first()
+            is not None
+        )
+        if intro_needed and not intro_done:
+            light_queue.enqueue(
+                job_intro,
+                talk_id,
+                cut_key,
+                f"{talk_id}/intro/intro.mp4",
+                job_timeout=STAGE_CONFIG["intro"]["job_timeout"],
+            )
+            return
+
+        # 2. Check if generated outro is required and not yet completed
+        outro_needed = talk.include_outro and talk.outro_source == "generated"
+        outro_done = (
+            db.query(Job)
+            .filter(Job.talk_id == talk_id, Job.kind == "outro", Job.status == "done")
+            .first()
+            is not None
+        )
+        if outro_needed and not outro_done:
+            light_queue.enqueue(
+                job_outro,
+                talk_id,
+                cut_key,
+                f"{talk_id}/outro/outro.mp4",
+                job_timeout=STAGE_CONFIG["outro"]["job_timeout"],
+            )
+            return
+
+        # 3. All input slates are ready (or skipped) -> enqueue concat
+        intro_key = f"{talk_id}/intro/intro.mp4" if talk.include_intro else None
+        outro_key = f"{talk_id}/outro/outro.mp4" if talk.include_outro else None
+        concat_key = f"{talk_id}/assemble/assemble.mp4"
+        light_queue.enqueue(
+            job_concat,
+            talk_id,
+            cut_key,
+            intro_key,
+            outro_key,
+            concat_key,
+            job_timeout=STAGE_CONFIG["concat"]["job_timeout"],
+        )
+
+
+def job_intro(
+    talk_id: int,
+    cut_key: str | None = None,
+    intro_key: str | None = None,
+) -> None:
+    if cut_key and "/intro/" in cut_key and intro_key is None:
+        intro_key = cut_key
+        cut_key = None
+    cut_key = cut_key or f"{talk_id}/cut/cut.mp4"
     intro_key = intro_key or f"{talk_id}/intro/intro.mp4"
     job_id = None
     storage = get_storage_backend()
@@ -207,21 +275,37 @@ def job_intro(talk_id: int, intro_key: str | None = None) -> None:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if not talk or not job:
+            if (
+                not talk
+                or not job
+                or talk.status not in ("assembling", "generating_previews")
+            ):
                 logger.info(
                     "Talk %s intro job %s was aborted or state changed; discarding",
                     talk_id,
                     job_id,
                 )
                 return
+            talk_status = talk.status
             job.status = "done"
             db.commit()
+
+        if talk_status == "assembling":
+            dispatch_assembly(talk_id, cut_key)
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)
         raise
 
 
-def job_outro(talk_id: int, outro_key: str | None = None) -> None:
+def job_outro(
+    talk_id: int,
+    cut_key: str | None = None,
+    outro_key: str | None = None,
+) -> None:
+    if cut_key and "/outro/" in cut_key and outro_key is None:
+        outro_key = cut_key
+        cut_key = None
+    cut_key = cut_key or f"{talk_id}/cut/cut.mp4"
     outro_key = outro_key or f"{talk_id}/outro/outro.mp4"
     job_id = None
     storage = get_storage_backend()
@@ -248,15 +332,86 @@ def job_outro(talk_id: int, outro_key: str | None = None) -> None:
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if not talk or not job:
+            if (
+                not talk
+                or not job
+                or talk.status not in ("assembling", "generating_previews")
+            ):
                 logger.info(
                     "Talk %s outro job %s was aborted or state changed; discarding",
                     talk_id,
                     job_id,
                 )
                 return
+            talk_status = talk.status
             job.status = "done"
             db.commit()
+
+        if talk_status == "assembling":
+            dispatch_assembly(talk_id, cut_key)
+    except Exception as exc:
+        _handle_failure(talk_id, job_id, exc, storage)
+        raise
+
+
+def job_concat(
+    talk_id: int,
+    cut_key: str,
+    intro_key: str | None = None,
+    outro_key: str | None = None,
+    concat_key: str | None = None,
+) -> None:
+    concat_key = concat_key or f"{talk_id}/assemble/assemble.mp4"
+    job_id = None
+    storage = get_storage_backend()
+    try:
+        with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
+            if not talk:
+                raise ValueError(f"Talk {talk_id} not found")
+            job = Job(talk_id=talk_id, kind="concat", status="running")
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_id = job.id
+
+        cut_path = storage.get(cut_key)
+        intro_path = (
+            storage.get(intro_key) if intro_key and storage.exists(intro_key) else None
+        )
+        outro_path = (
+            storage.get(outro_key) if outro_key and storage.exists(outro_key) else None
+        )
+
+        concat(
+            cut_path=cut_path,
+            intro_path=intro_path,
+            outro_path=outro_path,
+            output_path=concat_key,
+            backend=storage,
+        )
+
+        with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
+            job = db.get(Job, job_id)
+            if not talk or not job or talk.status != "assembling":
+                logger.info(
+                    "Talk %s concat job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                return
+            job.status = "done"
+            db.commit()
+
+        loud_key = f"{talk_id}/assemble/assemble_loud.mp4"
+        light_queue.enqueue(
+            job_loudness,
+            talk_id,
+            concat_key,
+            loud_key,
+            job_timeout=STAGE_CONFIG["loudness"]["job_timeout"],
+        )
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)
         raise
@@ -307,7 +462,12 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
 
 
 def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> None:
-    loud_key = loud_key or f"{talk_id}/cut/cut_loud.mp4"
+    if loud_key is None:
+        loud_key = (
+            f"{talk_id}/cut/cut_loud.mp4"
+            if "/cut/" in cut_key
+            else f"{talk_id}/assemble/assemble_loud.mp4"
+        )
     job_id = None
     storage = get_storage_backend()
     try:
@@ -315,6 +475,13 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
             talk = db.get(Talk, talk_id)
             if not talk:
                 raise ValueError(f"Talk {talk_id} not found")
+            if talk.status != "assembling":
+                logger.info(
+                    "Talk %s loudness job: talk status %s != assembling; discarding",
+                    talk_id,
+                    talk.status,
+                )
+                return
             job = Job(talk_id=talk_id, kind="loudness", status="running")
             db.add(job)
             db.commit()
@@ -331,13 +498,14 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
             job = db.get(Job, job_id)
-            if not talk or not job or talk.status != "transcoding":
+            if not talk or not job or talk.status != "assembling":
                 logger.info(
                     "Talk %s loudness job %s was aborted or state changed; discarding",
                     talk_id,
                     job_id,
                 )
                 return
+            advance(talk, "transcoding")
             job.status = "done"
             db.commit()
 

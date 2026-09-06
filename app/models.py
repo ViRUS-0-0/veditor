@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -55,6 +56,12 @@ class Talk(Base):
     raw_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     cut_start: Mapped[float | None] = mapped_column(Float, nullable=True)
     cut_end: Mapped[float | None] = mapped_column(Float, nullable=True)
+    include_intro: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    include_outro: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    intro_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    outro_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    custom_intro_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    custom_outro_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     event: Mapped[Event] = relationship(back_populates="talks")
     jobs: Mapped[list[Job]] = relationship(

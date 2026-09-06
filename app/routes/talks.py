@@ -9,11 +9,15 @@ from app import models, schemas
 from app.auth import get_client, verify_event_access
 from app.config import settings
 from app.db import get_db
-from app.ingest import IngestPathRejectedError, stage_recording
+from app.ingest import (
+    IngestPathRejectedError,
+    stage_custom_clip,
+    stage_recording,
+)
 from app.queue import heavy_queue, light_queue
 from app.states import advance
 from app.storage import StorageBackend, get_storage_backend
-from app.tasks import STAGE_CONFIG, job_cut, job_detect
+from app.tasks import STAGE_CONFIG, dispatch_assembly, job_cut, job_detect
 
 router = APIRouter(
     prefix="/talks",
@@ -221,6 +225,7 @@ RAW_PREVIEW_ALLOWED_STATES = frozenset(
         "preview",
         "needs_work",
         "pending_intro_outro",
+        "assembling",
         "transcoding",
         "uploading",
         "done",
@@ -340,6 +345,95 @@ def submit_cut_bounds(
 
 
 @router.post(
+    "/{talk_id}/assemble",
+    response_model=schemas.TalkRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def configure_assembly(
+    talk_id: int,
+    payload: schemas.IntroOutroRequest,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Configures intro and outro selection for a talk in pending_intro_outro state.
+    - Validates custom clip paths against allowed ingest roots and video format.
+    - Stages custom media into storage under {talk_id}/intro/ or {talk_id}/outro/.
+    - Persists selection on Talk row and advances status to 'assembling'.
+    - Dispatches background assembly pipeline (intro -> outro -> concat -> transcode).
+    Returns 404 if talk not found or unauthorized for caller's events.
+    Returns 409 if talk status is not 'pending_intro_outro'.
+    Returns 400 if custom path validation fails.
+    """
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+
+    if talk.status != "pending_intro_outro":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot configure intro/outro for talk in status '{talk.status}'; talk must be in 'pending_intro_outro'",
+        )
+
+    cut_keys = storage.list_keys(f"{talk.id}/cut/")
+    default_cut_key = f"{talk.id}/cut/cut.mp4"
+    if cut_keys:
+        cut_key = cut_keys[0]
+    elif storage.exists(default_cut_key):
+        cut_key = default_cut_key
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No cut recording found for talk",
+        )
+
+    # Validate and stage custom clips before any DB mutation
+    if payload.include_intro and payload.intro_source == "custom":
+        try:
+            stage_custom_clip(talk.id, payload.custom_intro_path, "intro", storage)
+        except IngestPathRejectedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Intro clip rejected: {exc}",
+            ) from exc
+
+    if payload.include_outro and payload.outro_source == "custom":
+        try:
+            stage_custom_clip(talk.id, payload.custom_outro_path, "outro", storage)
+        except IngestPathRejectedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Outro clip rejected: {exc}",
+            ) from exc
+
+    talk.include_intro = payload.include_intro
+    talk.include_outro = payload.include_outro
+    talk.intro_source = payload.intro_source if payload.include_intro else None
+    talk.outro_source = payload.outro_source if payload.include_outro else None
+    talk.custom_intro_path = (
+        payload.custom_intro_path
+        if payload.include_intro and payload.intro_source == "custom"
+        else None
+    )
+    talk.custom_outro_path = (
+        payload.custom_outro_path
+        if payload.include_outro and payload.outro_source == "custom"
+        else None
+    )
+
+    advance(talk, "assembling")
+    db.commit()
+    db.refresh(talk)
+
+    dispatch_assembly(talk.id, cut_key)
+
+    return schemas.TalkRead.model_validate(talk)
+
+
+@router.post(
     "/{talk_id}/abort",
     response_model=schemas.TalkRead,
     status_code=status.HTTP_200_OK,
@@ -407,6 +501,12 @@ def abort_talk(
     talk.raw_duration_seconds = None
     talk.cut_start = None
     talk.cut_end = None
+    talk.include_intro = False
+    talk.include_outro = False
+    talk.intro_source = None
+    talk.outro_source = None
+    talk.custom_intro_path = None
+    talk.custom_outro_path = None
     db.commit()
     db.refresh(talk)
 
