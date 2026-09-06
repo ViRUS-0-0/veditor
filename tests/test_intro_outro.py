@@ -878,7 +878,12 @@ def test_configure_assembly_dispatch_failure_advances_to_broken(
         isinstance(call.args[0], models.Job)
         and call.args[0].kind == "assembly"
         and call.args[0].status == "failed"
+        and call.args[0].log_path == "1/logs/assembly.log"
         for call in mock_db.add.call_args_list
+    )
+    assert fake_storage.exists("1/logs/assembly.log")
+    assert (
+        b"Redis connection lost" in fake_storage.get("1/logs/assembly.log").read_bytes()
     )
 
 

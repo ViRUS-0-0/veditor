@@ -1,4 +1,5 @@
 import logging
+import traceback
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -458,7 +459,21 @@ def configure_assembly(
         dispatch_assembly(talk.id, cut_key)
     except Exception:
         advance(talk, "broken")
-        job = models.Job(talk_id=talk.id, kind="assembly", status="failed")
+        log_key = f"{talk.id}/logs/assembly.log"
+        log_content = traceback.format_exc()
+        try:
+            storage.put(log_key, log_content.encode("utf-8"))
+        except Exception as log_err:  # noqa: BLE001
+            logger.warning(
+                "Failed to persist dispatch failure log to storage: %s", log_err
+            )
+            log_key = None
+        job = models.Job(
+            talk_id=talk.id,
+            kind="assembly",
+            status="failed",
+            log_path=log_key,
+        )
         db.add(job)
         db.commit()
         raise
