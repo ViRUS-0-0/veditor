@@ -376,12 +376,8 @@ def job_concat(
             job_id = job.id
 
         cut_path = storage.get(cut_key)
-        intro_path = (
-            storage.get(intro_key) if intro_key and storage.exists(intro_key) else None
-        )
-        outro_path = (
-            storage.get(outro_key) if outro_key and storage.exists(outro_key) else None
-        )
+        intro_path = storage.get(intro_key) if intro_key else None
+        outro_path = storage.get(outro_key) if outro_key else None
 
         concat(
             cut_path=cut_path,

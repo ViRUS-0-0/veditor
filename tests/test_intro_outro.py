@@ -107,6 +107,8 @@ def clean_dependency_overrides():
 @pytest.fixture
 def mock_db():
     db = MagicMock()
+    mock_filter = db.query.return_value.filter.return_value
+    mock_filter.with_for_update.return_value = mock_filter
 
     def fake_refresh(obj):
         if getattr(obj, "id", None) is None:
@@ -847,3 +849,46 @@ def test_job_outro_assembling_invokes_dispatch_assembly(pending_talk):
         j.kind == "outro" and j.status == "done" for j in db_ctx.jobs_dict.values()
     )
     mock_dispatch.assert_called_once_with(1, "1/cut/cut.mp4")
+
+
+def test_configure_assembly_dispatch_failure_advances_to_broken(
+    mock_db, auth_client, fake_storage, pending_talk
+):
+    """When dispatch_assembly fails, talk status advances to broken instead of being left in assembling."""
+    mock_db.query.return_value.filter.return_value.first.return_value = pending_talk
+    app.dependency_overrides[get_client] = lambda: auth_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
+
+    with (
+        patch(
+            "app.routes.talks.dispatch_assembly",
+            side_effect=RuntimeError("Redis connection lost"),
+        ),
+        pytest.raises(RuntimeError, match="Redis connection lost"),
+    ):
+        client.post(
+            "/talks/1/assemble",
+            json={"include_intro": False, "include_outro": False},
+            headers={"X-API-Key": "valid_key"},
+        )
+
+    assert pending_talk.status == "broken"
+
+
+def test_configure_assembly_locks_talk_row_with_for_update(
+    mock_db, auth_client, fake_storage, pending_talk
+):
+    """POST /talks/{id}/assemble acquires row-level lock via with_for_update() on talk query."""
+    mock_db.query.return_value.filter.return_value.first.return_value = pending_talk
+    app.dependency_overrides[get_client] = lambda: auth_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
+
+    response = client.post(
+        "/talks/1/assemble",
+        json={"include_intro": False, "include_outro": False},
+        headers={"X-API-Key": "valid_key"},
+    )
+    assert response.status_code == 202
+    mock_db.query.return_value.filter.return_value.with_for_update.assert_called_once()

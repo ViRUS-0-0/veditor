@@ -387,7 +387,12 @@ def configure_assembly(
     Returns 409 if talk status is not 'pending_intro_outro'.
     Returns 400 if custom path validation fails.
     """
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    talk = (
+        db.query(models.Talk)
+        .filter(models.Talk.id == talk_id)
+        .with_for_update()
+        .first()
+    )
     if not talk or talk.event_id not in client.event_ids:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
@@ -449,7 +454,12 @@ def configure_assembly(
     db.commit()
     db.refresh(talk)
 
-    dispatch_assembly(talk.id, cut_key)
+    try:
+        dispatch_assembly(talk.id, cut_key)
+    except Exception:
+        advance(talk, "broken")
+        db.commit()
+        raise
 
     return schemas.TalkRead.model_validate(talk)
 

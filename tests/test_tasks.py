@@ -770,6 +770,31 @@ def test_job_concat_failure_advances_to_broken(dummy_talk, mock_storage):
     mock_light_enqueue.assert_not_called()
 
 
+def test_job_concat_missing_intro_key_raises_and_marks_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "assembling"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+        pytest.raises(FileNotFoundError),
+    ):
+        # mock_storage does not contain "1/intro/nonexistent.mp4"
+        job_concat(
+            1,
+            cut_key="1/cut/cut.mp4",
+            intro_key="1/intro/nonexistent.mp4",
+        )
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "concat"
+    mock_light_enqueue.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("include_intro", "include_outro"),
     [
