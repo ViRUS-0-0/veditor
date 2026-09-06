@@ -874,6 +874,12 @@ def test_configure_assembly_dispatch_failure_advances_to_broken(
         )
 
     assert pending_talk.status == "broken"
+    assert any(
+        isinstance(call.args[0], models.Job)
+        and call.args[0].kind == "assembly"
+        and call.args[0].status == "failed"
+        for call in mock_db.add.call_args_list
+    )
 
 
 def test_configure_assembly_locks_talk_row_with_for_update(

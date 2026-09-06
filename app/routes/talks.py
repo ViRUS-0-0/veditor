@@ -458,6 +458,8 @@ def configure_assembly(
         dispatch_assembly(talk.id, cut_key)
     except Exception:
         advance(talk, "broken")
+        job = models.Job(talk_id=talk.id, kind="assembly", status="failed")
+        db.add(job)
         db.commit()
         raise
 
