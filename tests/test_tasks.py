@@ -775,13 +775,20 @@ def test_job_concat_missing_intro_key_raises_and_marks_broken(dummy_talk, mock_s
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
+    def fake_get(key: str) -> Path:
+        if key == "1/intro/nonexistent.mp4":
+            raise FileNotFoundError(f"Key not found in storage: {key}")
+        return Path("/tmp/fake_media.mp4")
+
+    mock_storage.get.side_effect = fake_get
+
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
         patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat") as mock_concat,
         patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
-        pytest.raises(FileNotFoundError),
+        pytest.raises(FileNotFoundError, match="1/intro/nonexistent.mp4"),
     ):
-        # mock_storage does not contain "1/intro/nonexistent.mp4"
         job_concat(
             1,
             cut_key="1/cut/cut.mp4",
@@ -792,6 +799,40 @@ def test_job_concat_missing_intro_key_raises_and_marks_broken(dummy_talk, mock_s
     job = next(iter(jobs.values()))
     assert job.status == "failed"
     assert job.kind == "concat"
+    mock_concat.assert_not_called()
+    mock_light_enqueue.assert_not_called()
+
+
+def test_job_concat_missing_outro_key_raises_and_marks_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "assembling"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_get(key: str) -> Path:
+        if key == "1/outro/nonexistent.mp4":
+            raise FileNotFoundError(f"Key not found in storage: {key}")
+        return Path("/tmp/fake_media.mp4")
+
+    mock_storage.get.side_effect = fake_get
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat") as mock_concat,
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+        pytest.raises(FileNotFoundError, match="1/outro/nonexistent.mp4"),
+    ):
+        job_concat(
+            1,
+            cut_key="1/cut/cut.mp4",
+            outro_key="1/outro/nonexistent.mp4",
+        )
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "concat"
+    mock_concat.assert_not_called()
     mock_light_enqueue.assert_not_called()
 
 
