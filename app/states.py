@@ -15,7 +15,6 @@ TRANSITIONS = {
     "preview": [
         "pending_intro_outro",
         "needs_work",
-        "rejected",
         "pending_bounds",
         "broken",
     ],

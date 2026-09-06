@@ -45,6 +45,11 @@ def test_advance_illegal_transitions():
         assert exc_info.value.new_state == invalid_next
         assert talk.status == current_state  # State should not mutate
 
+    # Rejection at preview gate resets to pending_bounds; direct rejection is illegal
+    talk = DummyTalk("preview")
+    with pytest.raises(InvalidTransitionError):
+        advance(talk, "rejected")
+
 
 def test_phase4_happy_path():
     """Full happy path: waiting_for_files → detecting → pending_approval → pending_bounds → cutting → generating_previews → preview."""
