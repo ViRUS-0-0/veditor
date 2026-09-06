@@ -891,10 +891,12 @@ def test_configure_assembly_locks_talk_row_with_for_update(
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
-    response = client.post(
-        "/talks/1/assemble",
-        json={"include_intro": False, "include_outro": False},
-        headers={"X-API-Key": "valid_key"},
-    )
+    with patch("app.routes.talks.dispatch_assembly") as mock_dispatch:
+        response = client.post(
+            "/talks/1/assemble",
+            json={"include_intro": False, "include_outro": False},
+            headers={"X-API-Key": "valid_key"},
+        )
     assert response.status_code == 202
     mock_db.query.return_value.filter.return_value.with_for_update.assert_called_once()
+    mock_dispatch.assert_called_once_with(1, "1/cut/cut.mp4")
