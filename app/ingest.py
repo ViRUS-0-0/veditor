@@ -95,3 +95,40 @@ def stage_recording(
     key = f"{talk_id}/raw/{rel_path}"
     backend.put(key=key, source=resolved_path)
     return key
+
+
+def stage_custom_clip(
+    talk_id: int, path_str: str, stage: str, backend: StorageBackend
+) -> str:
+    """Validate a custom clip path against ingest roots and media constraints,
+
+    then stage it into {talk_id}/{stage}/{stage}.mp4 in storage.
+    """
+    if not path_str or "\0" in path_str:
+        raise IngestPathRejectedError("Invalid path")
+
+    target_path = Path(path_str)
+    if not target_path.is_absolute():
+        raise IngestPathRejectedError(f"custom_{stage}_path must be absolute")
+
+    roots = [Path(r).resolve() for r in settings.ingest_roots]
+    resolved_path = None
+    try:
+        candidate = target_path.resolve(strict=True)
+        for root in roots:
+            if candidate.is_relative_to(root):
+                resolved_path = candidate
+                break
+    except OSError, RuntimeError:
+        pass
+
+    if not resolved_path or not resolved_path.is_file():
+        raise IngestPathRejectedError(
+            f"Invalid or missing custom {stage} path: outside allowed ingest roots"
+        )
+
+    validate_media_file(resolved_path)
+
+    key = f"{talk_id}/{stage}/{stage}.mp4"
+    backend.put(key=key, source=resolved_path)
+    return key

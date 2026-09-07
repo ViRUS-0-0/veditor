@@ -11,6 +11,7 @@ def test_stage_config_contains_all_stages():
         "cut",
         "intro",
         "outro",
+        "concat",
         "preview",
         "loudness",
         "transcode",
@@ -30,6 +31,7 @@ def test_stage_config_queue_assignments():
     assert STAGE_CONFIG["cut"]["queue"] == "light"
     assert STAGE_CONFIG["intro"]["queue"] == "light"
     assert STAGE_CONFIG["outro"]["queue"] == "light"
+    assert STAGE_CONFIG["concat"]["queue"] == "light"
     assert STAGE_CONFIG["preview"]["queue"] == "light"
     assert STAGE_CONFIG["loudness"]["queue"] == "light"
     assert STAGE_CONFIG["transcode"]["queue"] == "heavy"
@@ -43,6 +45,7 @@ def test_transcode_timeout_profile():
     assert STAGE_CONFIG["cut"]["job_timeout"] <= 1800
     assert STAGE_CONFIG["intro"]["job_timeout"] <= 600
     assert STAGE_CONFIG["outro"]["job_timeout"] <= 600
+    assert STAGE_CONFIG["concat"]["job_timeout"] <= 1800
 
 
 def test_stage_config_exact_timeouts():
@@ -51,6 +54,7 @@ def test_stage_config_exact_timeouts():
         "cut": 900,
         "intro": 300,
         "outro": 300,
+        "concat": 1800,
         "preview": 1800,
         "loudness": 900,
         "transcode": 14400,

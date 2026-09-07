@@ -50,6 +50,12 @@ def test_create_event_and_talk_relationships(db_session):
     assert talk.event == event
     assert len(event.talks) == 1
     assert event.talks[0] == talk
+    assert talk.include_intro is False
+    assert talk.include_outro is False
+    assert talk.intro_source is None
+    assert talk.outro_source is None
+    assert talk.custom_intro_path is None
+    assert talk.custom_outro_path is None
 
     job = Job(talk_id=talk.id, kind="cut", status="running")
     db_session.add(job)

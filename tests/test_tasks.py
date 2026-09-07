@@ -8,6 +8,8 @@ from app.models import Job, Talk
 from app.pipeline.detect import DetectResult
 from app.tasks import (
     STAGE_CONFIG,
+    dispatch_assembly,
+    job_concat,
     job_cut,
     job_detect,
     job_intro,
@@ -48,8 +50,42 @@ class MockDBContext:
                             ctx.next_job_id += 1
                         ctx.jobs_dict[obj.id] = obj
 
+                def query_mock(model):
+                    q = MagicMock()
+                    if model == Job:
+
+                        def filter_mock(*args):
+                            sub_q = MagicMock()
+
+                            def first_mock():
+                                target_kind = None
+                                for a in args:
+                                    val = getattr(
+                                        getattr(a, "right", None), "value", None
+                                    )
+                                    if val in ("intro", "outro"):
+                                        target_kind = val
+                                        break
+                                for j in ctx.jobs_dict.values():
+                                    if (
+                                        j.talk_id == ctx.talk.id
+                                        and j.status == "done"
+                                        and (
+                                            target_kind is None or j.kind == target_kind
+                                        )
+                                    ):
+                                        return j
+                                return None
+
+                            sub_q.first.side_effect = first_mock
+                            return sub_q
+
+                        q.filter.side_effect = filter_mock
+                    return q
+
                 session_mock.get.side_effect = get_mock
                 session_mock.add.side_effect = add_mock
+                session_mock.query.side_effect = query_mock
                 session_mock.commit = MagicMock()
                 session_mock.refresh = MagicMock()
                 return session_mock
@@ -398,7 +434,7 @@ def test_no_db_session_held_during_preview_and_halts(dummy_talk, mock_storage):
 
 
 def test_loudness_enqueues_transcode_on_heavy(dummy_talk, mock_storage):
-    dummy_talk.status = "transcoding"
+    dummy_talk.status = "assembling"
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
@@ -411,18 +447,44 @@ def test_loudness_enqueues_transcode_on_heavy(dummy_talk, mock_storage):
         patch("app.tasks.normalize", side_effect=fake_loudness),
         patch("app.tasks.heavy_queue.enqueue") as mock_heavy_enqueue,
     ):
-        job_loudness(1, "1/cut/cut.mp4", "1/cut/cut_loud.mp4")
+        job_loudness(1, "1/assemble/assemble.mp4", "1/assemble/assemble_loud.mp4")
 
     job = next(iter(jobs.values()))
     assert job.status == "done"
+    assert job.kind == "loudness"
     assert dummy_talk.status == "transcoding"
     mock_heavy_enqueue.assert_called_once_with(
         job_transcode,
         1,
-        "1/cut/cut_loud.mp4",
+        "1/assemble/assemble_loud.mp4",
         "1/final/final.mp4",
         job_timeout=STAGE_CONFIG["transcode"]["job_timeout"],
     )
+
+
+def test_loudness_failure_advances_to_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "assembling"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch(
+            "app.tasks.normalize",
+            side_effect=RuntimeError("Loudness normalization failed"),
+        ),
+        patch("app.tasks.heavy_queue.enqueue") as mock_heavy_enqueue,
+        pytest.raises(RuntimeError, match="Loudness normalization failed"),
+    ):
+        job_loudness(1, "1/assemble/assemble.mp4", "1/assemble/assemble_loud.mp4")
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "loudness"
+    assert job.log_path is not None
+    mock_heavy_enqueue.assert_not_called()
 
 
 def test_transcode_enqueues_publish_on_light(dummy_talk, mock_storage):
@@ -648,3 +710,275 @@ def test_handle_failure_on_deleted_job_does_not_mark_talk_broken(
         _handle_failure(1, 999, RuntimeError("Aborted failure"), mock_storage)
 
     assert dummy_talk.status == "waiting_for_files"
+
+
+def test_job_concat_enqueues_loudness_on_light(dummy_talk, mock_storage):
+    dummy_talk.status = "assembling"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_concat(cut_path, intro_path, outro_path, output_path, backend):
+        assert db_ctx.open_sessions == 0, "DB session was open during concat!"
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat", side_effect=fake_concat) as mock_concat,
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+    ):
+        job_concat(
+            1,
+            cut_key="1/cut/custom_cut.mp4",
+            intro_key="1/intro/intro.mp4",
+            outro_key="1/outro/outro.mp4",
+            concat_key="1/assemble/assemble.mp4",
+        )
+
+    assert dummy_talk.status == "assembling"
+    job = next(iter(jobs.values()))
+    assert job.status == "done"
+    assert job.kind == "concat"
+    mock_concat.assert_called_once()
+    mock_light_enqueue.assert_called_once_with(
+        job_loudness,
+        1,
+        "1/assemble/assemble.mp4",
+        "1/assemble/assemble_loud.mp4",
+        job_timeout=STAGE_CONFIG["loudness"]["job_timeout"],
+    )
+
+
+def test_job_concat_failure_advances_to_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "assembling"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat", side_effect=RuntimeError("PyAV concat failure")),
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+        pytest.raises(RuntimeError, match="PyAV concat failure"),
+    ):
+        job_concat(1, "1/cut/cut.mp4")
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "concat"
+    assert job.log_path is not None
+    mock_light_enqueue.assert_not_called()
+
+
+def test_job_concat_missing_intro_key_raises_and_marks_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "assembling"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_get(key: str) -> Path:
+        if key == "1/intro/nonexistent.mp4":
+            raise FileNotFoundError(f"Key not found in storage: {key}")
+        return Path("/tmp/fake_media.mp4")
+
+    mock_storage.get.side_effect = fake_get
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat") as mock_concat,
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+        pytest.raises(FileNotFoundError, match="1/intro/nonexistent.mp4"),
+    ):
+        job_concat(
+            1,
+            cut_key="1/cut/cut.mp4",
+            intro_key="1/intro/nonexistent.mp4",
+        )
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "concat"
+    mock_concat.assert_not_called()
+    mock_light_enqueue.assert_not_called()
+
+
+def test_job_concat_missing_outro_key_raises_and_marks_broken(dummy_talk, mock_storage):
+    dummy_talk.status = "assembling"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_get(key: str) -> Path:
+        if key == "1/outro/nonexistent.mp4":
+            raise FileNotFoundError(f"Key not found in storage: {key}")
+        return Path("/tmp/fake_media.mp4")
+
+    mock_storage.get.side_effect = fake_get
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat") as mock_concat,
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+        pytest.raises(FileNotFoundError, match="1/outro/nonexistent.mp4"),
+    ):
+        job_concat(
+            1,
+            cut_key="1/cut/cut.mp4",
+            outro_key="1/outro/nonexistent.mp4",
+        )
+
+    assert dummy_talk.status == "broken"
+    job = next(iter(jobs.values()))
+    assert job.status == "failed"
+    assert job.kind == "concat"
+    mock_concat.assert_not_called()
+    mock_light_enqueue.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("include_intro", "include_outro"),
+    [
+        (False, False),
+        (True, False),
+        (False, True),
+        (True, True),
+    ],
+)
+def test_concat_to_loudness_to_transcode_all_combinations(
+    dummy_talk, mock_storage, include_intro, include_outro
+):
+    dummy_talk.status = "assembling"
+    dummy_talk.include_intro = include_intro
+    dummy_talk.include_outro = include_outro
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def fake_concat(cut_path, intro_path, outro_path, output_path, backend):
+        assert db_ctx.open_sessions == 0, "DB session open during concat!"
+
+    def fake_loudness(input_path, output_path):
+        assert db_ctx.open_sessions == 0, "DB session open during loudness!"
+
+    intro_key = "1/intro/intro.mp4" if include_intro else None
+    outro_key = "1/outro/outro.mp4" if include_outro else None
+    cut_key = "1/cut/cut.mp4"
+    concat_key = "1/assemble/assemble.mp4"
+    loud_key = "1/assemble/assemble_loud.mp4"
+    final_key = "1/final/final.mp4"
+
+    # Step 1: Run job_concat
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat", side_effect=fake_concat) as mock_concat,
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+    ):
+        job_concat(
+            1,
+            cut_key=cut_key,
+            intro_key=intro_key,
+            outro_key=outro_key,
+            concat_key=concat_key,
+        )
+
+    assert dummy_talk.status == "assembling"
+    mock_concat.assert_called_once()
+    mock_light_enqueue.assert_called_once_with(
+        job_loudness,
+        1,
+        concat_key,
+        loud_key,
+        job_timeout=STAGE_CONFIG["loudness"]["job_timeout"],
+    )
+
+    # Step 2: Run job_loudness on concat's output
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.normalize", side_effect=fake_loudness) as mock_norm,
+        patch("app.tasks.heavy_queue.enqueue") as mock_heavy_enqueue,
+    ):
+        job_loudness(1, cut_key=concat_key, loud_key=loud_key)
+
+    mock_norm.assert_called_once()
+    assert dummy_talk.status == "transcoding"
+    mock_heavy_enqueue.assert_called_once_with(
+        job_transcode,
+        1,
+        loud_key,
+        final_key,
+        job_timeout=STAGE_CONFIG["transcode"]["job_timeout"],
+    )
+
+
+def test_dispatch_assembly_skip_both_enqueues_concat(dummy_talk):
+    dummy_talk.status = "assembling"
+    dummy_talk.include_intro = False
+    dummy_talk.include_outro = False
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+    ):
+        dispatch_assembly(1, cut_key="1/cut/special.mp4")
+
+    mock_light_enqueue.assert_called_once_with(
+        job_concat,
+        1,
+        "1/cut/special.mp4",
+        None,
+        None,
+        "1/assemble/assemble.mp4",
+        job_timeout=STAGE_CONFIG["concat"]["job_timeout"],
+    )
+
+
+def test_dispatch_assembly_generated_intro_enqueues_job_intro(dummy_talk):
+    dummy_talk.status = "assembling"
+    dummy_talk.include_intro = True
+    dummy_talk.intro_source = "generated"
+    dummy_talk.include_outro = False
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+    ):
+        dispatch_assembly(1, cut_key="1/cut/special.mp4")
+
+    mock_light_enqueue.assert_called_once_with(
+        job_intro,
+        1,
+        "1/cut/special.mp4",
+        "1/intro/intro.mp4",
+        job_timeout=STAGE_CONFIG["intro"]["job_timeout"],
+    )
+
+
+def test_dispatch_assembly_intro_done_outro_generated_enqueues_job_outro(dummy_talk):
+    dummy_talk.status = "assembling"
+    dummy_talk.include_intro = True
+    dummy_talk.intro_source = "generated"
+    dummy_talk.include_outro = True
+    dummy_talk.outro_source = "generated"
+    intro_job = Job(id=50, talk_id=1, kind="intro", status="done")
+    jobs = {50: intro_job}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.light_queue.enqueue") as mock_light_enqueue,
+    ):
+        dispatch_assembly(1, cut_key="1/cut/special.mp4")
+
+    mock_light_enqueue.assert_called_once_with(
+        job_outro,
+        1,
+        "1/cut/special.mp4",
+        "1/outro/outro.mp4",
+        job_timeout=STAGE_CONFIG["outro"]["job_timeout"],
+    )
