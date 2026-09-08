@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -11,10 +12,11 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db import Base
+from app.retention import validate_retention_overrides
 
 
 class Event(Base):
@@ -22,10 +24,17 @@ class Event(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    retention_overrides: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, default=None
+    )
 
     talks: Mapped[list[Talk]] = relationship(
         back_populates="event", cascade="all, delete-orphan"
     )
+
+    @validates("retention_overrides")
+    def _validate_retention_overrides(self, key: str, value: Any) -> Any:
+        return validate_retention_overrides(value)
 
 
 class Client(Base):

@@ -48,6 +48,7 @@ def test_create_event_and_talk_relationships(db_session):
 
     # Test relationships
     assert talk.event == event
+    assert event.retention_overrides is None
     assert len(event.talks) == 1
     assert event.talks[0] == talk
     assert talk.include_intro is False
@@ -136,3 +137,19 @@ def test_talk_unique_constraint_enforced(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+
+
+def test_event_retention_overrides_persistence(db_session):
+    event = Event(
+        name="Retention Test Event",
+        retention_overrides={"final_retention_days": 45, "extra": "data"},
+    )
+    db_session.add(event)
+    db_session.flush()
+
+    assert event.id is not None
+    assert event.retention_overrides == {"final_retention_days": 45, "extra": "data"}
+
+    reloaded = db_session.query(Event).filter(Event.id == event.id).first()
+    assert reloaded is not None
+    assert reloaded.retention_overrides == {"final_retention_days": 45, "extra": "data"}
