@@ -167,3 +167,19 @@ def test_event_retention_overrides_persistence(db_session):
         "extra": "data",
         "new_key": "persisted",
     }
+
+    reloaded_again.retention_overrides |= {
+        "final_retention_days": 90,
+        "ior_key": "persisted_ior",
+    }
+    db_session.flush()
+
+    db_session.expire_all()
+    reloaded_third = db_session.query(Event).filter(Event.id == event.id).first()
+    assert reloaded_third is not None
+    assert reloaded_third.retention_overrides == {
+        "final_retention_days": 90,
+        "extra": "data",
+        "new_key": "persisted",
+        "ior_key": "persisted_ior",
+    }

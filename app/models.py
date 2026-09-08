@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Self
 
 from sqlalchemy import (
     Boolean,
@@ -37,6 +37,10 @@ class RetentionOverrides(MutableDict):
         if key not in self:
             validate_retention_overrides({**self, key: default})
         return super().setdefault(key, default)
+
+    def __ior__(self, other: Any) -> Self:
+        self.update(other)
+        return self
 
 
 class Event(Base):

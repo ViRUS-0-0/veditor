@@ -204,6 +204,18 @@ def test_model_in_place_mutation_validation():
     assert val == "default_val"
     assert event.retention_overrides["new_key"] == "default_val"
 
+    # In-place |= operator rejection
+    with pytest.raises(ValueError):
+        event.retention_overrides |= {"final_retention_days": -20}
+
+    with pytest.raises(TypeError):
+        event.retention_overrides |= {999: 10}
+
+    # In-place |= operator valid mutation succeeds
+    event.retention_overrides |= {"final_retention_days": 45, "or_key": "val"}
+    assert event.retention_overrides["final_retention_days"] == 45
+    assert event.retention_overrides["or_key"] == "val"
+
 
 def test_sparse_overrides_forward_compatibility():
     sparse_data = {
