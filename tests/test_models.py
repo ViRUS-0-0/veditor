@@ -150,6 +150,20 @@ def test_event_retention_overrides_persistence(db_session):
     assert event.id is not None
     assert event.retention_overrides == {"final_retention_days": 45, "extra": "data"}
 
+    db_session.expire_all()
     reloaded = db_session.query(Event).filter(Event.id == event.id).first()
     assert reloaded is not None
     assert reloaded.retention_overrides == {"final_retention_days": 45, "extra": "data"}
+
+    reloaded.retention_overrides["final_retention_days"] = 60
+    reloaded.retention_overrides["new_key"] = "persisted"
+    db_session.flush()
+
+    db_session.expire_all()
+    reloaded_again = db_session.query(Event).filter(Event.id == event.id).first()
+    assert reloaded_again is not None
+    assert reloaded_again.retention_overrides == {
+        "final_retention_days": 60,
+        "extra": "data",
+        "new_key": "persisted",
+    }

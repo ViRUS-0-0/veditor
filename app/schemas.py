@@ -12,9 +12,11 @@ class EventBase(BaseModel):
     name: str
     retention_overrides: dict[str, Any] | None = None
 
-    @field_validator("retention_overrides", mode="before")
+    @field_validator("retention_overrides")
     @classmethod
-    def _validate_retention_overrides(cls, v: Any) -> Any:
+    def _validate_retention_overrides(
+        cls, v: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
         return validate_retention_overrides(v)
 
 

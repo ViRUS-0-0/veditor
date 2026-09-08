@@ -13,10 +13,30 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db import Base
 from app.retention import validate_retention_overrides
+
+
+class RetentionOverrides(MutableDict):
+    """Mutable dict tracking changes and enforcing validation on retention overrides."""
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        validate_retention_overrides({**self, key: value})
+        super().__setitem__(key, value)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        candidate = dict(self)
+        candidate.update(*args, **kwargs)
+        validate_retention_overrides(candidate)
+        super().update(*args, **kwargs)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        if key not in self:
+            validate_retention_overrides({**self, key: default})
+        return super().setdefault(key, default)
 
 
 class Event(Base):
@@ -25,7 +45,7 @@ class Event(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     retention_overrides: Mapped[dict[str, Any] | None] = mapped_column(
-        JSONB, nullable=True, default=None
+        RetentionOverrides.as_mutable(JSONB), nullable=True, default=None
     )
 
     talks: Mapped[list[Talk]] = relationship(

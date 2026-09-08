@@ -147,6 +147,63 @@ def test_pydantic_schema_validation():
             retention_overrides={"final_retention_days": "unlimited"},
         )
 
+    with pytest.raises(ValidationError):
+        EventCreate(
+            name="Bad Event",
+            retention_overrides="string",
+        )
+
+    with pytest.raises(ValidationError):
+        EventCreate(
+            name="Bad Event",
+            retention_overrides={123: 14},
+        )
+
+
+def test_model_in_place_mutation_validation():
+    event = Event(
+        name="Mutable Event",
+        retention_overrides={"final_retention_days": 14},
+    )
+
+    # In-place __setitem__ invalid value raises ValueError
+    with pytest.raises(ValueError):
+        event.retention_overrides["final_retention_days"] = -1
+
+    with pytest.raises(ValueError):
+        event.retention_overrides["final_retention_days"] = "invalid_string"
+
+    # In-place __setitem__ non-string key raises TypeError
+    with pytest.raises(TypeError):
+        event.retention_overrides[123] = 14
+
+    # In-place update rejection
+    with pytest.raises(ValueError):
+        event.retention_overrides.update({"final_retention_days": -10})
+
+    with pytest.raises(TypeError):
+        event.retention_overrides.update({456: 30})
+
+    # In-place setdefault rejection when setting new key with non-string key
+    with pytest.raises(TypeError):
+        event.retention_overrides.setdefault(789, 14)
+
+    # In-place setdefault rejection when setting new invalid final_retention_days
+    event_empty = Event(name="Empty Overrides Event", retention_overrides={})
+    with pytest.raises(ValueError):
+        event_empty.retention_overrides.setdefault("final_retention_days", -5)
+
+    # Valid in-place mutations succeed
+    event.retention_overrides["final_retention_days"] = 30
+    assert event.retention_overrides["final_retention_days"] == 30
+
+    event.retention_overrides.update({"extra": "allowed"})
+    assert event.retention_overrides["extra"] == "allowed"
+
+    val = event.retention_overrides.setdefault("new_key", "default_val")
+    assert val == "default_val"
+    assert event.retention_overrides["new_key"] == "default_val"
+
 
 def test_sparse_overrides_forward_compatibility():
     sparse_data = {
