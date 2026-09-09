@@ -766,9 +766,9 @@ def test_post_approve_with_mismatched_talk_raw_key_rejected():
     )
     assert response.status_code == 200
     assert response.json()["status"] == "rejected"
-    assert mock_storage.delete.call_count == 2
-    mock_storage.delete.assert_any_call("1/cut")
-    mock_storage.delete.assert_any_call("1/preview")
+    assert mock_storage.delete.call_count == 5
+    for stage in ("1/cut", "1/preview", "1/assemble", "1/intro", "1/outro"):
+        mock_storage.delete.assert_any_call(stage)
 
     app.dependency_overrides.clear()
 
@@ -802,7 +802,7 @@ def test_post_approve_reject_storage_delete_resilient():
     )
     assert response.status_code == 200
     assert response.json()["status"] == "rejected"
-    assert mock_storage.delete.call_count == 2
+    assert mock_storage.delete.call_count == 5
 
     app.dependency_overrides.clear()
 

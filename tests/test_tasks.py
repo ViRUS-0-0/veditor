@@ -580,9 +580,9 @@ def test_publish_advances_to_done_and_halts(dummy_talk, mock_storage):
     job = next(iter(jobs.values()))
     assert job.status == "done"
     mock_enqueue.assert_not_called()  # Terminal state
-    assert mock_storage.delete.call_count == 2
-    mock_storage.delete.assert_any_call("1/cut")
-    mock_storage.delete.assert_any_call("1/preview")
+    assert mock_storage.delete.call_count == 5
+    for stage in ("1/cut", "1/preview", "1/assemble", "1/intro", "1/outro"):
+        mock_storage.delete.assert_any_call(stage)
 
 
 def test_publish_exception_leads_to_broken(dummy_talk, mock_storage):
@@ -626,9 +626,9 @@ def test_publish_storage_delete_resilient(dummy_talk, mock_storage):
     job = next(iter(jobs.values()))
     assert job.status == "done"
     mock_enqueue.assert_not_called()
-    assert mock_storage.delete.call_count == 2
-    mock_storage.delete.assert_any_call("1/cut")
-    mock_storage.delete.assert_any_call("1/preview")
+    assert mock_storage.delete.call_count == 5
+    for stage in ("1/cut", "1/preview", "1/assemble", "1/intro", "1/outro"):
+        mock_storage.delete.assert_any_call(stage)
 
 
 def test_job_detect_discards_when_talk_aborted(dummy_talk, mock_storage):

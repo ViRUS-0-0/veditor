@@ -173,13 +173,22 @@ def get_storage_backend() -> StorageBackend:
     return LocalDiskBackend(settings.data_dir)
 
 
+INTERMEDIATE_STAGES: tuple[str, ...] = (
+    "cut",
+    "preview",
+    "assemble",
+    "intro",
+    "outro",
+)
+
+
 def cleanup_intermediates(storage: StorageBackend, talk_id: int) -> None:
-    """Delete intermediate artifacts (preview/ and cut/) for a talk.
+    """Delete intermediate artifacts (cut, preview, assemble, intro, outro) for a talk.
 
     Safe and idempotent. Deletion failures are logged as warnings and not raised,
     ensuring cleanup never blocks or rolls back state transitions. raw/ is never touched.
     """
-    for target in ("cut", "preview"):
+    for target in INTERMEDIATE_STAGES:
         try:
             storage.delete(f"{talk_id}/{target}")
         except Exception as exc:  # noqa: BLE001

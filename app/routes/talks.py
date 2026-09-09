@@ -232,13 +232,14 @@ def approve_talk(
 
     if decision == "reject":
         advance(talk, "rejected")
-        db.commit()
-        db.refresh(talk)
-        cleanup_intermediates(storage, talk_id)
     else:
         advance(talk, "pending_bounds")
-        db.commit()
-        db.refresh(talk)
+
+    db.commit()
+    db.refresh(talk)
+
+    if decision == "reject":
+        cleanup_intermediates(storage, talk_id)
 
     return schemas.TalkRead.model_validate(talk)
 

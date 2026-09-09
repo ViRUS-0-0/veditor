@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app import models
 from app.main import app
-from app.storage import StorageBackend, get_storage_backend
+from app.storage import INTERMEDIATE_STAGES, StorageBackend, get_storage_backend
 
 
 @pytest.fixture
@@ -372,8 +372,8 @@ def test_ui_reject_talk_cleans_up_intermediates(
     db_session.refresh(talk)
 
     fake_storage.put(f"{talk.id}/raw/video.mp4", b"raw video")
-    fake_storage.put(f"{talk.id}/cut/cut.mp4", b"cut video")
-    fake_storage.put(f"{talk.id}/preview/preview.mp4", b"preview video")
+    for stage in INTERMEDIATE_STAGES:
+        fake_storage.put(f"{talk.id}/{stage}/{stage}.mp4", f"{stage} video".encode())
 
     app.dependency_overrides[get_storage_backend] = lambda: fake_storage
     try:
@@ -390,8 +390,8 @@ def test_ui_reject_talk_cleans_up_intermediates(
         assert talk.status == "rejected"
 
         assert fake_storage.exists(f"{talk.id}/raw/video.mp4")
-        assert not fake_storage.exists(f"{talk.id}/cut/cut.mp4")
-        assert not fake_storage.exists(f"{talk.id}/preview/preview.mp4")
+        for stage in INTERMEDIATE_STAGES:
+            assert not fake_storage.exists(f"{talk.id}/{stage}/{stage}.mp4")
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)
 
@@ -442,6 +442,6 @@ def test_ui_reject_talk_storage_delete_resilient(client: TestClient, db_session)
 
         db_session.refresh(talk)
         assert talk.status == "rejected"
-        assert mock_storage.delete.call_count == 2
+        assert mock_storage.delete.call_count == 5
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)

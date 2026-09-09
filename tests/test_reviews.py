@@ -387,6 +387,9 @@ def test_handle_reject_storage_delete_error_resilient(mock_db):
     mock_storage.delete.side_effect = [
         RuntimeError("Storage connection failed"),
         None,
+        None,
+        None,
+        None,
     ]
 
     app.dependency_overrides[get_client] = lambda: mock_client
@@ -408,10 +411,13 @@ def test_handle_reject_storage_delete_error_resilient(mock_db):
     assert talk.cut_start is None
     assert talk.cut_end is None
 
-    assert mock_storage.delete.call_count == 2
+    assert mock_storage.delete.call_count == 5
     assert mock_storage.delete.call_args_list == [
         mock_call("42/cut"),
         mock_call("42/preview"),
+        mock_call("42/assemble"),
+        mock_call("42/intro"),
+        mock_call("42/outro"),
     ]
 
 
