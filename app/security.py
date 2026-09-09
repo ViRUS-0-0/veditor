@@ -69,7 +69,7 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
     try:
         return bool(_hasher.verify(hashed, plain))
-    except VerifyMismatchError, VerificationError, InvalidHashError:
+    except (VerifyMismatchError, VerificationError, InvalidHashError) as _exc:
         return False
 
 
@@ -112,7 +112,7 @@ def decode_session_token(token: str) -> dict | None:
         if payload.get("type") != "session":
             return None
         return payload
-    except jwt.PyJWTError, TypeError, ValueError, AttributeError:
+    except (jwt.PyJWTError, TypeError, ValueError, AttributeError) as _exc:
         return None
 
 
@@ -156,7 +156,7 @@ def decode_access_token(token: str) -> dict | None:
         if payload.get("type") != "access":
             return None
         return payload
-    except jwt.PyJWTError, TypeError, ValueError, AttributeError:
+    except (jwt.PyJWTError, TypeError, ValueError, AttributeError) as _exc:
         return None
 
 
