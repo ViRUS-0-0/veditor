@@ -748,29 +748,30 @@ def test_post_approve_with_mismatched_talk_raw_key_rejected():
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[get_storage_backend] = lambda: mock_storage
 
-    mock_talk = models.Talk(
-        id=1,
-        event_id=1,
-        title="Talk to Approve",
-        room="Room 1",
-        start=datetime.now(UTC),
-        end=datetime.now(UTC),
-        status="pending_approval",
-    )
-    mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    try:
+        mock_talk = models.Talk(
+            id=1,
+            event_id=1,
+            title="Talk to Reject",
+            room="Room 1",
+            start=datetime.now(UTC),
+            end=datetime.now(UTC),
+            status="pending_approval",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
 
-    response = client.post(
-        "/talks/1/approve",
-        json={"decision": "reject"},
-        headers={"X-API-Key": "valid_key"},
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "rejected"
-    assert mock_storage.delete.call_count == 5
-    for stage in ("1/cut", "1/preview", "1/assemble", "1/intro", "1/outro"):
-        mock_storage.delete.assert_any_call(stage)
-
-    app.dependency_overrides.clear()
+        response = client.post(
+            "/talks/1/approve",
+            json={"decision": "reject"},
+            headers={"X-API-Key": "valid_key"},
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "rejected"
+        assert mock_storage.delete.call_count == 5
+        for stage in ("1/cut", "1/preview", "1/assemble", "1/intro", "1/outro"):
+            mock_storage.delete.assert_any_call(stage)
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_post_approve_reject_storage_delete_resilient():
@@ -784,27 +785,28 @@ def test_post_approve_reject_storage_delete_resilient():
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[get_storage_backend] = lambda: mock_storage
 
-    mock_talk = models.Talk(
-        id=1,
-        event_id=1,
-        title="Talk to Reject",
-        room="Room 1",
-        start=datetime.now(UTC),
-        end=datetime.now(UTC),
-        status="pending_approval",
-    )
-    mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    try:
+        mock_talk = models.Talk(
+            id=1,
+            event_id=1,
+            title="Talk to Reject",
+            room="Room 1",
+            start=datetime.now(UTC),
+            end=datetime.now(UTC),
+            status="pending_approval",
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
 
-    response = client.post(
-        "/talks/1/approve",
-        json={"decision": "reject"},
-        headers={"X-API-Key": "valid_key"},
-    )
-    assert response.status_code == 200
-    assert response.json()["status"] == "rejected"
-    assert mock_storage.delete.call_count == 5
-
-    app.dependency_overrides.clear()
+        response = client.post(
+            "/talks/1/approve",
+            json={"decision": "reject"},
+            headers={"X-API-Key": "valid_key"},
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "rejected"
+        assert mock_storage.delete.call_count == 5
+    finally:
+        app.dependency_overrides.clear()
 
 
 # --- Full Path Test: recordings -> detect -> pending_approval -> approve -> cut -> preview -> preview halt ---
