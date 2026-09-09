@@ -31,7 +31,7 @@ from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
 from app.pipeline.transcode import PRESET_720P, transcode
-from app.storage import StorageBackend, get_storage_backend
+from app.storage import StorageBackend, cleanup_intermediates, get_storage_backend
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "ui" / "templates"
 
@@ -573,6 +573,8 @@ def approve_talk(
         talk.status = "preview"
 
     db.commit()
+    if talk.status == "done":
+        cleanup_intermediates(storage, talk.id)
     return {
         "status": "ok",
         "message": "Pipeline step completed",
@@ -585,6 +587,7 @@ def reject_talk(
     talk_id: int,
     client: Annotated[models.Client, Depends(get_ui_client)],
     db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
     payload: ReviewActionRequest | None = None,
 ):
     talk = _get_scoped_talk(talk_id, client, db)
@@ -597,6 +600,7 @@ def reject_talk(
 
     talk.status = "rejected"
     db.commit()
+    cleanup_intermediates(storage, talk.id)
     return {
         "status": "ok",
         "message": "Talk rejected",

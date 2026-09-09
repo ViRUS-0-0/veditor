@@ -338,3 +338,110 @@ def test_create_single_talk_custom_duration(client: TestClient, db_session):
     assert talk.title == "Custom Duration Session"
     assert talk.room == "Auditorium B"
     assert (talk.end - talk.start).total_seconds() == 25 * 60
+
+
+def test_ui_reject_talk_cleans_up_intermediates(
+    client: TestClient, db_session, fake_storage
+):
+    """Rejecting a talk in studio UI removes cut/ and preview/ while preserving raw/."""
+    import uuid
+
+    from app.auth import hash_api_key
+
+    event = models.Event(name=f"Reject Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"reject_key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Talk To Reject",
+        room="Hall A",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    fake_storage.put(f"{talk.id}/raw/video.mp4", b"raw video")
+    fake_storage.put(f"{talk.id}/cut/cut.mp4", b"cut video")
+    fake_storage.put(f"{talk.id}/preview/preview.mp4", b"preview video")
+
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
+    try:
+        res = client.post(
+            f"/studio/talks/{talk.id}/reject",
+            json={"decision": "rejected", "note": "Not acceptable"},
+            headers={"X-API-Key": api_key},
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "ok"
+        assert res.json()["talk_status"] == "rejected"
+
+        db_session.refresh(talk)
+        assert talk.status == "rejected"
+
+        assert fake_storage.exists(f"{talk.id}/raw/video.mp4")
+        assert not fake_storage.exists(f"{talk.id}/cut/cut.mp4")
+        assert not fake_storage.exists(f"{talk.id}/preview/preview.mp4")
+    finally:
+        app.dependency_overrides.pop(get_storage_backend, None)
+
+
+def test_ui_reject_talk_storage_delete_resilient(client: TestClient, db_session):
+    """Storage deletion failure on studio rejection does not raise 500."""
+    import uuid
+    from unittest.mock import MagicMock
+
+    from app.auth import hash_api_key
+
+    event = models.Event(name=f"Reject Err Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"reject_err_key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Talk To Reject Error",
+        room="Hall A",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    mock_storage = MagicMock()
+    mock_storage.delete.side_effect = RuntimeError("Disk unavailable")
+
+    app.dependency_overrides[get_storage_backend] = lambda: mock_storage
+    try:
+        res = client.post(
+            f"/studio/talks/{talk.id}/reject",
+            json={"decision": "rejected", "note": "Rejected despite storage error"},
+            headers={"X-API-Key": api_key},
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "ok"
+        assert res.json()["talk_status"] == "rejected"
+
+        db_session.refresh(talk)
+        assert talk.status == "rejected"
+        assert mock_storage.delete.call_count == 2
+    finally:
+        app.dependency_overrides.pop(get_storage_backend, None)

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.states import advance
-from app.storage import StorageBackend
+from app.storage import StorageBackend, cleanup_intermediates
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +66,7 @@ def handle_reject(
     talk.cut_end = None
     response = _record_review_and_advance(talk, payload, "pending_bounds", db)
     if storage is not None:
-        for target in ("cut", "preview"):
-            try:
-                storage.delete(f"{talk.id}/{target}")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to delete %s storage for talk %s: %s",
-                    target,
-                    talk.id,
-                    exc,
-                )
+        cleanup_intermediates(storage, talk.id)
     return response
 
 
