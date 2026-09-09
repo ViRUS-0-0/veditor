@@ -1,5 +1,7 @@
+import stat
 from unittest.mock import MagicMock, patch
 
+import jwt
 import pytest
 from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine
 from sqlalchemy.orm import sessionmaker
@@ -36,6 +38,10 @@ def test_verify_password():
     assert verify_password("", hashed) is False
     assert verify_password(pw, "") is False
     assert verify_password(pw, "not-a-valid-argon2-hash") is False
+    assert verify_password(12345, hashed) is False
+    assert verify_password(pw, 12345) is False
+    assert verify_password(["pw"], hashed) is False
+    assert verify_password(pw, None) is False
 
 
 def test_hash_password_empty_raises():
@@ -132,6 +138,58 @@ def test_token_defaults_from_settings():
     assert payload_access["email"] == "u@e.com"
 
 
+def test_decode_session_token_missing_claims():
+    secret = get_session_secret()
+    # Missing sub or user_id or role
+    t1 = jwt.encode(
+        {"type": "session", "user_id": 1, "role": "admin"}, secret, algorithm="HS256"
+    )
+    assert decode_session_token(t1) is None
+
+    t2 = jwt.encode(
+        {"type": "session", "sub": "1", "role": "admin"}, secret, algorithm="HS256"
+    )
+    assert decode_session_token(t2) is None
+
+    t3 = jwt.encode(
+        {"type": "session", "sub": "1", "user_id": 1}, secret, algorithm="HS256"
+    )
+    assert decode_session_token(t3) is None
+
+    # Invalid types
+    t4 = jwt.encode(
+        {"type": "session", "sub": "1", "user_id": "1", "role": "admin"},
+        secret,
+        algorithm="HS256",
+    )
+    assert decode_session_token(t4) is None
+
+
+def test_decode_access_token_missing_claims():
+    secret = get_session_secret()
+    # Missing email
+    t1 = jwt.encode(
+        {"type": "access", "sub": "1", "user_id": 1, "role": "user"},
+        secret,
+        algorithm="HS256",
+    )
+    assert decode_access_token(t1) is None
+
+    # Invalid user_id type
+    t2 = jwt.encode(
+        {
+            "type": "access",
+            "sub": "1",
+            "user_id": "1",
+            "email": "a@b.com",
+            "role": "user",
+        },
+        secret,
+        algorithm="HS256",
+    )
+    assert decode_access_token(t2) is None
+
+
 def test_get_session_secret_from_settings(monkeypatch):
     monkeypatch.setattr(settings, "session_secret", "configured-secret-key")
     import app.security as sec
@@ -166,11 +224,28 @@ def test_get_session_secret_dev_persists(monkeypatch, tmp_path):
     secret_file = tmp_path / ".session_secret"
     assert secret_file.exists()
     assert secret_file.read_text(encoding="utf-8").strip() == secret1
+    assert stat.S_IMODE(secret_file.stat().st_mode) == 0o600
 
     # Reset in-memory cache to verify reading from persisted file
     monkeypatch.setattr(sec, "_session_secret", None)
     secret2 = get_session_secret()
     assert secret2 == secret1
+
+
+def test_get_session_secret_concurrent_creation(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "session_secret", None)
+    monkeypatch.setattr(settings, "environment", "development")
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    import app.security as sec
+
+    monkeypatch.setattr(sec, "_session_secret", None)
+
+    secret_file = tmp_path / ".session_secret"
+    secret_file.write_text("concurrent-secret-val\n", encoding="utf-8")
+
+    with patch("os.open", side_effect=FileExistsError("File exists")):
+        secret = get_session_secret()
+        assert secret == "concurrent-secret-val"
 
 
 def test_is_first_user_table_absent():
@@ -220,3 +295,19 @@ def test_is_first_user_default_session(monkeypatch):
 
         assert is_first_user() is True
         mock_inspector.has_table.assert_called_with("users")
+
+
+def test_settings_expiration_validation():
+    from app.config import Settings
+
+    with pytest.raises(ValueError, match="token expiration values must be positive"):
+        Settings(session_token_expire_hours=0)
+
+    with pytest.raises(ValueError, match="token expiration values must be positive"):
+        Settings(session_token_expire_hours=-5)
+
+    with pytest.raises(ValueError, match="token expiration values must be positive"):
+        Settings(access_token_expire_seconds=0)
+
+    with pytest.raises(ValueError, match="token expiration values must be positive"):
+        Settings(access_token_expire_seconds=-10)

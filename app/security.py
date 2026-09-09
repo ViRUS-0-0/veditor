@@ -1,3 +1,4 @@
+import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -44,13 +45,24 @@ def get_session_secret() -> str:
             _session_secret = secret
             return _session_secret
 
-    secret = secrets.token_hex(32)
     # storage-boundary-exempt: create data directory if needed for dev secret
     secret_file.parent.mkdir(parents=True, exist_ok=True)
-    # storage-boundary-exempt: write auto-generated dev session secret
-    secret_file.write_text(secret, encoding="utf-8")
-    _session_secret = secret
-    return _session_secret
+    secret = secrets.token_hex(32)
+    try:
+        # storage-boundary-exempt: write auto-generated dev session secret with 0600 exclusive open
+        fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        # storage-boundary-exempt: write secret content to open file descriptor
+        with open(fd, "w", encoding="utf-8") as secret_handle:
+            secret_handle.write(secret)
+        _session_secret = secret
+        return _session_secret
+    except FileExistsError:
+        # storage-boundary-exempt: read local session secret created concurrently
+        secret = secret_file.read_text(encoding="utf-8").strip()
+        if secret:
+            _session_secret = secret
+            return _session_secret
+        raise
 
 
 def hash_password(plain: str) -> str:
@@ -65,11 +77,21 @@ def verify_password(plain: str, hashed: str) -> bool:
     Verifies a plaintext password against an Argon2 hash.
     Returns True if valid, False otherwise without raising exceptions.
     """
-    if not plain or not hashed:
+    if (
+        not plain
+        or not hashed
+        or not isinstance(plain, str)
+        or not isinstance(hashed, str)
+    ):
         return False
     try:
         return bool(_hasher.verify(hashed, plain))
-    except (VerifyMismatchError, VerificationError, InvalidHashError) as _exc:
+    except (
+        VerifyMismatchError,
+        VerificationError,
+        InvalidHashError,
+        TypeError,
+    ) as _exc:
         return False
 
 
@@ -101,7 +123,7 @@ def decode_session_token(token: str) -> dict | None:
     """
     Decodes and validates a session token.
     Returns the decoded payload dict if valid, or None if expired, tampered,
-    malformed, or not a session token.
+    malformed, missing required claims, or not a session token.
     """
     if not token or not isinstance(token, str):
         return None
@@ -110,6 +132,12 @@ def decode_session_token(token: str) -> dict | None:
             token, get_session_secret(), algorithms=[settings.jwt_algorithm]
         )
         if payload.get("type") != "session":
+            return None
+        if (
+            not isinstance(payload.get("user_id"), int)
+            or not isinstance(payload.get("role"), str)
+            or not isinstance(payload.get("sub"), str)
+        ):
             return None
         return payload
     except (jwt.PyJWTError, TypeError, ValueError, AttributeError) as _exc:
@@ -145,7 +173,7 @@ def decode_access_token(token: str) -> dict | None:
     """
     Decodes and validates an access token.
     Returns the decoded payload dict if valid, or None if expired, tampered,
-    malformed, or not an access token.
+    malformed, missing required claims, or not an access token.
     """
     if not token or not isinstance(token, str):
         return None
@@ -154,6 +182,13 @@ def decode_access_token(token: str) -> dict | None:
             token, get_session_secret(), algorithms=[settings.jwt_algorithm]
         )
         if payload.get("type") != "access":
+            return None
+        if (
+            not isinstance(payload.get("user_id"), int)
+            or not isinstance(payload.get("email"), str)
+            or not isinstance(payload.get("role"), str)
+            or not isinstance(payload.get("sub"), str)
+        ):
             return None
         return payload
     except (jwt.PyJWTError, TypeError, ValueError, AttributeError) as _exc:
