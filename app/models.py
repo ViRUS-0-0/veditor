@@ -5,11 +5,13 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -17,15 +19,61 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (Index("idx_users_email", "email", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(
+        String(32),
+        default="user",
+        server_default=text("'user'"),
+        nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        server_default=text("true"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.now(UTC),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    events: Mapped[list[Event]] = relationship(back_populates="created_by_user")
+    reviews: Mapped[list[Review]] = relationship(back_populates="user")
+
+
 class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "users.id",
+            name="fk_events_created_by_user_id_users",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
 
     talks: Mapped[list[Talk]] = relationship(
         back_populates="event", cascade="all, delete-orphan"
     )
+    created_by_user: Mapped[User | None] = relationship(back_populates="events")
 
 
 class Client(Base):
@@ -98,5 +146,14 @@ class Review(Base):
         default=lambda: datetime.now(UTC),
         nullable=False,
     )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "users.id",
+            name="fk_reviews_user_id_users",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
 
     talk: Mapped[Talk] = relationship(back_populates="reviews")
+    user: Mapped[User | None] = relationship(back_populates="reviews")
