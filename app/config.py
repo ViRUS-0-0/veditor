@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     preview_presets: dict[str, PreviewPreset] = PREVIEW_PRESETS
     disk_guard_multiplier: float = 3.0
 
+    environment: str = "development"
+    session_secret: str | None = None
+    jwt_algorithm: str = "HS256"
+    session_token_expire_hours: int = 168
+    access_token_expire_seconds: int = 3600
+
     @field_validator("disk_guard_multiplier", mode="after")
     @classmethod
     def validate_disk_guard_multiplier(cls, value: float) -> float:
