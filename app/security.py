@@ -27,6 +27,8 @@ def get_session_secret() -> str:
     """
     global _session_secret
     if settings.session_secret:
+        if len(settings.session_secret.encode("utf-8")) < 32:
+            raise ValueError("SESSION_SECRET must be at least 32 bytes long")
         return settings.session_secret
 
     if settings.environment.lower() in ("production", "prod"):

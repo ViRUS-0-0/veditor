@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     session_token_expire_hours: int = 168
     access_token_expire_seconds: int = 3600
 
+    @field_validator("session_secret", mode="after")
+    @classmethod
+    def validate_session_secret(cls, value: str | None) -> str | None:
+        if value is not None and len(value.encode("utf-8")) < 32:
+            raise ValueError("SESSION_SECRET must be at least 32 bytes long")
+        return value
+
     @field_validator(
         "session_token_expire_hours", "access_token_expire_seconds", mode="after"
     )

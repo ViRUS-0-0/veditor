@@ -191,12 +191,20 @@ def test_decode_access_token_missing_claims():
 
 
 def test_get_session_secret_from_settings(monkeypatch):
-    monkeypatch.setattr(settings, "session_secret", "configured-secret-key")
+    valid_secret = "configured-secret-key-that-is-at-least-32-chars-long"
+    monkeypatch.setattr(settings, "session_secret", valid_secret)
     import app.security as sec
 
     monkeypatch.setattr(sec, "_session_secret", None)
 
-    assert get_session_secret() == "configured-secret-key"
+    assert get_session_secret() == valid_secret
+
+    # Short secret must be rejected
+    monkeypatch.setattr(settings, "session_secret", "short-secret")
+    with pytest.raises(
+        ValueError, match="SESSION_SECRET must be at least 32 bytes long"
+    ):
+        get_session_secret()
 
 
 def test_get_session_secret_production_missing_raises(monkeypatch):
@@ -205,7 +213,9 @@ def test_get_session_secret_production_missing_raises(monkeypatch):
     import app.security as sec
 
     # Even if dev secret was previously cached, production mode must block it
-    monkeypatch.setattr(sec, "_session_secret", "cached-dev-secret")
+    monkeypatch.setattr(
+        sec, "_session_secret", "cached-dev-secret-that-is-32-bytes-long"
+    )
 
     with pytest.raises(RuntimeError, match="SESSION_SECRET must be explicitly set"):
         get_session_secret()
@@ -241,11 +251,18 @@ def test_get_session_secret_concurrent_creation(monkeypatch, tmp_path):
     monkeypatch.setattr(sec, "_session_secret", None)
 
     secret_file = tmp_path / ".session_secret"
-    secret_file.write_text("concurrent-secret-val\n", encoding="utf-8")
+    assert not secret_file.exists()
 
-    with patch("os.open", side_effect=FileExistsError("File exists")):
+    def fake_os_open(*args, **kwargs):
+        # Simulate competing process creating the file during os.open call
+        secret_file.write_text(
+            "concurrent-secret-val-32-bytes-long\n", encoding="utf-8"
+        )
+        raise FileExistsError("File exists")
+
+    with patch("os.open", side_effect=fake_os_open):
         secret = get_session_secret()
-        assert secret == "concurrent-secret-val"
+        assert secret == "concurrent-secret-val-32-bytes-long"
 
 
 def test_is_first_user_table_absent():
@@ -311,3 +328,16 @@ def test_settings_expiration_validation():
 
     with pytest.raises(ValueError, match="token expiration values must be positive"):
         Settings(access_token_expire_seconds=-10)
+
+
+def test_settings_session_secret_validation():
+    from app.config import Settings
+
+    with pytest.raises(
+        ValueError, match="SESSION_SECRET must be at least 32 bytes long"
+    ):
+        Settings(session_secret="too-short")
+
+    valid = "x" * 32
+    s = Settings(session_secret=valid)
+    assert s.session_secret == valid
