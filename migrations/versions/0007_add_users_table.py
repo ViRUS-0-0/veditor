@@ -2,7 +2,7 @@
 
 Revision ID: 0007
 Revises: 0006
-Create Date: 2026-09-10 00:48:30.965363
+Create Date: 2026-09-10 13:41:47.748282
 
 """
 from typing import Sequence, Union
@@ -29,6 +29,7 @@ def upgrade() -> None:
     sa.Column('is_active', sa.Boolean(), server_default=sa.text('true'), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.CheckConstraint("role IN ('user', 'organizer', 'admin')", name='ck_users_role'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index('idx_users_email', 'users', ['email'], unique=True)

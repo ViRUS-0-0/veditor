@@ -185,3 +185,18 @@ def test_user_email_unique_enforced(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+
+
+def test_user_role_constraint_enforced(db_session):
+    for role in ("user", "organizer", "admin"):
+        u = User(email=f"{role}@example.com", hashed_password="pw", role=role)
+        db_session.add(u)
+        db_session.flush()
+
+    invalid_user = User(
+        email="invalid_role@example.com", hashed_password="pw", role="superadmin"
+    )
+    db_session.add(invalid_user)
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()

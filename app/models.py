@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -21,7 +22,13 @@ from app.db import Base
 
 class User(Base):
     __tablename__ = "users"
-    __table_args__ = (Index("idx_users_email", "email", unique=True),)
+    __table_args__ = (
+        Index("idx_users_email", "email", unique=True),
+        CheckConstraint(
+            "role IN ('user', 'organizer', 'admin')",
+            name="ck_users_role",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False)
