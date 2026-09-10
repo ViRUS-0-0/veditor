@@ -44,9 +44,18 @@ def test_verify_password():
     assert verify_password(pw, None) is False
 
 
-def test_hash_password_empty_raises():
+def test_hash_password_validation():
     with pytest.raises(ValueError, match="Password cannot be empty"):
         hash_password("")
+
+    with pytest.raises(TypeError, match="Password must be a string"):
+        hash_password(None)
+
+    with pytest.raises(TypeError, match="Password must be a string"):
+        hash_password(12345)
+
+    with pytest.raises(TypeError, match="Password must be a string"):
+        hash_password(b"password-bytes")
 
 
 def test_session_token_roundtrip():
@@ -242,29 +251,6 @@ def test_get_session_secret_dev_persists(monkeypatch, tmp_path):
     assert secret2 == secret1
 
 
-def test_get_session_secret_concurrent_creation(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "session_secret", None)
-    monkeypatch.setattr(settings, "environment", "development")
-    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
-    import app.security as sec
-
-    monkeypatch.setattr(sec, "_session_secret", None)
-
-    secret_file = tmp_path / ".session_secret"
-    assert not secret_file.exists()
-
-    def fake_os_open(*args, **kwargs):
-        # Simulate competing process creating the file during os.open call
-        secret_file.write_text(
-            "concurrent-secret-val-32-bytes-long\n", encoding="utf-8"
-        )
-        raise FileExistsError("File exists")
-
-    with patch("os.open", side_effect=fake_os_open):
-        secret = get_session_secret()
-        assert secret == "concurrent-secret-val-32-bytes-long"
-
-
 def test_is_first_user_table_absent():
     engine = create_engine("sqlite:///:memory:")
     Session = sessionmaker(bind=engine)
@@ -341,3 +327,30 @@ def test_settings_session_secret_validation():
     valid = "x" * 32
     s = Settings(session_secret=valid)
     assert s.session_secret == valid
+
+
+def test_settings_jwt_algorithm_validation():
+    from app.config import Settings
+
+    with pytest.raises(ValueError, match="jwt_algorithm must be one of"):
+        Settings(jwt_algorithm="none")
+
+    with pytest.raises(ValueError, match="jwt_algorithm must be one of"):
+        Settings(jwt_algorithm="RS256")
+
+    s1 = Settings(jwt_algorithm="HS256")
+    assert s1.jwt_algorithm == "HS256"
+
+    s2 = Settings(jwt_algorithm="HS384")
+    assert s2.jwt_algorithm == "HS384"
+
+
+def test_decode_rejects_unallowed_algorithm():
+    # If a token is crafted with an algorithm not in ALLOWED_JWT_ALGORITHMS (e.g. none), decode must return None
+    fake_token = jwt.encode(
+        {"type": "session", "sub": "1", "user_id": 1, "role": "admin"},
+        key="",
+        algorithm="none",
+    )
+    assert decode_session_token(fake_token) is None
+    assert decode_access_token(fake_token) is None

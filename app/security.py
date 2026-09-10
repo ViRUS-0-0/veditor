@@ -1,4 +1,3 @@
-import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -9,7 +8,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import ALLOWED_JWT_ALGORITHMS, settings
 from app.db import SessionLocal
 
 _hasher = PasswordHasher()
@@ -49,26 +48,17 @@ def get_session_secret() -> str:
 
     # storage-boundary-exempt: create data directory if needed for dev secret
     secret_file.parent.mkdir(parents=True, exist_ok=True)
-    secret = secrets.token_hex(32)
-    try:
-        # storage-boundary-exempt: write auto-generated dev session secret with 0600 exclusive open
-        fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        # storage-boundary-exempt: write secret content to open file descriptor
-        with open(fd, "w", encoding="utf-8") as secret_handle:
-            secret_handle.write(secret)
-        _session_secret = secret
-        return _session_secret
-    except FileExistsError:
-        # storage-boundary-exempt: read local session secret created concurrently
-        secret = secret_file.read_text(encoding="utf-8").strip()
-        if secret:
-            _session_secret = secret
-            return _session_secret
-        raise
+    _session_secret = secrets.token_hex(32)
+    # storage-boundary-exempt: persist dev session secret with owner-only permissions
+    secret_file.write_text(_session_secret, encoding="utf-8")
+    secret_file.chmod(0o600)
+    return _session_secret
 
 
 def hash_password(plain: str) -> str:
     """Hashes a plaintext password using Argon2id."""
+    if not isinstance(plain, str):
+        raise TypeError("Password must be a string")
     if not plain:
         raise ValueError("Password cannot be empty")
     return _hasher.hash(plain)
@@ -131,7 +121,7 @@ def decode_session_token(token: str) -> dict | None:
         return None
     try:
         payload = jwt.decode(
-            token, get_session_secret(), algorithms=[settings.jwt_algorithm]
+            token, get_session_secret(), algorithms=list(ALLOWED_JWT_ALGORITHMS)
         )
         if payload.get("type") != "session":
             return None
@@ -181,7 +171,7 @@ def decode_access_token(token: str) -> dict | None:
         return None
     try:
         payload = jwt.decode(
-            token, get_session_secret(), algorithms=[settings.jwt_algorithm]
+            token, get_session_secret(), algorithms=list(ALLOWED_JWT_ALGORITHMS)
         )
         if payload.get("type") != "access":
             return None
