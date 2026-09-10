@@ -251,6 +251,28 @@ def test_get_session_secret_dev_persists(monkeypatch, tmp_path):
     assert secret2 == secret1
 
 
+def test_get_session_secret_concurrent_creation(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "session_secret", None)
+    monkeypatch.setattr(settings, "environment", "development")
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    import app.security as sec
+
+    monkeypatch.setattr(sec, "_session_secret", None)
+
+    secret_file = tmp_path / ".session_secret"
+
+    def fake_os_open(*args, **kwargs):
+        # Simulate competing process creating the file during os.open call
+        secret_file.write_text(
+            "concurrent-secret-val-32-bytes-long\n", encoding="utf-8"
+        )
+        raise FileExistsError("File exists")
+
+    with patch("os.open", side_effect=fake_os_open):
+        secret = get_session_secret()
+        assert secret == "concurrent-secret-val-32-bytes-long"
+
+
 def test_is_first_user_table_absent():
     engine = create_engine("sqlite:///:memory:")
     Session = sessionmaker(bind=engine)

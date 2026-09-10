@@ -1,3 +1,4 @@
+import os
 import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -48,10 +49,17 @@ def get_session_secret() -> str:
 
     # storage-boundary-exempt: create data directory if needed for dev secret
     secret_file.parent.mkdir(parents=True, exist_ok=True)
-    _session_secret = secrets.token_hex(32)
-    # storage-boundary-exempt: persist dev session secret with owner-only permissions
-    secret_file.write_text(_session_secret, encoding="utf-8")
-    secret_file.chmod(0o600)
+    generated = secrets.token_hex(32)
+    try:
+        # storage-boundary-exempt: exclusive create with 0600 mode to avoid exposure race
+        fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        # storage-boundary-exempt: write secret through open file descriptor
+        with open(fd, "w", encoding="utf-8") as f:
+            f.write(generated)
+        _session_secret = generated
+    except FileExistsError:
+        # storage-boundary-exempt: read winning secret created concurrently
+        _session_secret = secret_file.read_text(encoding="utf-8").strip()
     return _session_secret
 
 
