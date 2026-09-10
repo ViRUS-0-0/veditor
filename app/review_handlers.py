@@ -64,7 +64,7 @@ def handle_reject(
 ) -> schemas.ReviewResponse:
     talk.cut_start = None
     talk.cut_end = None
-    response = _record_review_and_advance(talk, payload, "pending_bounds", db)
+    response = _record_review_and_advance(talk, payload, "rejected", db)
     if storage is not None:
         cleanup_intermediates(storage, talk.id)
     return response
