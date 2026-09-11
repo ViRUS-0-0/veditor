@@ -273,11 +273,11 @@ window.submitScheduleImport = async function() {
     if (fileInput && fileInput.files && fileInput.files[0]) {
       const fd = new FormData();
       fd.append('file', fileInput.files[0]);
-      res = await (window.authFetch || fetch)('/studio/schedule/import', { method: 'POST', body: fd });
+      res = await (window.authFetch || fetch)('/talks/schedule/import', { method: 'POST', body: fd });
     } else if (jsonText.trim()) {
       let parsed;
       try { parsed = JSON.parse(jsonText); } catch { throw new Error('Invalid JSON format'); }
-      res = await (window.authFetch || fetch)('/studio/schedule/import', {
+      res = await (window.authFetch || fetch)('/talks/schedule/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsed),
@@ -305,13 +305,18 @@ window.submitQuickTalk = async function() {
   const eventName = (document.getElementById('quick-event-name') || {}).value || 'General Conference';
   const title = (document.getElementById('quick-talk-title') || {}).value || '';
   const room = (document.getElementById('quick-talk-room') || {}).value || 'Auditorium A';
-  const duration = parseInt((document.getElementById('quick-talk-duration') || {}).value, 10) || 45;
   const startVal = (document.getElementById('quick-talk-start') || {}).value || '';
+  const endVal = (document.getElementById('quick-talk-end') || {}).value || '';
   const btn = document.getElementById('btn-submit-quick-talk');
   const orig = btn ? btn.innerHTML : '';
 
   if (!title.trim()) {
     alert('Please enter a talk title.');
+    return;
+  }
+
+  if (startVal && endVal && new Date(endVal) <= new Date(startVal)) {
+    alert('End time must be after start time.');
     return;
   }
 
@@ -322,13 +327,16 @@ window.submitQuickTalk = async function() {
       event_name: eventName,
       title,
       room,
-      duration_minutes: duration,
     };
+
     if (startVal) {
       payload.start = new Date(startVal).toISOString();
     }
+    if (endVal) {
+      payload.end = new Date(endVal).toISOString();
+    }
 
-    const res = await (window.authFetch || fetch)('/studio/talks/create', {
+    const res = await (window.authFetch || fetch)('/talks/schedule/import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -339,8 +347,7 @@ window.submitQuickTalk = async function() {
       throw new Error(err.detail || `Server returned ${res.status}`);
     }
 
-    const data = await res.json();
-    window.location = `/studio/talks/${data.talk_id}`;
+    location.reload();
   } catch (err) {
     alert(`Failed to create talk: ${err.message}`);
     if (btn) { btn.disabled = false; btn.innerHTML = orig; }
@@ -348,13 +355,20 @@ window.submitQuickTalk = async function() {
 };
 
 // ── Single & Bulk Delete Operations ─────────────────────────────
+window.deleteSingleTalkFromButton = function(btn) {
+  if (!btn) return;
+  const id = btn.getAttribute('data-talk-id');
+  const title = btn.getAttribute('data-talk-title') || `Talk #${id}`;
+  window.deleteSingleTalk(id, title);
+};
+
 window.deleteSingleTalk = async function(id, title) {
   if (!confirm(`Are you sure you want to delete talk #${id}: "${title}"?\nThis will permanently delete all associated recording and media files.`)) {
     return;
   }
 
   try {
-    const res = await (window.authFetch || fetch)(`/studio/talks/${id}/delete`, { method: 'POST' });
+    const res = await (window.authFetch || fetch)(`/talks/${id}`, { method: 'DELETE' });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `Server returned ${res.status}`);
@@ -419,7 +433,7 @@ window.submitBulkDelete = async function() {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner spinner-sm"></span> Deleting...'; }
 
   try {
-    const res = await (window.authFetch || fetch)('/studio/talks/bulk-delete', {
+    const res = await (window.authFetch || fetch)('/talks/bulk-delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ talk_ids: selected }),
@@ -430,7 +444,6 @@ window.submitBulkDelete = async function() {
       throw new Error(err.detail || `Server returned ${res.status}`);
     }
 
-    const data = await res.json();
     location.reload();
   } catch (err) {
     alert(`Bulk delete failed: ${err.message}`);

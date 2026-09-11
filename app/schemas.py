@@ -279,3 +279,26 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+class TalkUpdate(BaseModel):
+    title: str | None = None
+    room: str | None = None
+    start: datetime | None = None
+    end: datetime | None = None
+
+
+class BulkDeleteRequest(BaseModel):
+    talk_ids: list[int]
+
+
+class BulkDeleteResponse(BaseModel):
+    status: str = "ok"
+    deleted_count: int
+
+
+class ScheduleImportResponse(BaseModel):
+    status: str = "ok"
+    event_id: int
+    event_name: str
+    imported_count: int
