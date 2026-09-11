@@ -107,6 +107,7 @@ def test_dashboard_page(client: TestClient, db_session):
 
     response = client.get("/studio")
     assert response.status_code == 200
+    assert response.headers.get("cache-control") == "no-store"
     assert "text/html" in response.headers.get("content-type", "")
     assert "Test Studio Dashboard Talk" in response.text
     assert "Auditorium" in response.text
@@ -136,9 +137,20 @@ def test_talk_studio_page(client: TestClient, db_session):
     db_session.add(client_model)
     db_session.commit()
 
-    # Unauthenticated returns 401
+    # Unauthenticated returns 401 without query parameter guidance
     unauth = client.get(f"/studio/talks/{talk.id}")
     assert unauth.status_code == 401
+    assert "api_key query param" not in unauth.text
+
+    # Query param fallback is rejected (returns 401)
+    query_param_res = client.get(f"/studio/talks/{talk.id}?api_key={api_key}")
+    assert query_param_res.status_code == 401
+
+    # Cookie auth is accepted
+    client.cookies.set("veditor_api_key", api_key)
+    cookie_res = client.get(f"/studio/talks/{talk.id}")
+    assert cookie_res.status_code == 200
+    client.cookies.clear()
 
     response = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
     assert response.status_code == 200

@@ -24,16 +24,12 @@ def get_ui_client(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
 ) -> models.Client:
-    """Dependency that extracts API Key from Header, Cookie, or Query Param."""
-    api_key = (
-        request.headers.get("X-API-Key")
-        or request.cookies.get("veditor_api_key")
-        or request.query_params.get("api_key")
-    )
+    """Dependency that extracts API Key from Header or Cookie."""
+    api_key = request.headers.get("X-API-Key") or request.cookies.get("veditor_api_key")
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API Key. Please provide X-API-Key header, veditor_api_key cookie, or api_key query param.",
+            detail="Missing API Key. Please provide X-API-Key header or veditor_api_key cookie.",
         )
     hashed_key = hash_api_key(api_key)
     client = (
@@ -52,11 +48,7 @@ def get_optional_ui_client(
     db: Annotated[Session, Depends(get_db)],
 ) -> models.Client | None:
     """Optional client dependency for public read pages."""
-    api_key = (
-        request.headers.get("X-API-Key")
-        or request.cookies.get("veditor_api_key")
-        or request.query_params.get("api_key")
-    )
+    api_key = request.headers.get("X-API-Key") or request.cookies.get("veditor_api_key")
     if not api_key:
         return None
     hashed_key = hash_api_key(api_key)
@@ -206,6 +198,7 @@ def dashboard(
             "status_filter": status_filter or "",
             "event_id": event_id,
         },
+        headers={"Cache-Control": "no-store"},
     )
 
 
