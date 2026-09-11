@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["auth"])
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_DUMMY_HASH = hash_password("veditor-timing-defense-sentinel")
 
 
 def _get_authenticated_user_from_cookie(
@@ -76,11 +77,10 @@ def login_submit(
         )
 
     user = db.query(models.User).filter(models.User.email == clean_email).first()
-    if (
-        not user
-        or not user.is_active
-        or not verify_password(password, user.hashed_password)
-    ):
+    target_hash = user.hashed_password if user else _DUMMY_HASH
+    valid_password = verify_password(password, target_hash)
+
+    if not user or not user.is_active or not valid_password:
         return templates.TemplateResponse(
             request,
             "login.html",
@@ -268,11 +268,9 @@ async def api_auth_token(
     def _authenticate() -> models.User | None:
         clean_email = str(email_or_username).strip().lower()
         user = db.query(models.User).filter(models.User.email == clean_email).first()
-        if (
-            not user
-            or not user.is_active
-            or not verify_password(password, user.hashed_password)
-        ):
+        target_hash = user.hashed_password if user else _DUMMY_HASH
+        valid_password = verify_password(password, target_hash)
+        if not user or not user.is_active or not valid_password:
             return None
         return user
 

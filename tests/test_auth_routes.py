@@ -146,6 +146,15 @@ def test_post_login_inactive_user(client: TestClient, db_session):
     assert "Invalid email or password" in response.text
 
 
+def test_post_login_unknown_user(client: TestClient):
+    response = client.post(
+        "/login",
+        data={"email": "nonexistent@test.com", "password": "password123"},
+    )
+    assert response.status_code == 400
+    assert "Invalid email or password" in response.text
+
+
 def test_post_login_missing_fields(client: TestClient):
     response = client.post("/login", data={"email": "", "password": ""})
     assert response.status_code == 400
@@ -388,6 +397,14 @@ def test_api_auth_token_invalid_credentials(client: TestClient, db_session):
     )
     assert res_inactive.status_code == 401
     assert res_inactive.headers["www-authenticate"] == "Bearer"
+
+    # Nonexistent user
+    res_unknown = client.post(
+        "/api/auth/token",
+        json={"email": "nonexistent@test.com", "password": "password123"},
+    )
+    assert res_unknown.status_code == 401
+    assert res_unknown.headers["www-authenticate"] == "Bearer"
 
 
 def test_api_auth_token_fallback_handles_runtime_error(client: TestClient, monkeypatch):
