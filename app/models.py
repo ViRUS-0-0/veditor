@@ -115,10 +115,6 @@ class Event(Base):
     def _validate_retention_overrides(self, key: str, value: Any) -> Any:
         return validate_retention_overrides(value)
 
-    @validates("retention_overrides")
-    def _validate_retention_overrides(self, key: str, value: Any) -> Any:
-        return validate_retention_overrides(value)
-
 
 class Client(Base):
     __tablename__ = "clients"
