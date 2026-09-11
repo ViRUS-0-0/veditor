@@ -442,11 +442,15 @@ def test_templating_auth_context_processor(client: TestClient, db_session):
     assert "context_user@test.com" in res.text
     assert "Admin" in res.text
     assert "Log out" in res.text
+    assert "api-key-btn" not in res.text
+    assert "api-key-indicator" not in res.text
 
 
 def test_templating_unauthenticated_navbar(client: TestClient):
-    # Unauthenticated studio access shows Log in and Sign up
+    # Unauthenticated studio access shows Log in and Sign up, without API key badge
     res = client.get("/studio")
     assert res.status_code == 200
     assert "Log in" in res.text
     assert "Sign up" in res.text
+    assert "api-key-btn" not in res.text
+    assert "api-key-indicator" not in res.text

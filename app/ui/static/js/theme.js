@@ -48,26 +48,12 @@ window.VEditorConfig = window.VEditorConfig || {
   const initial = getPreferredTheme();
   document.documentElement.setAttribute('data-theme', initial);
 
-  function updateKeyIndicatorUI() {
-    const hasKey = !!window.getApiKey();
-    const btn = document.getElementById('api-key-btn');
-    const ind = document.getElementById('api-key-indicator');
-    if (btn) {
-      if (hasKey) btn.classList.add('key-set');
-      else btn.classList.remove('key-set');
-    }
-    if (ind) {
-      ind.textContent = hasKey ? 'API Key Saved' : 'Set API Key';
-    }
-  }
-
   document.addEventListener('DOMContentLoaded', () => {
     applyTheme(initial);
     const role = window.getUserRole();
     document.documentElement.setAttribute('data-user-role', role);
     const sel = document.getElementById('user-role-select');
     if (sel) sel.value = role;
-    updateKeyIndicatorUI();
   });
 })();
 
@@ -92,10 +78,6 @@ window.saveApiKeyFromModal = function () {
   }
   window.closeApiKeyModal();
   location.reload();
-};
-
-window.promptApiKey = function () {
-  window.openApiKeyModal();
 };
 
 window.getApiKey = function () {

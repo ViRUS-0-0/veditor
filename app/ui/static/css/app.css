@@ -178,44 +178,6 @@ a:hover { color: var(--v-primary-hover); }
   padding: 0;
 }
 
-.key-badge-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--v-bg-surface);
-  border: 1px solid var(--v-border-subtle);
-  border-radius: var(--v-radius-sm);
-  padding: 0 10px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  color: var(--v-text-secondary);
-  cursor: pointer;
-  height: 30px;
-  transition: all 0.15s ease;
-  font-family: inherit;
-}
-
-.key-badge-btn:hover {
-  background: var(--v-bg-subtle);
-  border-color: var(--v-primary);
-  color: var(--v-primary);
-}
-
-.key-badge-btn .key-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--v-text-muted);
-  flex-shrink: 0;
-}
-
-.key-badge-btn.key-set .key-dot {
-  background: #10b981;
-}
-
-.key-badge-btn.key-set {
-  border-color: rgba(16, 185, 129, 0.3);
-}
 
 /* ── Global Modals ────────────────────────────────────────────── */
 .modal-backdrop {
