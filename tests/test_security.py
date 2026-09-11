@@ -1,10 +1,8 @@
 import stat
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import jwt
 import pytest
-from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.security import (
@@ -14,7 +12,6 @@ from app.security import (
     decode_session_token,
     get_session_secret,
     hash_password,
-    is_first_user,
     verify_password,
 )
 
@@ -271,55 +268,6 @@ def test_get_session_secret_concurrent_creation(monkeypatch, tmp_path):
     with patch("os.open", side_effect=fake_os_open):
         secret = get_session_secret()
         assert secret == "concurrent-secret-val-32-bytes-long"
-
-
-def test_is_first_user_table_absent():
-    engine = create_engine("sqlite:///:memory:")
-    Session = sessionmaker(bind=engine)
-    with Session() as db:
-        assert is_first_user(db=db) is True
-
-
-def test_is_first_user_empty_and_populated():
-    engine = create_engine("sqlite:///:memory:")
-    metadata = MetaData()
-    users_table = Table(
-        "users",
-        metadata,
-        Column("id", Integer, primary_key=True),
-        Column("email", String(255), nullable=False),
-    )
-    metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-
-    with Session() as db:
-        # Table exists and is empty
-        assert is_first_user(db=db) is True
-
-        # Insert a user
-        db.execute(users_table.insert().values(id=1, email="test@example.com"))
-        db.commit()
-
-        # Table exists and has at least one row
-        assert is_first_user(db=db) is False
-
-
-def test_is_first_user_default_session(monkeypatch):
-    mock_session = MagicMock()
-    mock_session.__enter__.return_value = mock_session
-    mock_bind = MagicMock()
-    mock_session.get_bind.return_value = mock_bind
-
-    with (
-        patch("app.security.SessionLocal", return_value=mock_session),
-        patch("app.security.inspect") as mock_inspect,
-    ):
-        mock_inspector = MagicMock()
-        mock_inspect.return_value = mock_inspector
-        mock_inspector.has_table.return_value = False
-
-        assert is_first_user() is True
-        mock_inspector.has_table.assert_called_with("users")
 
 
 def test_settings_expiration_validation():

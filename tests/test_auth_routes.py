@@ -240,7 +240,7 @@ def test_post_signup_duplicate_email(client: TestClient, db_session):
     assert "already exists" in res.text.lower()
 
 
-def test_post_signup_first_user_becomes_admin(client: TestClient, db_session):
+def test_post_signup_creates_user_role(client: TestClient, db_session):
     # Ensure no users exist for this test
     db_session.query(models.User).delete()
     db_session.commit()
@@ -249,8 +249,8 @@ def test_post_signup_first_user_becomes_admin(client: TestClient, db_session):
         "/signup",
         data={
             "email": "first_user@test.com",
-            "password": "adminpassword123",
-            "password_confirm": "adminpassword123",
+            "password": "userpassword123",
+            "password_confirm": "userpassword123",
         },
         follow_redirects=False,
     )
@@ -264,8 +264,8 @@ def test_post_signup_first_user_becomes_admin(client: TestClient, db_session):
         .first()
     )
     assert user is not None
-    assert user.role == "admin"
-    assert verify_password("adminpassword123", user.hashed_password)
+    assert user.role == "user"
+    assert verify_password("userpassword123", user.hashed_password)
 
 
 def test_post_signup_subsequent_user_becomes_user(client: TestClient, db_session):

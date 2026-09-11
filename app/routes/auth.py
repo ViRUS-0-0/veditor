@@ -15,7 +15,6 @@ from app.security import (
     create_session_token,
     decode_session_token,
     hash_password,
-    is_first_user,
     verify_password,
 )
 from app.ui.templating import templates
@@ -168,12 +167,11 @@ def signup_submit(
         )
 
     hashed = hash_password(password)
-    role = "admin" if is_first_user(db) else "user"
 
     user = models.User(
         email=clean_email,
         hashed_password=hashed,
-        role=role,
+        role="user",
         is_active=True,
     )
     db.add(user)
