@@ -1,9 +1,25 @@
+import json
 import logging
+import math
+import tempfile
 import traceback
+import uuid
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from rq.command import send_stop_job_command
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,7 +36,13 @@ from app.ingest import (
 from app.queue import heavy_queue, light_queue
 from app.states import advance
 from app.storage import StorageBackend, cleanup_intermediates, get_storage_backend
-from app.tasks import STAGE_CONFIG, dispatch_assembly, job_cut, job_detect
+from app.tasks import (
+    STAGE_CONFIG,
+    dispatch_assembly,
+    job_cut,
+    job_detect,
+    job_ingest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +148,28 @@ def get_talk(
     talk_data = schemas.TalkWithJobsRead.model_validate(talk)
     talk_data.preview_urls = preview_urls
     return talk_data
+
+
+@router.get("/{talk_id}/jobs", response_model=schemas.TalkJobsResponse)
+def get_talk_jobs(
+    talk_id: int,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Returns the current talk status along with recent jobs and active progress."""
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+    jobs = (
+        db.query(models.Job)
+        .filter(models.Job.talk_id == talk_id)
+        .order_by(models.Job.id.desc())
+        .limit(10)
+        .all()
+    )
+    return {"status": talk.status, "jobs": jobs}
 
 
 @router.post(
@@ -486,6 +530,78 @@ def configure_assembly(
     return schemas.TalkRead.model_validate(talk)
 
 
+def _cancel_talk_jobs(talk_id: int, storage: StorageBackend | None = None) -> None:
+    """
+    Cancels queued and active RQ jobs for the given talk across all queues,
+    and removes its artifacts from storage if storage is provided.
+    Attempts all cleanup operations, collecting any failures, and raises
+    an aggregate RuntimeError before callers delete or reset database records.
+    """
+    errors: list[str] = []
+    try:
+        from rq.registry import StartedJobRegistry
+
+        for q in (light_queue, heavy_queue):
+            # 1. Cancel queued jobs
+            for job_id in list(q.job_ids):
+                try:
+                    rq_job = q.fetch_job(job_id)
+                    if rq_job and rq_job.args and rq_job.args[0] == talk_id:
+                        rq_job.cancel()
+                        rq_job.delete()
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"Failed cancelling queued job {job_id}: {exc}")
+
+            # 2. Stop running/started/deferred/scheduled jobs
+            registries = [
+                getattr(q, "started_job_registry", None),
+                getattr(q, "deferred_job_registry", None),
+                getattr(q, "scheduled_job_registry", None),
+            ]
+            for reg in registries:
+                if reg is None:
+                    continue
+                try:
+                    for job_id in reg.get_job_ids():
+                        try:
+                            rq_job = q.fetch_job(job_id)
+                            if rq_job and rq_job.args and rq_job.args[0] == talk_id:
+                                send_stop_job_command(q.connection, job_id)
+                                rq_job.cancel()
+                                rq_job.delete()
+                        except Exception as exc:  # noqa: BLE001
+                            errors.append(f"Failed stopping job {job_id}: {exc}")
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"Failed accessing queue registry: {exc}")
+
+            try:
+                registry = StartedJobRegistry(queue=q)
+                for job_id in registry.get_job_ids():
+                    try:
+                        rq_job = q.fetch_job(job_id)
+                        if rq_job and rq_job.args and rq_job.args[0] == talk_id:
+                            send_stop_job_command(q.connection, job_id)
+                            rq_job.cancel()
+                            rq_job.delete()
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"Failed stopping started job {job_id}: {exc}")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"Failed accessing StartedJobRegistry: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"Error cancelling RQ jobs for talk {talk_id}: {exc}")
+
+    if storage:
+        try:
+            storage.delete(str(talk_id))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Error deleting storage for talk {talk_id}: {exc}")
+
+    if errors:
+        msg = f"Cleanup failed for talk {talk_id}: " + "; ".join(errors)
+        logger.warning(msg)
+        raise RuntimeError(msg)
+
+
 @router.post(
     "/{talk_id}/abort",
     response_model=schemas.TalkRead,
@@ -498,9 +614,9 @@ def abort_talk(
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
     """
-    Aborts all running/queued processes for the talk, cancels RQ jobs,
-    deletes all associated storage files, clears DB jobs and reviews,
-    and resets talk status back to 'waiting_for_files'.
+    Aborts in-flight pipeline operations for a talk, cancels RQ jobs,
+    clears DB jobs and reviews, and resets talk status back to 'waiting_for_files'.
+    Returns 404 if talk is not found or not authorized for caller's events.
     """
     talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
     if not talk or talk.event_id not in client.event_ids:
@@ -508,42 +624,7 @@ def abort_talk(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
 
-    # Cancel and remove any enqueued or active RQ jobs for this talk
-    for q in (light_queue, heavy_queue):
-        try:
-            job_ids_to_check = set(q.job_ids)
-            for reg in (
-                q.started_job_registry,
-                q.deferred_job_registry,
-                q.scheduled_job_registry,
-            ):
-                try:
-                    job_ids_to_check.update(reg.get_job_ids())
-                except Exception:  # noqa: BLE001, S110
-                    pass
-
-            for job_id in job_ids_to_check:
-                try:
-                    job = q.fetch_job(job_id)
-                    if (
-                        job
-                        and job.args
-                        and len(job.args) > 0
-                        and job.args[0] == talk.id
-                    ):
-                        try:
-                            send_stop_job_command(q.connection, job.id)
-                        except Exception:  # noqa: BLE001, S110
-                            pass
-                        job.cancel()
-                        job.delete()
-                except Exception:  # noqa: BLE001, S110
-                    pass
-        except Exception:  # noqa: BLE001, S110
-            pass
-
-    # Delete all storage artifacts for this talk
-    storage.delete(str(talk.id))
+    _cancel_talk_jobs(talk.id, storage)
 
     # Clear DB jobs and reviews
     db.query(models.Job).filter(models.Job.talk_id == talk.id).delete()
@@ -564,3 +645,534 @@ def abort_talk(
     db.refresh(talk)
 
     return schemas.TalkRead.model_validate(talk)
+
+
+@router.patch("/{talk_id}", response_model=schemas.TalkRead)
+def update_talk(
+    talk_id: int,
+    payload: schemas.TalkUpdate,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """
+    Updates editable talk metadata (title, room).
+    Returns 404 if talk is not found or not in caller's event_ids.
+    """
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+
+    if payload.title is not None:
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Talk title cannot be empty",
+            )
+        talk.title = title
+    if payload.room is not None:
+        talk.room = payload.room
+
+    new_start = payload.start if payload.start is not None else talk.start
+    new_end = payload.end if payload.end is not None else talk.end
+    if new_start and new_end and new_end <= new_start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Talk end time must be after start time",
+        )
+
+    if payload.start is not None:
+        talk.start = payload.start
+    if payload.end is not None:
+        talk.end = payload.end
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A talk with this title and start time already exists for this event",
+        )
+    db.refresh(talk)
+    return talk
+
+
+@router.delete("/{talk_id}", status_code=status.HTTP_200_OK)
+def delete_talk(
+    talk_id: int,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Deletes a talk and all associated storage artifacts, jobs, and reviews.
+    Returns 404 if talk is not found or not in caller's event_ids.
+    """
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+
+    _cancel_talk_jobs(talk_id, storage)
+    db.query(models.Review).filter(models.Review.talk_id == talk_id).delete()
+    db.query(models.Job).filter(models.Job.talk_id == talk_id).delete()
+    db.delete(talk)
+    db.commit()
+
+    return {"status": "ok", "deleted_id": talk_id}
+
+
+@router.post("/bulk-delete", response_model=schemas.BulkDeleteResponse)
+def bulk_delete_talks(
+    payload: schemas.BulkDeleteRequest,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Deletes multiple talks and cleans up their storage, jobs, and reviews.
+    Only talks belonging to the caller's authorized event_ids are deleted.
+    """
+    if not payload.talk_ids:
+        return {"status": "ok", "deleted_count": 0}
+
+    valid_talks = (
+        db.query(models.Talk)
+        .filter(
+            models.Talk.id.in_(payload.talk_ids),
+            models.Talk.event_id.in_(client.event_ids),
+        )
+        .all()
+    )
+
+    deleted_count = 0
+    for talk in valid_talks:
+        _cancel_talk_jobs(talk.id, storage)
+        db.query(models.Review).filter(models.Review.talk_id == talk.id).delete()
+        db.query(models.Job).filter(models.Job.talk_id == talk.id).delete()
+        db.delete(talk)
+        deleted_count += 1
+
+    db.commit()
+    return {"status": "ok", "deleted_count": deleted_count}
+
+
+@router.post(
+    "/{talk_id}/upload",
+    response_model=schemas.TalkRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_recording(
+    talk_id: int,
+    file: Annotated[UploadFile, File()],
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Uploads a video recording file directly via multipart form, streams to temporary
+    staging, and enqueues an ingest/validation job on the light queue.
+    """
+    talk = (
+        db.query(models.Talk)
+        .filter(models.Talk.id == talk_id)
+        .with_for_update()
+        .first()
+    )
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+
+    if talk.status != "waiting_for_files":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot ingest recording for talk in status '{talk.status}'",
+        )
+
+    raw_key = f"{talk_id}/raw/raw.mp4"
+    staging_dir = Path(tempfile.gettempdir()) / "veditor_staging"
+    # storage-boundary-exempt: upload staging directory
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    staged_path = staging_dir / f"upload_{talk_id}_{uuid.uuid4().hex}.mp4"
+
+    try:
+        # Stream raw upload to temporary staging
+        # storage-boundary-exempt: upload staging
+        with open(staged_path, "wb") as f_out:  # noqa: ASYNC230
+            while chunk := await file.read(1024 * 1024):
+                f_out.write(chunk)
+
+        light_queue.enqueue(
+            job_ingest,
+            talk.id,
+            str(staged_path),
+            raw_key,
+            job_timeout=STAGE_CONFIG["ingest"]["job_timeout"],
+        )
+    except Exception:
+        # storage-boundary-exempt: upload staging cleanup
+        staged_path.unlink(missing_ok=True)
+        raise
+
+    return schemas.TalkRead.model_validate(talk)
+
+
+def _parse_iso_datetime(val: str | None) -> datetime | None:
+    if not val or not isinstance(val, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(val)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt
+    except ValueError, TypeError:
+        return None
+
+
+def _parse_duration_seconds(val: str | float | None) -> float | None:
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        sec = float(val)
+        return sec if math.isfinite(sec) and sec > 0 else None
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return None
+        low = val.lower()
+
+        # Check longer suffixes before bare 's' so 'mins' and 'hrs' parse correctly
+        for suffixes, multiplier in (
+            (("hrs", "hr", "h"), 3600.0),
+            (("mins", "min", "m"), 60.0),
+            (("secs", "sec", "s"), 1.0),
+        ):
+            for suffix in suffixes:
+                if low.endswith(suffix):
+                    try:
+                        parsed = float(low[: -len(suffix)].strip()) * multiplier
+                        return parsed if math.isfinite(parsed) and parsed > 0 else None
+                    except ValueError, TypeError:
+                        return None
+
+        if ":" in val:
+            parts = val.split(":")
+            try:
+                if len(parts) == 2:
+                    # MM:SS
+                    parsed = float(int(parts[0]) * 60 + float(parts[1]))
+                    return parsed if math.isfinite(parsed) and parsed > 0 else None
+                elif len(parts) == 3:
+                    # HH:MM:SS
+                    parsed = float(
+                        int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                    )
+                    return parsed if math.isfinite(parsed) and parsed > 0 else None
+            except ValueError, TypeError:
+                return None
+        try:
+            parsed = float(val)
+            return parsed if math.isfinite(parsed) and parsed > 0 else None
+        except ValueError, TypeError:
+            return None
+    return None
+
+
+MAX_SCHEDULE_IMPORT_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+@router.post("/schedule/import", response_model=schemas.ScheduleImportResponse)
+async def import_schedule(
+    request: Request,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+    file: Annotated[UploadFile | None, File()] = None,
+):
+    """
+    Imports talks in bulk from Frab/Pretalx JSON or simple JSON lists.
+    """
+    data = None
+    if file and file.filename:
+        content_len = request.headers.get("content-length")
+        if content_len:
+            try:
+                if int(content_len) > MAX_SCHEDULE_IMPORT_SIZE:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail="Schedule file exceeds maximum allowed size (10MB)",
+                    )
+            except ValueError:
+                pass
+        content = bytearray()
+        while chunk := await file.read(1024 * 1024):
+            content.extend(chunk)
+            if len(content) > MAX_SCHEDULE_IMPORT_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Schedule file exceeds maximum allowed size (10MB)",
+                )
+        try:
+            data = json.loads(content.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON schedule file",
+            ) from exc
+    else:
+        content_len = request.headers.get("content-length")
+        if content_len:
+            try:
+                if int(content_len) > MAX_SCHEDULE_IMPORT_SIZE:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail="Schedule body exceeds maximum allowed size (10MB)",
+                    )
+            except ValueError:
+                pass
+        content = bytearray()
+        async for chunk in request.stream():
+            content.extend(chunk)
+            if len(content) > MAX_SCHEDULE_IMPORT_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                    detail="Schedule body exceeds maximum allowed size (10MB)",
+                )
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Empty schedule data"
+            )
+        try:
+            body = json.loads(content.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON body",
+            ) from exc
+        data = body
+
+    if not data and not isinstance(data, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Empty schedule data"
+        )
+
+    event_name = "Conference Event"
+    talks_to_create = []
+
+    if isinstance(data, dict):
+        event_name = data.get("event_name") or event_name
+        if (
+            "schedule" in data
+            and isinstance(data["schedule"], dict)
+            and "conference" in data["schedule"]
+        ):
+            conf = data["schedule"]["conference"]
+            event_name = conf.get("title") or event_name
+            for day in conf.get("days", []):
+                for room_name, room_talks in day.get("rooms", {}).items():
+                    for t in room_talks:
+                        talks_to_create.append(
+                            {
+                                "title": t.get("title", "Untitled Session"),
+                                "room": room_name,
+                                "start": t.get("date") or t.get("start"),
+                                "end": t.get("end"),
+                                "duration": t.get("duration"),
+                            }
+                        )
+        elif "talks" in data:
+            talks_to_create = data["talks"]
+        elif "title" in data:
+            talks_to_create = [data]
+    elif isinstance(data, list):
+        talks_to_create = data
+
+    if not talks_to_create:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No sessions found to import",
+        )
+
+    validated_talks = []
+    now = datetime.now(UTC)
+    for t_info in talks_to_create:
+        if not isinstance(t_info, dict):
+            continue
+        title = t_info.get("title") or "Untitled Talk"
+        room = t_info.get("room") or "Main Hall"
+
+        t_start = _parse_iso_datetime(t_info.get("start") or t_info.get("date"))
+        t_end = _parse_iso_datetime(t_info.get("end"))
+
+        # Explicit duration_seconds / duration_minutes vs generic duration
+        t_dur_sec = None
+        if "duration_seconds" in t_info and t_info["duration_seconds"] is not None:
+            try:
+                t_dur_sec = float(t_info["duration_seconds"])
+            except ValueError, TypeError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid duration_seconds for talk '{title}'",
+                )
+            if not math.isfinite(t_dur_sec) or t_dur_sec <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid duration_seconds for talk '{title}': must be positive and finite",
+                )
+        elif "duration_minutes" in t_info and t_info["duration_minutes"] is not None:
+            try:
+                t_dur_sec = float(t_info["duration_minutes"]) * 60.0
+            except ValueError, TypeError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid duration_minutes for talk '{title}'",
+                )
+            if not math.isfinite(t_dur_sec) or t_dur_sec <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid duration_minutes for talk '{title}': must be positive and finite",
+                )
+        elif "duration" in t_info and t_info["duration"] is not None:
+            t_dur_sec = _parse_duration_seconds(t_info["duration"])
+            if t_dur_sec is None or not math.isfinite(t_dur_sec) or t_dur_sec <= 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid duration for talk '{title}': must be positive and finite",
+                )
+
+        if t_start and t_end:
+            if t_end <= t_start:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"End time must be after start time for talk '{title}'",
+                )
+            start_dt = t_start
+            end_dt = t_end
+        elif t_start and t_dur_sec is not None:
+            start_dt = t_start
+            end_dt = t_start + timedelta(seconds=t_dur_sec)
+        elif t_start:
+            start_dt = t_start
+            end_dt = t_start + timedelta(minutes=45)
+        elif t_end and t_dur_sec is not None:
+            dur_sec = t_dur_sec
+            start_dt = t_end - timedelta(seconds=dur_sec)
+            end_dt = t_end
+        elif t_end:
+            dur_sec = 2700.0
+            start_dt = t_end - timedelta(seconds=dur_sec)
+            end_dt = t_end
+        else:
+            dur_sec = t_dur_sec if t_dur_sec is not None else 2700.0
+            start_dt = now + timedelta(seconds=len(validated_talks) * dur_sec)
+            end_dt = start_dt + timedelta(seconds=dur_sec)
+
+        validated_talks.append(
+            {
+                "title": title,
+                "room": room,
+                "start": start_dt,
+                "end": end_dt,
+            }
+        )
+
+    if not validated_talks:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No sessions found to import",
+        )
+
+    target_event_id = None
+    if isinstance(data, dict) and data.get("event_id"):
+        target_event_id = data.get("event_id")
+    elif (
+        talks_to_create
+        and isinstance(talks_to_create[0], dict)
+        and talks_to_create[0].get("event_id")
+    ):
+        target_event_id = talks_to_create[0].get("event_id")
+
+    event = None
+    is_new_event = False
+    if target_event_id:
+        existing_event = (
+            db.query(models.Event).filter(models.Event.id == target_event_id).first()
+        )
+        if existing_event:
+            verify_event_access(target_event_id, client)
+            event = existing_event
+        else:
+            event = models.Event(id=target_event_id, name=event_name)
+            db.add(event)
+            db.flush()
+            is_new_event = True
+            try:
+                with db.begin_nested():
+                    db.execute(
+                        text(
+                            "SELECT setval(pg_get_serial_sequence('events', 'id'), (SELECT MAX(id) FROM events))"
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed coordinating event sequence: %s", exc)
+
+    if not event:
+        # Check if caller already has an event with matching name
+        event = (
+            db.query(models.Event)
+            .filter(
+                models.Event.name == event_name,
+                models.Event.id.in_(client.event_ids),
+            )
+            .first()
+        )
+
+    if not event:
+        event = models.Event(name=event_name)
+        db.add(event)
+        db.flush()
+        is_new_event = True
+
+    # Ensure client has access to this newly created event
+    if is_new_event and event.id not in client.event_ids:
+        client.event_ids = list(set(client.event_ids + [event.id]))
+
+    created_count = 0
+    for v_talk in validated_talks:
+        existing = (
+            db.query(models.Talk)
+            .filter(
+                models.Talk.event_id == event.id,
+                models.Talk.title == v_talk["title"],
+                models.Talk.start == v_talk["start"],
+            )
+            .first()
+        )
+        if existing:
+            existing.room = v_talk["room"]
+            existing.end = v_talk["end"]
+            created_count += 1
+            continue
+
+        talk = models.Talk(
+            event_id=event.id,
+            title=v_talk["title"],
+            room=v_talk["room"],
+            start=v_talk["start"],
+            end=v_talk["end"],
+            status="waiting_for_files",
+        )
+        db.add(talk)
+        created_count += 1
+
+    db.commit()
+    return {
+        "status": "ok",
+        "event_id": event.id,
+        "event_name": event.name,
+        "imported_count": created_count,
+    }

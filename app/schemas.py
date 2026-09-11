@@ -273,3 +273,26 @@ class IntroOutroRequest(BaseModel):
                 "custom_outro_path is required when outro_source is 'custom'"
             )
         return self
+
+
+class TalkUpdate(BaseModel):
+    title: str | None = None
+    room: str | None = None
+    start: datetime | None = None
+    end: datetime | None = None
+
+
+class BulkDeleteRequest(BaseModel):
+    talk_ids: list[int]
+
+
+class BulkDeleteResponse(BaseModel):
+    status: str = "ok"
+    deleted_count: int
+
+
+class ScheduleImportResponse(BaseModel):
+    status: str = "ok"
+    event_id: int
+    event_name: str
+    imported_count: int
