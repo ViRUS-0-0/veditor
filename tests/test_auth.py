@@ -133,6 +133,7 @@ def test_get_current_user_api_key_invalid():
         get_current_user(api_key="bad-key", db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert excinfo.value.detail == "Invalid API Key"
+    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
 
 
 def test_get_current_user_session_cookie_valid():
@@ -156,6 +157,7 @@ def test_get_current_user_session_cookie_invalid():
         get_current_user(cookie_token="not.a.valid.jwt", db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "Invalid or expired session token" in excinfo.value.detail
+    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
 
 
 def test_get_current_user_session_cookie_user_inactive():
@@ -168,6 +170,7 @@ def test_get_current_user_session_cookie_user_inactive():
         get_current_user(cookie_token=token, db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "inactive" in excinfo.value.detail.lower()
+    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
 
 
 def test_get_current_user_session_cookie_user_not_found():
@@ -178,6 +181,8 @@ def test_get_current_user_session_cookie_user_not_found():
     with pytest.raises(HTTPException) as excinfo:
         get_current_user(cookie_token=token, db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "not found" in excinfo.value.detail.lower()
+    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
     assert "not found" in excinfo.value.detail.lower()
 
 

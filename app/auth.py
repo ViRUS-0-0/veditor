@@ -118,6 +118,7 @@ def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API Key",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         hashed_key = hash_api_key(raw_key)
         client = (
@@ -129,6 +130,7 @@ def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API Key",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         return CurrentUser(
             user_id=None,
@@ -150,12 +152,14 @@ def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired session token",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         payload = decode_session_token(raw_cookie)
         if not payload:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired session token",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         user = (
             db.query(models.User).filter(models.User.id == payload["user_id"]).first()
@@ -164,6 +168,7 @@ def get_current_user(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User account not found or inactive",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         return CurrentUser(
             user_id=user.id,
@@ -321,11 +326,11 @@ def require_event_access(event_id_param: str | int = "event_id"):
             if raw is not None:
                 try:
                     resolved_id = int(raw)
-                except ValueError, TypeError:
+                except (ValueError, TypeError) as exc:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Invalid event ID: {raw}",
-                    )
+                    ) from exc
 
         if resolved_id is None:
             raise HTTPException(
