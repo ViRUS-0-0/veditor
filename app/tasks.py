@@ -7,6 +7,8 @@ Worker processes eagerly import this module at boot to avoid per-job import over
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 import tempfile
 import time
 import traceback
@@ -15,6 +17,7 @@ from pathlib import Path
 
 from app.config import PREVIEW_PRESETS, settings
 from app.db import SessionLocal
+from app.ingest import validate_media_file
 from app.models import Job, Talk
 from app.pipeline.concat import concat
 from app.pipeline.cut import cut
@@ -33,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # ponytail: timeouts are generous defaults; tune per deployment if jobs time out in production
 STAGE_CONFIG: dict[str, dict[str, str | int]] = {
+    "ingest": {"queue": "light", "job_timeout": 600},
     "detect": {"queue": "light", "job_timeout": 300},
     "cut": {"queue": "light", "job_timeout": 900},
     "intro": {"queue": "light", "job_timeout": 300},
@@ -70,6 +74,96 @@ def _handle_failure(talk_id: int, job_id: int | None, exc: Exception, storage) -
         ):
             advance(talk, "broken")
         db.commit()
+
+
+def job_ingest(talk_id: int, staged_path: str, raw_key: str | None = None) -> None:
+    raw_key = raw_key or f"{talk_id}/raw/raw.mp4"
+    job_id = None
+    storage = get_storage_backend()
+    staged = Path(staged_path)
+    claimed = False
+    try:
+        with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
+            if not talk or talk.status != "waiting_for_files":
+                logger.info(
+                    "Talk %s ingest job was aborted or state changed prior to start; discarding",
+                    talk_id,
+                )
+                return
+
+            # Atomically claim the talk by transitioning from waiting_for_files to detecting
+            updated = (
+                db.query(Talk)
+                .filter(Talk.id == talk_id, Talk.status == "waiting_for_files")
+                .update({"status": "detecting"})
+            )
+            if not updated:
+                logger.info(
+                    "Talk %s was already claimed by another ingest job; discarding",
+                    talk_id,
+                )
+                return
+
+            job = Job(
+                talk_id=talk_id,
+                kind="ingest",
+                status="running",
+                started_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+            db.add(job)
+            db.commit()
+            db.refresh(job)
+            job_id = job.id
+            claimed = True
+
+        if not staged.is_file():
+            raise FileNotFoundError(f"Staged upload file not found: {staged_path}")
+
+        # In-worker PyAV container & stream inspection
+        validate_media_file(staged)
+
+        # Persist to destination storage backend
+        storage.put(raw_key, staged)
+
+        with SessionLocal() as db:
+            talk = db.get(Talk, talk_id)
+            job = db.get(Job, job_id)
+            if not talk or not job or talk.status != "detecting":
+                logger.info(
+                    "Talk %s ingest job %s was aborted or state changed; discarding",
+                    talk_id,
+                    job_id,
+                )
+                if job:
+                    job.status = "cancelled"
+                    job.updated_at = datetime.now(UTC)
+                    db.commit()
+                return
+
+            job.status = "done"
+            job.updated_at = datetime.now(UTC)
+            db.commit()
+
+        light_queue.enqueue(
+            job_detect,
+            talk_id,
+            raw_key,
+            job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
+        )
+    except Exception as exc:
+        if claimed:
+            with SessionLocal() as db:
+                talk = db.get(Talk, talk_id)
+                if talk and talk.status == "detecting":
+                    talk.status = "waiting_for_files"
+                    db.commit()
+            _handle_failure(talk_id, job_id, exc, storage)
+        raise
+    finally:
+        # storage-boundary-exempt: upload staging cleanup
+        staged.unlink(missing_ok=True)
 
 
 def job_detect(talk_id: int, raw_key: str) -> None:
@@ -562,7 +656,44 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "loudness.mp4"
-            normalize(cut_path, tmp_out)
+            try:
+                normalize(cut_path, tmp_out)
+            except ValueError as val_err:
+                if "No audio stream found" in str(val_err):
+                    logger.warning(
+                        "Talk %s has no audio stream; synthesizing silent audio track",
+                        talk_id,
+                    )
+                    cmd = [
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        str(cut_path),
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "anullsrc=channel_layout=stereo:sample_rate=44100",
+                        "-c:v",
+                        "copy",
+                        "-c:a",
+                        "aac",
+                        "-shortest",
+                        str(tmp_out),
+                    ]
+                    # storage-boundary-exempt: silent audio track synthesis
+                    res = subprocess.run(
+                        cmd, capture_output=True, text=True, check=False
+                    )
+                    if res.returncode != 0:
+                        logger.warning(
+                            "ffmpeg silent audio synthesis failed (%s); falling back to direct copy: %s",
+                            res.returncode,
+                            res.stderr,
+                        )
+                        # storage-boundary-exempt: fallback copy on silent audio synthesis failure
+                        shutil.copy2(cut_path, tmp_out)
+                else:
+                    raise
             storage.put(loud_key, tmp_out)
 
         with SessionLocal() as db:
