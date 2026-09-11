@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any, Self
 
 from sqlalchemy import (
     Boolean,
@@ -14,10 +15,35 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.mutable import MutableDict
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.db import Base
+from app.retention import validate_retention_overrides
+
+
+class RetentionOverrides(MutableDict):
+    """Mutable dict tracking changes and enforcing validation on retention overrides."""
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        validate_retention_overrides({**self, key: value})
+        super().__setitem__(key, value)
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        candidate = dict(self)
+        candidate.update(*args, **kwargs)
+        validate_retention_overrides(candidate)
+        super().update(*args, **kwargs)
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        if key not in self:
+            validate_retention_overrides({**self, key: default})
+        return super().setdefault(key, default)
+
+    def __ior__(self, other: Any) -> Self:
+        self.update(other)
+        return self
 
 
 class User(Base):
@@ -68,6 +94,9 @@ class Event(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    retention_overrides: Mapped[dict[str, Any] | None] = mapped_column(
+        RetentionOverrides.as_mutable(JSONB), nullable=True, default=None
+    )
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey(
             "users.id",
@@ -81,6 +110,14 @@ class Event(Base):
         back_populates="event", cascade="all, delete-orphan"
     )
     created_by_user: Mapped[User | None] = relationship(back_populates="events")
+
+    @validates("retention_overrides")
+    def _validate_retention_overrides(self, key: str, value: Any) -> Any:
+        return validate_retention_overrides(value)
+
+    @validates("retention_overrides")
+    def _validate_retention_overrides(self, key: str, value: Any) -> Any:
+        return validate_retention_overrides(value)
 
 
 class Client(Base):
