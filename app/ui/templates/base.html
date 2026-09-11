@@ -19,7 +19,7 @@
   <!-- ── Sidebar ─────────────────────────────────────────────── -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--v-primary)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polygon points="5 3 19 12 5 21 5 3"/>
       </svg>
       <span class="logo-text" id="app-logo-text">VEditor</span>
@@ -88,9 +88,9 @@
         <div class="topbar-control-group">
           <!-- Dynamic Authentication State -->
           {% if user %}
-            <span class="user-email" style="font-size:0.85rem; color:var(--v-text-secondary); font-weight:500;">{{ user.email }}</span>
+            <span class="user-email">{{ user.email }}</span>
             <span class="badge badge-role badge-{{ user.role }}">{{ user.role | capitalize }}</span>
-            <form method="post" action="/logout" style="margin:0; display:inline;">
+            <form method="post" action="/logout" class="logout-form">
               <button type="submit" class="btn btn-ghost btn-sm" id="logout-btn">Log out</button>
             </form>
           {% else %}
@@ -99,8 +99,8 @@
           {% endif %}
 
           <!-- Theme Toggle Button -->
-          <button class="btn btn-ghost btn-sm" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle Theme" style="padding:5px 8px; height:30px;">
-            <svg id="theme-icon-sun" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="display:none;">
+          <button class="btn btn-ghost btn-sm" id="theme-toggle-btn" title="Toggle Theme">
+            <svg id="theme-icon-sun" class="theme-icon-hidden" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
             </svg>
             <svg id="theme-icon-moon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

@@ -27,11 +27,62 @@ def test_static_assets(client: TestClient):
     assert css.status_code == 200
     assert "text/css" in css.headers.get("content-type", "")
 
+    dash_css = client.get("/static/css/dashboard.css")
+    assert dash_css.status_code == 200
+    assert "text/css" in dash_css.headers.get("content-type", "")
+
+    studio_css = client.get("/static/css/studio.css")
+    assert studio_css.status_code == 200
+    assert "text/css" in studio_css.headers.get("content-type", "")
+
+    auth_css = client.get("/static/css/auth.css")
+    assert auth_css.status_code == 200
+    assert "text/css" in auth_css.headers.get("content-type", "")
+
     dash_js = client.get("/static/js/dashboard.js")
     assert dash_js.status_code == 200
 
     studio_js = client.get("/static/js/studio.js")
     assert studio_js.status_code == 200
+
+    auth_js = client.get("/static/js/auth.js")
+    assert auth_js.status_code == 200
+
+    theme_js = client.get("/static/js/theme.js")
+    assert theme_js.status_code == 200
+
+
+def test_templates_have_no_inline_css_or_js():
+    import re
+    from pathlib import Path
+
+    templates_dir = Path(__file__).parent.parent / "app" / "ui" / "templates"
+    assert templates_dir.is_dir()
+
+    style_attr_pattern = re.compile(r'\bstyle=["\']', re.IGNORECASE)
+    style_tag_pattern = re.compile(r"<style\b", re.IGNORECASE)
+    inline_script_pattern = re.compile(
+        r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL
+    )
+    event_handler_pattern = re.compile(r'\bon[a-z]+=["\']', re.IGNORECASE)
+
+    for html_file in templates_dir.glob("*.html"):
+        content = html_file.read_text(encoding="utf-8")
+        assert not style_attr_pattern.search(content), (
+            f"Inline style attribute found in {html_file.name}"
+        )
+        assert not style_tag_pattern.search(content), (
+            f"<style> tag found in {html_file.name}"
+        )
+        assert not event_handler_pattern.search(content), (
+            f"Inline event handler found in {html_file.name}"
+        )
+
+        for match in inline_script_pattern.finditer(content):
+            inline_body = match.group(1).strip()
+            assert not inline_body, (
+                f"Inline script body found in {html_file.name}: {inline_body[:50]}..."
+            )
 
 
 @pytest.fixture

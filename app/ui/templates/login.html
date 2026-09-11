@@ -6,6 +6,10 @@
   <span class="current">Sign In</span>
 {% endblock %}
 
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/auth.css">
+{% endblock %}
+
 {% block content %}
 <div class="auth-container">
   <div class="auth-card">
@@ -31,7 +35,7 @@
         <input type="password" id="password" name="password" class="input-field" required placeholder="Enter password">
       </div>
 
-      <button type="submit" class="btn btn-primary btn-lg" style="width: 100%; justify-content: center;">Sign In</button>
+      <button type="submit" class="btn btn-primary btn-lg btn-auth-submit">Sign In</button>
     </form>
 
     <div class="auth-footer">

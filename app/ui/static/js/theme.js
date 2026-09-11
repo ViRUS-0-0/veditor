@@ -54,6 +54,11 @@ window.VEditorConfig = window.VEditorConfig || {
     document.documentElement.setAttribute('data-user-role', role);
     const sel = document.getElementById('user-role-select');
     if (sel) sel.value = role;
+
+    const themeBtn = document.getElementById('theme-toggle-btn');
+    if (themeBtn) {
+      themeBtn.addEventListener('click', window.toggleTheme);
+    }
   });
 })();
 

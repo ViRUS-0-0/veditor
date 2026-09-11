@@ -1,0 +1,10 @@
+/* ── Authentication Views Styles (login.html, signup.html) ───── */
+
+.btn-auth-submit {
+  width: 100%;
+  justify-content: center;
+}
+
+.auth-error-hidden {
+  display: none;
+}

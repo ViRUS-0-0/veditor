@@ -1001,3 +1001,29 @@ td {
   .studio-shell { grid-template-columns: 1fr; height: auto; }
   .stats-grid   { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Base Navigation & Utility Classes ───────────────────────── */
+.sidebar-logo svg {
+  color: var(--v-primary);
+}
+
+.user-email {
+  font-size: 0.85rem;
+  color: var(--v-text-secondary);
+  font-weight: 500;
+}
+
+.logout-form {
+  margin: 0;
+  display: inline;
+}
+
+#theme-toggle-btn {
+  padding: 5px 8px;
+  height: 30px;
+}
+
+.theme-icon-hidden {
+  display: none;
+}
+
