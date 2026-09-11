@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from typing import Annotated
@@ -254,7 +255,7 @@ async def api_auth_token(
                 if isinstance(body, dict):
                     email_or_username = body.get("email") or body.get("username")
                     password = body.get("password")
-            except (ValueError, TypeError) as exc:
+            except (ValueError, TypeError, RuntimeError) as exc:
                 logger.debug("Failed fallback JSON parse: %s", exc)
 
     if not email_or_username or not password or not isinstance(password, str):
@@ -264,13 +265,19 @@ async def api_auth_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    clean_email = str(email_or_username).strip().lower()
-    user = db.query(models.User).filter(models.User.email == clean_email).first()
-    if (
-        not user
-        or not user.is_active
-        or not verify_password(password, user.hashed_password)
-    ):
+    def _authenticate() -> models.User | None:
+        clean_email = str(email_or_username).strip().lower()
+        user = db.query(models.User).filter(models.User.email == clean_email).first()
+        if (
+            not user
+            or not user.is_active
+            or not verify_password(password, user.hashed_password)
+        ):
+            return None
+        return user
+
+    user = await asyncio.to_thread(_authenticate)
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",

@@ -1,8 +1,9 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import sessionmaker
 
 from app import models
-from app.db import Base, SessionLocal, engine, get_db
+from app.db import Base, engine, get_db
 from app.main import app
 from app.security import (
     create_session_token,
@@ -10,6 +11,8 @@ from app.security import (
     hash_password,
     verify_password,
 )
+
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -25,38 +28,20 @@ def client():
 
 @pytest.fixture
 def db_session():
-    db = SessionLocal()
-    app.dependency_overrides[get_db] = lambda: db
-    created = []
-    orig_add = db.add
+    connection = engine.connect()
+    transaction = connection.begin()
+    session = TestingSessionLocal(
+        bind=connection, join_transaction_mode="create_savepoint"
+    )
+    app.dependency_overrides[get_db] = lambda: session
 
-    def track_add(instance):
-        created.append(instance)
-        return orig_add(instance)
-
-    db.add = track_add
     try:
-        yield db
+        yield session
     finally:
-        try:
-            db.rollback()
-            for obj in reversed(created):
-                try:
-                    db.delete(obj)
-                    db.commit()
-                except Exception:  # noqa: BLE001
-                    db.rollback()
-            # Clean up test users created during tests
-            try:
-                db.query(models.User).filter(
-                    models.User.email.like("%@test.com")
-                ).delete()
-                db.commit()
-            except Exception:  # noqa: BLE001
-                db.rollback()
-        finally:
-            app.dependency_overrides.pop(get_db, None)
-            db.close()
+        app.dependency_overrides.pop(get_db, None)
+        session.close()
+        transaction.rollback()
+        connection.close()
 
 
 def test_get_login_unauthenticated(client: TestClient):
@@ -253,10 +238,6 @@ def test_post_signup_duplicate_email(client: TestClient, db_session):
 
 
 def test_post_signup_creates_user_role(client: TestClient, db_session):
-    # Ensure no users exist for this test
-    db_session.query(models.User).delete()
-    db_session.commit()
-
     res = client.post(
         "/signup",
         data={
@@ -407,6 +388,22 @@ def test_api_auth_token_invalid_credentials(client: TestClient, db_session):
     )
     assert res_inactive.status_code == 401
     assert res_inactive.headers["www-authenticate"] == "Bearer"
+
+
+def test_api_auth_token_fallback_handles_runtime_error(client: TestClient, monkeypatch):
+    from starlette.requests import Request
+
+    async def mock_json(self):
+        raise RuntimeError("Stream consumed")
+
+    monkeypatch.setattr(Request, "json", mock_json)
+
+    res = client.post(
+        "/api/auth/token",
+        data={"unrelated": "data"},
+    )
+    assert res.status_code == 401
+    assert res.headers["www-authenticate"] == "Bearer"
 
 
 def test_templating_auth_context_processor(client: TestClient, db_session):
