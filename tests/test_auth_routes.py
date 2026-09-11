@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import models
-from app.db import SessionLocal, get_db
+from app.db import Base, SessionLocal, engine, get_db
 from app.main import app
 from app.security import (
     create_session_token,
@@ -10,6 +10,12 @@ from app.security import (
     hash_password,
     verify_password,
 )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_database():
+    Base.metadata.create_all(bind=engine)
+    yield
 
 
 @pytest.fixture
@@ -33,6 +39,7 @@ def db_session():
         yield db
     finally:
         try:
+            db.rollback()
             for obj in reversed(created):
                 try:
                     db.delete(obj)
@@ -40,8 +47,13 @@ def db_session():
                 except Exception:  # noqa: BLE001
                     db.rollback()
             # Clean up test users created during tests
-            db.query(models.User).filter(models.User.email.like("%@test.com")).delete()
-            db.commit()
+            try:
+                db.query(models.User).filter(
+                    models.User.email.like("%@test.com")
+                ).delete()
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
         finally:
             app.dependency_overrides.pop(get_db, None)
             db.close()
