@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
 
-import jinja2
 from fastapi import (
     APIRouter,
     Depends,
@@ -17,7 +16,6 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, selectinload
 
@@ -33,16 +31,7 @@ from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
 from app.pipeline.transcode import PRESET_720P, transcode
 from app.storage import StorageBackend, cleanup_intermediates, get_storage_backend
-
-_TEMPLATES_DIR = Path(__file__).parent.parent / "ui" / "templates"
-
-# Disable cache to avoid Jinja2 3.1.5+ unhashable cache key issue
-_env = jinja2.Environment(
-    loader=jinja2.FileSystemLoader(str(_TEMPLATES_DIR)),
-    autoescape=jinja2.select_autoescape(["html"]),
-    cache_size=0,
-)
-templates = Jinja2Templates(env=_env)
+from app.ui.templating import templates
 
 router = APIRouter(prefix="/studio", tags=["studio"])
 

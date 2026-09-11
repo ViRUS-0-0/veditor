@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Create Account{% endblock %}
+
+{% block breadcrumb %}
+  <span class="current">Create Account</span>
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1 class="auth-title">Create Account</h1>
+      <p class="auth-subtitle">Create a new VEditor console account</p>
+    </div>
+
+    {% if error %}
+      <div class="alert alert-danger" role="alert">
+        <span>{{ error }}</span>
+      </div>
+    {% endif %}
+
+    <div id="client-error" class="alert alert-danger" style="display:none;" role="alert"></div>
+
+    <form class="auth-form" method="post" action="/signup" onsubmit="return validateSignup(this);">
+      <div class="form-group">
+        <label class="form-label" for="email">Email</label>
+        <input type="email" id="email" name="email" class="input-field" required autofocus value="{{ email or '' }}" placeholder="name@example.com">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password">Password</label>
+        <input type="password" id="password" name="password" class="input-field" required minlength="8" placeholder="At least 8 characters">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password_confirm">Confirm Password</label>
+        <input type="password" id="password_confirm" name="password_confirm" class="input-field" required minlength="8" placeholder="Repeat password">
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-lg" style="width: 100%; justify-content: center;">Create Account</button>
+    </form>
+
+    <div class="auth-footer">
+      <span>Already have an account? <a href="/login">Sign in</a></span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function validateSignup(form) {
+  var errorEl = document.getElementById('client-error');
+  var password = form.password.value;
+  var passwordConfirm = form.password_confirm.value;
+
+  if (password.length < 8) {
+    errorEl.textContent = 'Password must be at least 8 characters long.';
+    errorEl.style.display = 'block';
+    form.password.focus();
+    return false;
+  }
+
+  if (password !== passwordConfirm) {
+    errorEl.textContent = 'Passwords do not match.';
+    errorEl.style.display = 'block';
+    form.password_confirm.focus();
+    return false;
+  }
+
+  errorEl.style.display = 'none';
+  return true;
+}
+</script>
+{% endblock %}

@@ -86,15 +86,17 @@
       </div>
       <div class="topbar-actions">
         <div class="topbar-control-group">
-          <!-- Role Selector -->
-          <div class="role-badge-select">
-            <label for="user-role-select">Role</label>
-            <select id="user-role-select" onchange="window.setUserRole(this.value)">
-              <option value="admin">Admin</option>
-              <option value="reviewer">Reviewer</option>
-              <option value="speaker">Speaker</option>
-            </select>
-          </div>
+          <!-- Dynamic Authentication State -->
+          {% if user %}
+            <span class="user-email" style="font-size:0.85rem; color:var(--v-text-secondary); font-weight:500;">{{ user.email }}</span>
+            <span class="badge badge-role badge-{{ user.role }}">{{ user.role | capitalize }}</span>
+            <form method="post" action="/logout" style="margin:0; display:inline;">
+              <button type="submit" class="btn btn-ghost btn-sm" id="logout-btn">Log out</button>
+            </form>
+          {% else %}
+            <a href="/login" class="btn btn-ghost btn-sm" id="login-link">Log in</a>
+            <a href="/signup" class="btn btn-primary btn-sm" id="signup-link">Sign up</a>
+          {% endif %}
 
           <!-- API Key Manager -->
           <button class="key-badge-btn" id="api-key-btn" onclick="window.promptApiKey()" title="Configure API Key">

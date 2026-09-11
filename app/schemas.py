@@ -273,3 +273,9 @@ class IntroOutroRequest(BaseModel):
                 "custom_outro_path is required when outro_source is 'custom'"
             )
         return self
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
