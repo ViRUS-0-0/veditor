@@ -117,29 +117,6 @@
   </div>
 </div>
 
-<!-- API Key Modal -->
-<div class="modal-backdrop" id="modal-api-key" style="display:none;" onclick="if(event.target===this)window.closeApiKeyModal()">
-  <div class="modal-dialog" style="max-width:440px;">
-    <div class="modal-header">
-      <h3 class="modal-title">API Key Authentication</h3>
-      <button class="btn btn-ghost btn-sm" onclick="window.closeApiKeyModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <p style="font-size:13px; color:var(--v-text-muted); margin-bottom:12px;">
-        Enter your VEditor API Key to authenticate mutations and access event-scoped talks.
-      </p>
-      <div class="form-group">
-        <label class="form-label" for="api-key-input">API Key</label>
-        <input type="password" id="api-key-input" class="form-control" placeholder="Enter API Key...">
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="window.closeApiKeyModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="window.saveApiKeyFromModal()">Save & Connect</button>
-    </div>
-  </div>
-</div>
-
 {% block extra_scripts %}{% endblock %}
 </body>
 </html>

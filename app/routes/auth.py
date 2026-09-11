@@ -128,7 +128,7 @@ def signup_submit(
     password_confirm: Annotated[str, Form()] = "",
 ):
     clean_email = email.strip().lower()
-    if not EMAIL_REGEX.match(clean_email):
+    if len(clean_email) > 255 or not EMAIL_REGEX.match(clean_email):
         return templates.TemplateResponse(
             request,
             "signup.html",
@@ -142,6 +142,17 @@ def signup_submit(
             "signup.html",
             {
                 "error": "Password must be at least 8 characters long.",
+                "email": clean_email,
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(password) > 256:
+        return templates.TemplateResponse(
+            request,
+            "signup.html",
+            {
+                "error": "Password must not exceed 256 characters.",
                 "email": clean_email,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -265,17 +276,17 @@ async def api_auth_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    def _authenticate() -> models.User | None:
-        clean_email = str(email_or_username).strip().lower()
-        user = db.query(models.User).filter(models.User.email == clean_email).first()
-        target_hash = user.hashed_password if user else _DUMMY_HASH
-        valid_password = verify_password(password, target_hash)
-        if not user or not user.is_active or not valid_password:
-            return None
-        return user
+    clean_email = str(email_or_username).strip().lower()
+    user = db.query(models.User).filter(models.User.email == clean_email).first()
+    target_hash = user.hashed_password if user else _DUMMY_HASH
 
-    user = await asyncio.to_thread(_authenticate)
-    if not user:
+    valid_password = await asyncio.to_thread(
+        verify_password,
+        password,
+        target_hash,
+    )
+
+    if not user or not user.is_active or not valid_password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",

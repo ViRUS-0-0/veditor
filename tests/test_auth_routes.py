@@ -199,6 +199,18 @@ def test_post_signup_validation_errors(client: TestClient):
     assert res.status_code == 400
     assert "email" in res.text.lower()
 
+    # Email too long (> 255 chars)
+    res = client.post(
+        "/signup",
+        data={
+            "email": f"{'a' * 250}@test.com",
+            "password": "validpassword8",
+            "password_confirm": "validpassword8",
+        },
+    )
+    assert res.status_code == 400
+    assert "valid email" in res.text.lower()
+
     # Password too short (< 8 chars)
     res = client.post(
         "/signup",
@@ -210,6 +222,18 @@ def test_post_signup_validation_errors(client: TestClient):
     )
     assert res.status_code == 400
     assert "8 characters" in res.text
+
+    # Password too long (> 256 chars)
+    res = client.post(
+        "/signup",
+        data={
+            "email": "valid@test.com",
+            "password": "p" * 257,
+            "password_confirm": "p" * 257,
+        },
+    )
+    assert res.status_code == 400
+    assert "256 characters" in res.text
 
     # Password mismatch
     res = client.post(
@@ -444,13 +468,15 @@ def test_templating_auth_context_processor(client: TestClient, db_session):
     assert "Log out" in res.text
     assert "api-key-btn" not in res.text
     assert "api-key-indicator" not in res.text
+    assert "modal-api-key" not in res.text
 
 
 def test_templating_unauthenticated_navbar(client: TestClient):
-    # Unauthenticated studio access shows Log in and Sign up, without API key badge
+    # Unauthenticated studio access shows Log in and Sign up, without API key badge or modal
     res = client.get("/studio")
     assert res.status_code == 200
     assert "Log in" in res.text
     assert "Sign up" in res.text
     assert "api-key-btn" not in res.text
     assert "api-key-indicator" not in res.text
+    assert "modal-api-key" not in res.text
