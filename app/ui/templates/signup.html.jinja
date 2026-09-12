@@ -1,0 +1,57 @@
+{% extends "base.html.jinja" %}
+
+{% block title %}Create Account{% endblock %}
+
+{% block breadcrumb %}
+  <span class="current">Create Account</span>
+{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/auth.css">
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1 class="auth-title">Create Account</h1>
+      <p class="auth-subtitle">Create a new VEditor console account</p>
+    </div>
+
+    {% if error %}
+      <div class="alert alert-danger" role="alert">
+        <span>{{ error }}</span>
+      </div>
+    {% endif %}
+
+    <div id="client-error" class="alert alert-danger auth-error-hidden" role="alert"></div>
+
+    <form class="auth-form" method="post" action="/signup">
+      <div class="form-group">
+        <label class="form-label" for="email">Email</label>
+        <input type="email" id="email" name="email" class="input-field" required autofocus maxlength="255" value="{{ email or '' }}" placeholder="name@example.com">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password">Password</label>
+        <input type="password" id="password" name="password" class="input-field" required minlength="8" maxlength="256" placeholder="At least 8 characters">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password_confirm">Confirm Password</label>
+        <input type="password" id="password_confirm" name="password_confirm" class="input-field" required minlength="8" maxlength="256" placeholder="Repeat password">
+      </div>
+
+      <button type="submit" class="btn btn-primary btn-lg btn-auth-submit">Create Account</button>
+    </form>
+
+    <div class="auth-footer">
+      <span>Already have an account? <a href="/login">Sign in</a></span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/auth.js"></script>
+{% endblock %}

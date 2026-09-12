@@ -1,0 +1,254 @@
+/* ── Dashboard Page Styles (dashboard.html) ────────────────────── */
+
+.filter-form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+#bulk-actions-bar {
+  display: none;
+  background: var(--v-bg-surface);
+  border: 1px solid var(--v-border);
+  border-radius: var(--v-radius-md);
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.bulk-actions-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#selected-count-text {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--v-text-primary);
+}
+
+.bulk-actions-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#btn-bulk-delete {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.table-count-spaced {
+  margin-left: 8px;
+}
+
+.table-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.col-checkbox {
+  width: 36px;
+  padding-left: 14px;
+}
+
+.col-actions {
+  text-align: right;
+  padding-right: 16px;
+}
+
+.job-progress-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 110px;
+}
+
+.job-progress-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.job-progress-pct {
+  font-size: 0.65rem;
+  padding: 1px 4px;
+}
+
+.job-progress-track-sm {
+  height: 3px;
+  margin: 0;
+}
+
+.job-progress-time {
+  font-size: 0.65rem;
+  color: var(--v-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-actions-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-delete-talk {
+  color: #ef4444;
+  padding: 3px 7px;
+}
+
+#no-client-matches-row {
+  display: none;
+}
+
+.no-matches-cell {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--v-text-muted);
+}
+
+.no-matches-title {
+  font-weight: 500;
+  color: var(--v-text-primary);
+  margin-bottom: 4px;
+}
+
+.no-matches-desc {
+  font-size: 0.8rem;
+}
+
+.empty-state-wrap {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--v-text-muted);
+}
+
+.empty-state-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--v-text-primary);
+  margin-bottom: 6px;
+}
+
+.empty-state-desc {
+  font-size: 0.82rem;
+  margin-bottom: 14px;
+}
+
+.empty-state-btn {
+  border: 1px solid var(--v-border);
+}
+
+.empty-state-hint {
+  font-size: 0.82rem;
+}
+
+/* Modals */
+.dashboard-modal-backdrop {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+
+.dashboard-modal-card {
+  background: var(--v-bg-surface);
+  border: 1px solid var(--v-border);
+  border-radius: var(--v-radius-md);
+  width: 90%;
+  padding: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.modal-import-card {
+  max-width: 520px;
+}
+
+.modal-attach-card {
+  max-width: 480px;
+}
+
+.modal-quick-card {
+  max-width: 440px;
+}
+
+.dashboard-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.dashboard-modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--v-text-primary);
+  margin: 0;
+}
+
+.dashboard-modal-close {
+  padding: 2px 8px;
+}
+
+.dashboard-modal-desc {
+  font-size: 0.8rem;
+  color: var(--v-text-muted);
+  margin-bottom: 12px;
+}
+
+.dashboard-modal-field {
+  margin-bottom: 12px;
+}
+
+.dashboard-modal-field-lg {
+  margin-bottom: 16px;
+}
+
+.dashboard-modal-field-sm {
+  margin-bottom: 10px;
+}
+
+.dashboard-modal-label {
+  font-size: 0.75rem;
+  color: var(--v-text-muted);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.dashboard-modal-label-tight {
+  margin-bottom: 3px;
+}
+
+.dashboard-modal-file-input {
+  padding: 6px;
+}
+
+.dashboard-modal-textarea {
+  font-family: var(--v-font-mono);
+  font-size: 0.75rem;
+}
+
+.dashboard-modal-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.dashboard-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

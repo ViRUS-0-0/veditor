@@ -275,6 +275,12 @@ class IntroOutroRequest(BaseModel):
         return self
 
 
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
 class TalkUpdate(BaseModel):
     title: str | None = None
     room: str | None = None

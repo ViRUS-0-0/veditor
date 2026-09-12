@@ -2,6 +2,56 @@
  * VEditor Studio — Interactive Timeline, Player Controller with Big Seeks, and Pipeline Review
  */
 
+function getStudioShell() {
+  return document.querySelector('.studio-shell');
+}
+
+function getTalkId() {
+  if (typeof window.TALK_ID !== 'undefined' && window.TALK_ID) return window.TALK_ID;
+  const shell = getStudioShell();
+  if (shell && shell.dataset.talkId) return parseInt(shell.dataset.talkId, 10);
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  const last = parts.pop();
+  return last ? parseInt(last, 10) : null;
+}
+
+function getTalkStatus() {
+  if (typeof window.TALK_STATUS !== 'undefined' && window.TALK_STATUS) return window.TALK_STATUS;
+  const shell = getStudioShell();
+  if (shell && shell.dataset.talkStatus) return shell.dataset.talkStatus;
+  return '';
+}
+
+function getPreviewUrls() {
+  if (typeof window.PREVIEW_URLS !== 'undefined' && Array.isArray(window.PREVIEW_URLS)) return window.PREVIEW_URLS;
+  const shell = getStudioShell();
+  if (shell && shell.dataset.previewUrls) {
+    try {
+      return JSON.parse(shell.dataset.previewUrls);
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+}
+
+const shellInit = getStudioShell();
+if (shellInit) {
+  if (typeof window.TALK_ID === 'undefined' && shellInit.dataset.talkId) {
+    window.TALK_ID = parseInt(shellInit.dataset.talkId, 10);
+  }
+  if (typeof window.TALK_STATUS === 'undefined' && shellInit.dataset.talkStatus) {
+    window.TALK_STATUS = shellInit.dataset.talkStatus;
+  }
+  if (typeof window.PREVIEW_URLS === 'undefined' && shellInit.dataset.previewUrls) {
+    try {
+      window.PREVIEW_URLS = JSON.parse(shellInit.dataset.previewUrls);
+    } catch (_) {
+      window.PREVIEW_URLS = [];
+    }
+  }
+}
+
 const video           = document.getElementById('main-video');
 const noPreview       = document.getElementById('no-preview-msg');
 const timecode        = document.getElementById('timecode-display');
@@ -102,8 +152,9 @@ window.loadVideoSrc = function(url) {
 };
 
 function initInitialVideo() {
-  if (typeof PREVIEW_URLS !== 'undefined' && Array.isArray(PREVIEW_URLS) && PREVIEW_URLS.length > 0) {
-    window.loadVideoSrc(PREVIEW_URLS[0]);
+  const urls = getPreviewUrls();
+  if (Array.isArray(urls) && urls.length > 0) {
+    window.loadVideoSrc(urls[0]);
   }
 }
 
@@ -375,9 +426,10 @@ function setBtnBusy(btn, isBusy, busyText) {
 }
 
 window.approveTalk = async function(id) {
+  if (!id || typeof id !== 'number') id = getTalkId();
   const notes = (document.getElementById('review-notes-input') || {}).value || '';
   const btn = document.getElementById('btn-approve');
-  const talkStatus = typeof TALK_STATUS !== 'undefined' ? TALK_STATUS : '';
+  const talkStatus = getTalkStatus();
 
   if (['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'].includes(talkStatus)) {
     alert(`Talk is currently processing in background (${talkStatus}). Please wait for this stage to finish.`);
@@ -438,12 +490,13 @@ window.approveTalk = async function(id) {
 
 
 window.rejectTalk = async function(id) {
+  if (!id || typeof id !== 'number') id = getTalkId();
   const notes = (document.getElementById('review-notes-input') || {}).value || '';
   if (!confirm('Reject this talk?')) return;
   const btn = document.getElementById('btn-reject');
   setBtnBusy(btn, true, 'Rejecting...');
   try {
-    const talkStatus = typeof TALK_STATUS !== 'undefined' ? TALK_STATUS : '';
+    const talkStatus = getTalkStatus();
     if (talkStatus === 'preview') {
       await postAPI(`/talks/${id}/review`, { decision: 'reject', note: notes || 'Rejected in review studio' });
     } else if (talkStatus === 'pending_approval') {
@@ -459,6 +512,7 @@ window.rejectTalk = async function(id) {
 };
 
 window.requestChangesTalk = async function(id) {
+  if (!id || typeof id !== 'number') id = getTalkId();
   const notes = (document.getElementById('review-notes-input') || {}).value || '';
   const btn = document.getElementById('btn-needs-work');
   setBtnBusy(btn, true, 'Requesting changes...');
@@ -472,6 +526,7 @@ window.requestChangesTalk = async function(id) {
 };
 
 window.retryTalk = async function(id) {
+  if (!id || typeof id !== 'number') id = getTalkId();
   const btn = document.getElementById('btn-retry');
   setBtnBusy(btn, true, 'Resetting...');
   try {
@@ -484,6 +539,7 @@ window.retryTalk = async function(id) {
 };
 
 window.handleVideoFileUpload = async function(e, talkId) {
+  if (!talkId || typeof talkId !== 'number') talkId = getTalkId();
   const file = e.target.files ? e.target.files[0] : (e.dataTransfer ? e.dataTransfer.files[0] : null);
   if (!file) return;
 
@@ -614,7 +670,7 @@ function renderRecentJobs(jobs) {
 
 let studioPollInterval = null;
 async function pollStudioJobs() {
-  const talkId = (typeof TALK_ID !== 'undefined') ? TALK_ID : parseInt(window.location.pathname.split('/').filter(Boolean).pop(), 10);
+  const talkId = getTalkId();
   if (!talkId || isNaN(talkId)) return;
 
   try {
@@ -644,15 +700,33 @@ function startStudioPolling() {
   studioPollInterval = setInterval(pollStudioJobs, 2500);
 }
 
-// ── Initial Setup & Drag-and-Drop ───────────────────────────────
+// ── Initial Setup & Event Listeners ─────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Sync progress bars width from data-progress attribute
+  document.querySelectorAll('.job-progress-fill[data-progress]').forEach(el => {
+    const p = parseFloat(el.getAttribute('data-progress'));
+    if (!isNaN(p)) el.style.width = `${Math.min(100, Math.max(0, p))}%`;
+  });
+
   initInitialVideo();
   updateCutMarkersUI();
   pollStudioJobs();
   startStudioPolling();
 
+  const videoInput = document.getElementById('video-file-input');
+  if (videoInput) {
+    videoInput.addEventListener('change', (e) => {
+      window.handleVideoFileUpload(e, getTalkId());
+    });
+  }
+
   const dropzone = document.getElementById('no-preview-msg');
   if (dropzone) {
+    dropzone.addEventListener('click', (e) => {
+      if (e.target.closest('#btn-browse-file') || e.target === videoInput) return;
+      if (videoInput) videoInput.click();
+    });
+
     ['dragenter', 'dragover'].forEach(name => {
       dropzone.addEventListener(name, (e) => {
         e.preventDefault();
@@ -672,9 +746,48 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     dropzone.addEventListener('drop', (e) => {
-      const talkId = window.location.pathname.split('/').filter(Boolean).pop();
+      const talkId = getTalkId();
       if (talkId) {
-        window.handleVideoFileUpload(e, parseInt(talkId, 10));
+        window.handleVideoFileUpload(e, talkId);
+      }
+    });
+  }
+
+  const btnBrowse = document.getElementById('btn-browse-file');
+  if (btnBrowse && videoInput) {
+    btnBrowse.addEventListener('click', (e) => {
+      e.stopPropagation();
+      videoInput.click();
+    });
+  }
+
+  const actionBtns = document.getElementById('action-btns');
+  if (actionBtns) {
+    actionBtns.addEventListener('click', (e) => {
+      const uploadBtn = e.target.closest('#btn-upload-recording');
+      if (uploadBtn && videoInput) {
+        videoInput.click();
+        return;
+      }
+      const approveBtn = e.target.closest('#btn-approve');
+      if (approveBtn) {
+        window.approveTalk(getTalkId());
+        return;
+      }
+      const rejectBtn = e.target.closest('#btn-reject');
+      if (rejectBtn) {
+        window.rejectTalk(getTalkId());
+        return;
+      }
+      const needsWorkBtn = e.target.closest('#btn-needs-work');
+      if (needsWorkBtn) {
+        window.requestChangesTalk(getTalkId());
+        return;
+      }
+      const retryBtn = e.target.closest('#btn-retry');
+      if (retryBtn) {
+        window.retryTalk(getTalkId());
+        return;
       }
     });
   }
@@ -688,8 +801,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Auto-poll status when in background processing states
   const activeProcessingStates = ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'];
-  const currentTalkStatus = typeof TALK_STATUS !== 'undefined' ? TALK_STATUS : '';
-  const currentTalkId = window.location.pathname.split('/').filter(Boolean).pop();
+  const currentTalkStatus = getTalkStatus();
+  const currentTalkId = getTalkId();
 
   if (activeProcessingStates.includes(currentTalkStatus) && currentTalkId) {
     const pollInterval = setInterval(async () => {

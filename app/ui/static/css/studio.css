@@ -1,0 +1,430 @@
+/* ── Studio Detail View Styles (studio.html) ────────────────────── */
+
+.talk-header-id {
+  font-size: 0.8rem;
+  color: var(--v-text-muted);
+}
+
+.assets-section-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--v-text-muted);
+  margin-bottom: 8px;
+}
+
+#media-assets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.media-asset-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--v-bg-subtle);
+  border: 1px solid var(--v-border-subtle);
+  border-radius: var(--v-radius-xs);
+  transition: all 0.15s ease;
+}
+
+.media-asset-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.media-asset-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+}
+
+.media-asset-download {
+  padding: 1px 6px;
+  font-size: 0.68rem;
+}
+
+.media-asset-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--v-text-primary);
+  line-height: 1.2;
+}
+
+.btn-play-asset {
+  width: 100%;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  margin-top: 2px;
+}
+
+.no-media-msg {
+  font-size: 0.75rem;
+  color: var(--v-text-muted);
+}
+
+#main-video {
+  width: 100%;
+  max-height: 420px;
+  background: #000;
+  display: none;
+}
+
+#no-preview-msg {
+  cursor: pointer;
+  padding: 36px 20px;
+}
+
+#video-file-input {
+  display: none;
+}
+
+.upload-icon {
+  color: var(--v-primary);
+  margin-bottom: 8px;
+}
+
+.upload-prompt-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--v-text-primary);
+  margin-bottom: 4px;
+}
+
+.upload-prompt-subtitle {
+  font-size: 0.76rem;
+  color: var(--v-text-muted);
+  max-width: 320px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+#upload-progress-wrap {
+  display: none;
+  margin-top: 12px;
+  text-align: center;
+}
+
+.upload-spinner {
+  margin-right: 6px;
+}
+
+#upload-progress-text {
+  font-size: 0.75rem;
+  color: var(--v-text-muted);
+}
+
+.player-time-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#duration-display {
+  font-size: 0.75rem;
+  color: var(--v-text-muted);
+}
+
+.player-nav-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.jump-time-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.jump-time-label {
+  font-size: 0.72rem;
+  color: var(--v-text-muted);
+}
+
+#jump-time-input {
+  width: 75px;
+  padding: 2px 6px;
+  font-family: var(--v-font-mono);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.speed-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.speed-select-label {
+  font-size: 0.72rem;
+  color: var(--v-text-muted);
+}
+
+#speed-select {
+  padding: 2px 6px;
+  font-size: 0.75rem;
+}
+
+#icon-pause {
+  display: none;
+}
+
+#tl-range-label {
+  font-family: var(--v-font-mono);
+  font-size: 0.75rem;
+  color: var(--v-text-secondary);
+}
+
+#timeline-track {
+  cursor: crosshair;
+}
+
+#tl-intro {
+  left: 0;
+  width: 5%;
+}
+
+#tl-content {
+  left: 5%;
+  width: 90%;
+}
+
+#tl-outro {
+  right: 0;
+  width: 5%;
+}
+
+#tl-start-marker {
+  left: 5%;
+  cursor: ew-resize;
+}
+
+#tl-end-marker {
+  left: 95%;
+  cursor: ew-resize;
+}
+
+#tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--v-text-primary);
+  left: 0%;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.timeline-inputs-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--v-border-subtle);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bounds-inputs-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bounds-time-input {
+  width: 100px;
+  padding: 3px 6px;
+  font-family: var(--v-font-mono);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.bounds-to-label {
+  color: var(--v-text-muted);
+  font-size: 0.75rem;
+}
+
+.bounds-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.review-box {
+  background: var(--v-bg-subtle);
+  border: 1px solid var(--v-border-subtle);
+  border-radius: var(--v-radius-md);
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.review-box-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--v-text-primary);
+  margin-bottom: 8px;
+}
+
+.review-notes-wrap {
+  margin-bottom: 10px;
+}
+
+.review-notes-label {
+  font-size: 0.7rem;
+  color: var(--v-text-muted);
+  display: block;
+  margin-bottom: 3px;
+}
+
+#review-notes-input {
+  width: 100%;
+  font-size: 0.78rem;
+  resize: vertical;
+}
+
+.btn-reject-spacing {
+  margin-top: 6px;
+}
+
+.badge-done-full {
+  padding: 10px;
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+}
+
+#pipeline-progress-wrap {
+  display: none;
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--v-bg-surface);
+  border: 1px solid var(--v-border-subtle);
+  border-radius: var(--v-radius-xs);
+}
+
+.pipeline-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+#pipeline-progress-status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--v-primary);
+}
+
+.pipeline-pct-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+}
+
+.pipeline-track {
+  height: 6px;
+}
+
+#pipeline-progress-fill {
+  width: 15%;
+}
+
+#pipeline-progress-desc {
+  font-size: 0.7rem;
+  color: var(--v-text-muted);
+  margin-top: 5px;
+}
+
+.milestones-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--v-text-muted);
+  margin-bottom: 10px;
+}
+
+.milestone-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+}
+
+.recent-jobs-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--v-text-muted);
+  margin-bottom: 8px;
+}
+
+#jobs-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.job-header-flex {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.job-kind-mono {
+  font-family: var(--v-font-mono);
+  font-weight: 600;
+}
+
+.job-badges-flex {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.job-badge-sm {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+}
+
+#jobs-empty {
+  font-size: 0.75rem;
+  color: var(--v-text-muted);
+}
+
+.badge-status-full {
+  padding: 10px;
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+}
+
+.slates-box {
+  background: var(--v-bg-subtle);
+  border: 1px solid var(--v-border-subtle);
+  border-radius: var(--v-radius-sm);
+  padding: 10px;
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+}
+
+.slates-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--v-text-primary);
+}
+
+.slates-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.slates-label:last-child {
+  margin-bottom: 4px;
+}

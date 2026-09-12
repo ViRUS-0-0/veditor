@@ -19,7 +19,7 @@
   <!-- ── Sidebar ─────────────────────────────────────────────── -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--v-primary)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polygon points="5 3 19 12 5 21 5 3"/>
       </svg>
       <span class="logo-text" id="app-logo-text">VEditor</span>
@@ -86,25 +86,21 @@
       </div>
       <div class="topbar-actions">
         <div class="topbar-control-group">
-          <!-- Role Selector -->
-          <div class="role-badge-select">
-            <label for="user-role-select">Role</label>
-            <select id="user-role-select" onchange="window.setUserRole(this.value)">
-              <option value="admin">Admin</option>
-              <option value="reviewer">Reviewer</option>
-              <option value="speaker">Speaker</option>
-            </select>
-          </div>
-
-          <!-- API Key Manager -->
-          <button class="key-badge-btn" id="api-key-btn" onclick="window.promptApiKey()" title="Configure API Key">
-            <span class="key-dot" id="api-key-dot"></span>
-            <span id="api-key-indicator">API Key</span>
-          </button>
+          <!-- Dynamic Authentication State -->
+          {% if user %}
+            <span class="user-email">{{ user.email }}</span>
+            <span class="badge badge-role badge-{{ user.role }}">{{ user.role | capitalize }}</span>
+            <form method="post" action="/logout" class="logout-form">
+              <button type="submit" class="btn btn-ghost btn-sm" id="logout-btn">Log out</button>
+            </form>
+          {% else %}
+            <a href="/login" class="btn btn-ghost btn-sm" id="login-link">Log in</a>
+            <a href="/signup" class="btn btn-primary btn-sm" id="signup-link">Sign up</a>
+          {% endif %}
 
           <!-- Theme Toggle Button -->
-          <button class="btn btn-ghost btn-sm" id="theme-toggle-btn" onclick="toggleTheme()" title="Toggle Theme" style="padding:5px 8px; height:30px;">
-            <svg id="theme-icon-sun" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="display:none;">
+          <button class="btn btn-ghost btn-sm" id="theme-toggle-btn" title="Toggle Theme">
+            <svg id="theme-icon-sun" class="theme-icon-hidden" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
             </svg>
             <svg id="theme-icon-moon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -118,29 +114,6 @@
     </header>
 
     {% block content %}{% endblock %}
-  </div>
-</div>
-
-<!-- API Key Modal -->
-<div class="modal-backdrop" id="modal-api-key" style="display:none;" onclick="if(event.target===this)window.closeApiKeyModal()">
-  <div class="modal-dialog" style="max-width:440px;">
-    <div class="modal-header">
-      <h3 class="modal-title">API Key Authentication</h3>
-      <button class="btn btn-ghost btn-sm" onclick="window.closeApiKeyModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <p style="font-size:13px; color:var(--v-text-muted); margin-bottom:12px;">
-        Enter your VEditor API Key to authenticate mutations and access event-scoped talks.
-      </p>
-      <div class="form-group">
-        <label class="form-label" for="api-key-input">API Key</label>
-        <input type="password" id="api-key-input" class="form-control" placeholder="Enter API Key...">
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="window.closeApiKeyModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="window.saveApiKeyFromModal()">Save & Connect</button>
-    </div>
   </div>
 </div>
 

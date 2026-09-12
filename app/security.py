@@ -6,11 +6,8 @@ from pathlib import Path
 import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from sqlalchemy import inspect, text
-from sqlalchemy.orm import Session
 
 from app.config import ALLOWED_JWT_ALGORITHMS, settings
-from app.db import SessionLocal
 
 _hasher = PasswordHasher()
 _session_secret: str | None = None
@@ -193,23 +190,3 @@ def decode_access_token(token: str) -> dict | None:
         return payload
     except (jwt.PyJWTError, TypeError, ValueError, AttributeError) as _exc:
         return None
-
-
-def is_first_user(db: Session | None = None) -> bool:
-    """
-    Returns True only when the `users` table is empty (or has not yet been created).
-    Returns False once at least one user exists in the database.
-    """
-    if db is None:
-        with SessionLocal() as session:
-            return _check_is_first_user(session)
-    return _check_is_first_user(db)
-
-
-def _check_is_first_user(session: Session) -> bool:
-    bind = session.get_bind()
-    inspector = inspect(bind)
-    if not inspector.has_table("users"):
-        return True
-    row = session.execute(text("SELECT 1 FROM users LIMIT 1")).first()
-    return row is None

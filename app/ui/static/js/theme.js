@@ -48,56 +48,21 @@ window.VEditorConfig = window.VEditorConfig || {
   const initial = getPreferredTheme();
   document.documentElement.setAttribute('data-theme', initial);
 
-  function updateKeyIndicatorUI() {
-    const hasKey = !!window.getApiKey();
-    const btn = document.getElementById('api-key-btn');
-    const ind = document.getElementById('api-key-indicator');
-    if (btn) {
-      if (hasKey) btn.classList.add('key-set');
-      else btn.classList.remove('key-set');
-    }
-    if (ind) {
-      ind.textContent = hasKey ? 'API Key Saved' : 'Set API Key';
-    }
-  }
-
   document.addEventListener('DOMContentLoaded', () => {
     applyTheme(initial);
     const role = window.getUserRole();
     document.documentElement.setAttribute('data-user-role', role);
     const sel = document.getElementById('user-role-select');
     if (sel) sel.value = role;
-    updateKeyIndicatorUI();
+
+    const themeBtn = document.getElementById('theme-toggle-btn');
+    if (themeBtn) {
+      themeBtn.addEventListener('click', window.toggleTheme);
+    }
   });
 })();
 
 // ── Auth & Role Manager ─────────────────────────────────────────
-window.openApiKeyModal = function () {
-  const m = document.getElementById('modal-api-key');
-  const input = document.getElementById('api-key-input');
-  if (input) input.value = window.getApiKey();
-  if (m) m.style.display = 'flex';
-};
-
-window.closeApiKeyModal = function () {
-  const m = document.getElementById('modal-api-key');
-  if (m) m.style.display = 'none';
-};
-
-window.saveApiKeyFromModal = function () {
-  const input = document.getElementById('api-key-input');
-  if (input) {
-    const key = input.value.trim();
-    window.setApiKey(key);
-  }
-  window.closeApiKeyModal();
-  location.reload();
-};
-
-window.promptApiKey = function () {
-  window.openApiKeyModal();
-};
-
 window.getApiKey = function () {
   return localStorage.getItem('veditor_api_key') || '';
 };
@@ -128,10 +93,5 @@ window.authFetch = function (url, options = {}) {
       options.headers['X-API-Key'] = key;
     }
   }
-  return fetch(url, options).then(res => {
-    if (res.status === 401 && !options._isPolling) {
-      window.openApiKeyModal();
-    }
-    return res;
-  });
+  return fetch(url, options);
 };

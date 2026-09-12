@@ -1,7 +1,6 @@
 from pathlib import Path
 from typing import Annotated
 
-import jinja2
 from fastapi import (
     APIRouter,
     Depends,
@@ -10,23 +9,13 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.auth import hash_api_key
 from app.db import get_db
 from app.storage import StorageBackend, get_storage_backend
-
-_TEMPLATES_DIR = Path(__file__).parent.parent / "ui" / "templates"
-
-# Disable cache to avoid Jinja2 3.1.5+ unhashable cache key issue
-_env = jinja2.Environment(
-    loader=jinja2.FileSystemLoader(str(_TEMPLATES_DIR)),
-    autoescape=jinja2.select_autoescape(["html"]),
-    cache_size=0,
-)
-templates = Jinja2Templates(env=_env)
+from app.ui.templating import templates
 
 router = APIRouter(prefix="/studio", tags=["studio"])
 
@@ -35,16 +24,12 @@ def get_ui_client(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
 ) -> models.Client:
-    """Dependency that extracts API Key from Header, Cookie, or Query Param."""
-    api_key = (
-        request.headers.get("X-API-Key")
-        or request.cookies.get("veditor_api_key")
-        or request.query_params.get("api_key")
-    )
+    """Dependency that extracts API Key from Header or Cookie."""
+    api_key = request.headers.get("X-API-Key") or request.cookies.get("veditor_api_key")
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API Key. Please provide X-API-Key header, veditor_api_key cookie, or api_key query param.",
+            detail="Missing API Key. Please provide X-API-Key header or veditor_api_key cookie.",
         )
     hashed_key = hash_api_key(api_key)
     client = (
@@ -63,11 +48,7 @@ def get_optional_ui_client(
     db: Annotated[Session, Depends(get_db)],
 ) -> models.Client | None:
     """Optional client dependency for public read pages."""
-    api_key = (
-        request.headers.get("X-API-Key")
-        or request.cookies.get("veditor_api_key")
-        or request.query_params.get("api_key")
-    )
+    api_key = request.headers.get("X-API-Key") or request.cookies.get("veditor_api_key")
     if not api_key:
         return None
     hashed_key = hash_api_key(api_key)
@@ -207,7 +188,7 @@ def dashboard(
 
     return templates.TemplateResponse(
         request,
-        "dashboard.html",
+        "dashboard.html.jinja",
         {
             "talks": talks,
             "stats": stats,
@@ -217,6 +198,7 @@ def dashboard(
             "status_filter": status_filter or "",
             "event_id": event_id,
         },
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -355,7 +337,7 @@ def studio(
 
     return templates.TemplateResponse(
         request,
-        "studio.html",
+        "studio.html.jinja",
         {
             "talk": talk,
             "jobs": jobs,

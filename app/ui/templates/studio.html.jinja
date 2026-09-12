@@ -1,5 +1,9 @@
-{% extends "base.html" %}
+{% extends "base.html.jinja" %}
 {% block title %}{{ talk.title[:40] }}{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="/static/css/studio.css">
+{% endblock %}
 
 {% macro status_badge(status) %}
   {% if status == 'waiting_for_files' %}
@@ -30,12 +34,12 @@
 {% endblock %}
 
 {% block topbar_actions %}
-  <span style="font-size:0.8rem;color:var(--v-text-muted);">Talk #{{ talk.id }}</span>
+  <span class="talk-header-id">Talk #{{ talk.id }}</span>
   {{ status_badge(talk.status) }}
 {% endblock %}
 
 {% block content %}
-<div class="studio-shell">
+<div class="studio-shell" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}">
 
   <!-- ── LEFT: Talk Metadata Panel ───────────────────────────── -->
   <div class="studio-panel">
@@ -94,32 +98,32 @@
       <div class="divider"></div>
 
       <!-- Generated Media Assets (RAW, Intro, Outro, Preview, Final) -->
-      <div style="font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--v-text-muted);margin-bottom:8px;">
+      <div class="assets-section-title">
         Generated Media Assets
       </div>
 
-      <div id="media-assets-list" style="display:flex;flex-direction:column;gap:6px;">
+      <div id="media-assets-list">
         {% if media_assets %}
           {% for asset in media_assets %}
-          <div class="media-asset-row" data-asset-url="{{ asset.url }}" style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;background:var(--v-bg-subtle);border:1px solid var(--v-border-subtle);border-radius:var(--v-radius-xs);transition:all 0.15s ease;">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <span class="badge {% if asset.category == 'intro' or asset.category == 'outro' %}badge-pending{% elif asset.category == 'final' %}badge-done{% elif asset.category == 'raw' %}badge-waiting{% else %}badge-preview{% endif %}" style="font-size:0.65rem;padding:1px 5px;">
+          <div class="media-asset-row" data-asset-url="{{ asset.url }}">
+            <div class="media-asset-header">
+              <span class="badge media-asset-badge {% if asset.category == 'intro' or asset.category == 'outro' %}badge-pending{% elif asset.category == 'final' %}badge-done{% elif asset.category == 'raw' %}badge-waiting{% else %}badge-preview{% endif %}">
                 {{ asset.category | upper }}
               </span>
-              <a href="{{ asset.url }}" target="_blank" class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:0.68rem;" title="Download file">
+              <a href="{{ asset.url }}" target="_blank" class="btn btn-ghost btn-sm media-asset-download" title="Download file">
                 Download
               </a>
             </div>
-            <div style="font-size:0.78rem;font-weight:500;color:var(--v-text-primary);line-height:1.2;">
+            <div class="media-asset-label">
               {{ asset.label }}
             </div>
-            <button class="btn btn-primary btn-sm btn-play-asset" data-asset-url="{{ asset.url }}" style="width:100%;padding:3px 8px;font-size:0.72rem;margin-top:2px;">
+            <button class="btn btn-primary btn-sm btn-play-asset" data-asset-url="{{ asset.url }}">
               Play in Studio
             </button>
           </div>
           {% endfor %}
         {% else %}
-          <div style="font-size:0.75rem;color:var(--v-text-muted);">No pipeline media generated yet.</div>
+          <div class="no-media-msg">No pipeline media generated yet.</div>
         {% endif %}
       </div>
 
@@ -131,49 +135,49 @@
 
     <!-- Video Viewport -->
     <div class="player-viewport">
-      <video id="main-video" preload="metadata" style="width:100%;max-height:420px;background:#000;display:none;">
+      <video id="main-video" preload="metadata">
         Your browser does not support HTML5 video.
       </video>
-      <div class="player-no-preview" id="no-preview-msg" style="cursor:pointer;padding:36px 20px;" onclick="document.getElementById('video-file-input').click()">
-        <input type="file" id="video-file-input" accept="video/mp4,video/mkv,video/webm,video/quicktime,video/*" style="display:none;" onchange="handleVideoFileUpload(event, {{ talk.id }})">
-        <svg width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="color:var(--v-primary);margin-bottom:8px;">
+      <div class="player-no-preview" id="no-preview-msg">
+        <input type="file" id="video-file-input" accept="video/mp4,video/mkv,video/webm,video/quicktime,video/*">
+        <svg class="upload-icon" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="17 8 12 3 7 8"/>
           <line x1="12" y1="3" x2="12" y2="15"/>
         </svg>
-        <span style="font-size:0.95rem;font-weight:600;color:var(--v-text-primary);margin-bottom:4px;">
+        <span class="upload-prompt-title">
           Attach Recording Video
         </span>
-        <span style="font-size:0.76rem;color:var(--v-text-muted);max-width:320px;margin-bottom:12px;text-align:center;">
+        <span class="upload-prompt-subtitle">
           Drag & drop raw conference video file here, or click to browse (MP4, MKV, MOV, WebM).
         </span>
-        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); document.getElementById('video-file-input').click();">
+        <button class="btn btn-primary btn-sm" id="btn-browse-file">
           Browse Video File
         </button>
-        <div id="upload-progress-wrap" style="display:none;margin-top:12px;text-align:center;">
-          <span class="spinner spinner-sm" style="margin-right:6px;"></span>
-          <span style="font-size:0.75rem;color:var(--v-text-muted);" id="upload-progress-text">Uploading & validating video streams...</span>
+        <div id="upload-progress-wrap">
+          <span class="spinner spinner-sm upload-spinner"></span>
+          <span id="upload-progress-text">Uploading & validating video streams...</span>
         </div>
       </div>
     </div>
 
     <!-- Timecode & Jump Bar -->
     <div class="timecode-bar">
-      <div style="display:flex;align-items:center;gap:10px;">
+      <div class="player-time-group">
         <span class="timecode" id="timecode-display">00:00:00.00</span>
-        <span style="font-size:0.75rem;color:var(--v-text-muted);" id="duration-display">/ 00:00:00.00</span>
+        <span id="duration-display">/ 00:00:00.00</span>
       </div>
 
-      <div style="display:flex;align-items:center;gap:12px;">
+      <div class="player-nav-group">
         <!-- Jump directly to timecode -->
-        <div style="display:flex;align-items:center;gap:6px;">
-          <label for="jump-time-input" style="font-size:0.72rem;color:var(--v-text-muted);">Jump to:</label>
-          <input type="text" id="jump-time-input" placeholder="MM:SS" class="input-field" style="width:75px;padding:2px 6px;font-family:var(--v-font-mono);font-size:0.75rem;text-align:center;">
+        <div class="jump-time-wrap">
+          <label for="jump-time-input" class="jump-time-label">Jump to:</label>
+          <input type="text" id="jump-time-input" placeholder="MM:SS" class="input-field">
         </div>
 
-        <div style="display:flex;align-items:center;gap:4px;">
-          <label for="speed-select" style="font-size:0.72rem;color:var(--v-text-muted);">Speed:</label>
-          <select id="speed-select" class="select-field" style="padding:2px 6px;font-size:0.75rem;">
+        <div class="speed-select-wrap">
+          <label for="speed-select" class="speed-select-label">Speed:</label>
+          <select id="speed-select" class="select-field">
             <option value="0.25">0.25×</option>
             <option value="0.5">0.5×</option>
             <option value="1" selected>1×</option>
@@ -194,7 +198,7 @@
       <!-- Play / Pause -->
       <button class="ctrl-btn play-btn" id="btn-play" title="Play / Pause (Space)">
         <svg id="icon-play" width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21"/></svg>
-        <svg id="icon-pause" width="16" height="16" fill="currentColor" viewBox="0 0 24 24" style="display:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+        <svg id="icon-pause" width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
       </button>
 
       <!-- Fine, Big & Mega Seek Forward -->
@@ -208,16 +212,16 @@
     <div class="timeline-section">
       <div class="timeline-label">
         <span>Timeline Scrubber</span>
-        <span id="tl-range-label" style="font-family:var(--v-font-mono);font-size:0.75rem;color:var(--v-text-secondary);"></span>
+        <span id="tl-range-label"></span>
       </div>
 
-      <div class="timeline-track" id="timeline-track" style="cursor:crosshair;">
-        <div class="tl-block tl-intro"  id="tl-intro"   style="left:0;width:5%;">INTRO</div>
-        <div class="tl-block tl-content" id="tl-content" style="left:5%;width:90%;">TALK BOUNDS</div>
-        <div class="tl-block tl-outro"  id="tl-outro"   style="right:0;width:5%;">OUTRO</div>
-        <div class="tl-marker" id="tl-start-marker" style="left:5%;cursor:ew-resize;" title="Drag Start Point (or press I)"></div>
-        <div class="tl-marker end-marker" id="tl-end-marker" style="left:95%;cursor:ew-resize;" title="Drag End Point (or press O)"></div>
-        <div id="tl-playhead" style="position:absolute;top:0;bottom:0;width:2px;background:var(--v-text-primary);left:0%;pointer-events:none;z-index:6;"></div>
+      <div class="timeline-track" id="timeline-track">
+        <div class="tl-block tl-intro" id="tl-intro">INTRO</div>
+        <div class="tl-block tl-content" id="tl-content">TALK BOUNDS</div>
+        <div class="tl-block tl-outro" id="tl-outro">OUTRO</div>
+        <div class="tl-marker" id="tl-start-marker" title="Drag Start Point (or press I)"></div>
+        <div class="tl-marker end-marker" id="tl-end-marker" title="Drag End Point (or press O)"></div>
+        <div id="tl-playhead"></div>
       </div>
 
       <div class="timeline-range">
@@ -229,22 +233,22 @@
       </div>
 
       <!-- In/Out Bounds Setting Controls -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:10px;border-top:1px solid var(--v-border-subtle);flex-wrap:wrap;gap:8px;">
-        <div style="display:flex;align-items:center;gap:6px;">
+      <div class="timeline-inputs-bar">
+        <div class="bounds-inputs-group">
           <button class="btn btn-ghost btn-sm" id="btn-set-in" title="Set In-Point (I)">
             Set In (I)
           </button>
-          <input type="text" id="input-in-point" value="00:00:00.00" class="input-field" style="width:100px;padding:3px 6px;font-family:var(--v-font-mono);font-size:0.75rem;text-align:center;">
+          <input type="text" id="input-in-point" value="00:00:00.00" class="input-field bounds-time-input">
 
-          <span style="color:var(--v-text-muted);font-size:0.75rem;">to</span>
+          <span class="bounds-to-label">to</span>
 
-          <input type="text" id="input-out-point" value="00:00:00.00" class="input-field" style="width:100px;padding:3px 6px;font-family:var(--v-font-mono);font-size:0.75rem;text-align:center;">
+          <input type="text" id="input-out-point" value="00:00:00.00" class="input-field bounds-time-input">
           <button class="btn btn-ghost btn-sm" id="btn-set-out" title="Set Out-Point (O)">
             Set Out (O)
           </button>
         </div>
 
-        <div style="display:flex;align-items:center;gap:6px;">
+        <div class="bounds-action-btns">
           <button class="btn btn-ghost btn-sm" id="btn-play-cut" title="Play trimmed range">
             <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21"/></svg>
             Play Cut Range
@@ -267,107 +271,107 @@
     <div class="studio-panel-body">
 
       <!-- Action Panel for Human Review Gates -->
-      <div style="background:var(--v-bg-subtle);border:1px solid var(--v-border-subtle);border-radius:var(--v-radius-md);padding:14px;margin-bottom:16px;">
-        <div style="font-size:0.78rem;font-weight:600;color:var(--v-text-primary);margin-bottom:8px;">
+      <div class="review-box">
+        <div class="review-box-title">
           Review Actions
         </div>
 
-        <div style="margin-bottom:10px;">
-          <label for="review-notes-input" style="font-size:0.7rem;color:var(--v-text-muted);display:block;margin-bottom:3px;">Reviewer Notes</label>
-          <textarea id="review-notes-input" class="input-field" rows="2" placeholder="Optional notes for speaker or reviewer..." style="width:100%;font-size:0.78rem;resize:vertical;"></textarea>
+        <div class="review-notes-wrap">
+          <label for="review-notes-input" class="review-notes-label">Reviewer Notes</label>
+          <textarea id="review-notes-input" class="input-field" rows="2" placeholder="Optional notes for speaker or reviewer..."></textarea>
         </div>
 
         <div class="action-btns" id="action-btns">
           {% if talk.status == 'waiting_for_files' %}
-            <div class="badge badge-waiting" style="padding:10px;width:100%;justify-content:center;text-align:center;">
+            <div class="badge badge-waiting badge-status-full">
               Waiting for video recording upload
             </div>
-            <button class="btn btn-primary w-full" onclick="document.getElementById('video-file-input').click()">
+            <button class="btn btn-primary w-full" id="btn-upload-recording">
               Upload Recording Video
             </button>
           {% elif talk.status in ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'] %}
-            <div class="badge badge-processing" style="padding:10px;width:100%;justify-content:center;text-align:center;">
+            <div class="badge badge-processing badge-status-full">
               <span class="spinner spinner-sm"></span> Processing in background ({{ talk.status | replace('_', ' ') | title }})...
             </div>
           {% elif talk.status == 'pending_approval' %}
-            <button class="btn btn-success w-full" id="btn-approve" onclick="approveTalk({{ talk.id }})">
+            <button class="btn btn-success w-full" id="btn-approve">
               Approve Schedule Alignment (Gate 1)
             </button>
-            <button class="btn btn-danger w-full" id="btn-reject" onclick="rejectTalk({{ talk.id }})">
+            <button class="btn btn-danger w-full" id="btn-reject">
               Reject Talk
             </button>
           {% elif talk.status == 'pending_bounds' %}
-            <button class="btn btn-primary w-full" id="btn-approve" onclick="approveTalk({{ talk.id }})">
+            <button class="btn btn-primary w-full" id="btn-approve">
               Submit Cut Bounds & Generate Preview
             </button>
-            <button class="btn btn-danger w-full" id="btn-reject" onclick="rejectTalk({{ talk.id }})">
+            <button class="btn btn-danger w-full" id="btn-reject">
               Reject / Abort
             </button>
           {% elif talk.status == 'needs_work' %}
-            <button class="btn btn-primary w-full" id="btn-approve" onclick="approveTalk({{ talk.id }})">
+            <button class="btn btn-primary w-full" id="btn-approve">
               Re-cut Bounds & Regenerate Preview
             </button>
-            <button class="btn btn-danger w-full" id="btn-reject" onclick="rejectTalk({{ talk.id }})">
+            <button class="btn btn-danger w-full" id="btn-reject">
               Reject Talk
             </button>
           {% elif talk.status == 'preview' %}
-            <button class="btn btn-success w-full" id="btn-approve" onclick="approveTalk({{ talk.id }})">
+            <button class="btn btn-success w-full" id="btn-approve">
               Approve Preview (Gate 2)
             </button>
-            <button class="btn btn-warning w-full" id="btn-needs-work" onclick="requestChangesTalk({{ talk.id }})">
+            <button class="btn btn-warning w-full" id="btn-needs-work">
               Request Changes (Needs Work)
             </button>
-            <button class="btn btn-danger w-full" id="btn-reject" onclick="rejectTalk({{ talk.id }})">
+            <button class="btn btn-danger w-full" id="btn-reject">
               Reject Talk
             </button>
           {% elif talk.status == 'pending_intro_outro' %}
-            <div style="background:var(--v-bg-subtle);border:1px solid var(--v-border-subtle);border-radius:var(--v-radius-sm);padding:10px;margin-bottom:10px;font-size:0.8rem;">
-              <div style="font-weight:600;margin-bottom:6px;color:var(--v-text-primary);">Opening & Closing Slates</div>
-              <label style="display:flex;align-items:center;gap:6px;margin-bottom:6px;cursor:pointer;">
+            <div class="slates-box">
+              <div class="slates-title">Opening & Closing Slates</div>
+              <label class="slates-label">
                 <input type="checkbox" id="check-include-intro" checked>
                 <span>Include Opening Intro Slate</span>
               </label>
-              <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px;cursor:pointer;">
+              <label class="slates-label">
                 <input type="checkbox" id="check-include-outro" checked>
                 <span>Include Closing Outro Slate</span>
               </label>
             </div>
-            <button class="btn btn-primary w-full" id="btn-approve" onclick="approveTalk({{ talk.id }})">
+            <button class="btn btn-primary w-full" id="btn-approve">
               Start Master Assembly & Transcode
             </button>
-            <button class="btn btn-danger w-full" id="btn-reject" onclick="rejectTalk({{ talk.id }})" style="margin-top:6px;">
+            <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject">
               Reject / Abort
             </button>
 
           {% elif talk.status in ['rejected', 'broken'] %}
-            <button class="btn btn-primary w-full" id="btn-retry" onclick="retryTalk({{ talk.id }})">
+            <button class="btn btn-primary w-full" id="btn-retry">
               Retry Talk Lifecycle
             </button>
           {% elif talk.status == 'done' %}
-            <div class="badge badge-done" style="padding:10px;width:100%;justify-content:center;text-align:center;">
+            <div class="badge badge-done badge-status-full">
               Published & Complete
             </div>
           {% endif %}
         </div>
 
-        <div id="pipeline-progress-wrap" style="display:none;margin-top:10px;padding:10px;background:var(--v-bg-surface);border:1px solid var(--v-border-subtle);border-radius:var(--v-radius-xs);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-            <span style="font-size:0.75rem;font-weight:600;color:var(--v-primary);" id="pipeline-progress-status">
+        <div id="pipeline-progress-wrap">
+          <div class="pipeline-progress-header">
+            <span id="pipeline-progress-status">
               <span class="spinner spinner-sm"></span> Processing Pipeline...
             </span>
-            <span class="badge badge-info" id="pipeline-progress-pct" style="font-size:0.65rem;padding:1px 5px;">0%</span>
+            <span class="badge badge-info pipeline-pct-badge" id="pipeline-progress-pct">0%</span>
           </div>
-          <div class="job-progress-track" style="height:6px;">
-            <div id="pipeline-progress-fill" class="job-progress-fill animated" style="width: 15%;"></div>
+          <div class="job-progress-track pipeline-track">
+            <div id="pipeline-progress-fill" class="job-progress-fill animated"></div>
           </div>
-          <div style="font-size:0.7rem;color:var(--v-text-muted);margin-top:5px;" id="pipeline-progress-desc">
+          <div id="pipeline-progress-desc">
             Generating title slates, cutting clip & creating preview...
           </div>
         </div>
       </div>
 
       <!-- 4 Lifecycle Milestones -->
-      <div style="font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--v-text-muted);margin-bottom:10px;">
+      <div class="milestones-title">
         Pipeline Milestones
       </div>
       <div class="milestones-stepper">
@@ -378,11 +382,11 @@
                 {% if m.state == 'completed' %}✓{% else %}{{ m.num }}.{% endif %} {{ m.title }}
               </span>
               {% if m.state == 'active' %}
-                <span class="badge badge-processing" style="font-size:0.65rem;padding:1px 5px;"><span class="spinner spinner-sm"></span>In Progress</span>
+                <span class="badge badge-processing milestone-badge"><span class="spinner spinner-sm"></span>In Progress</span>
               {% elif m.state == 'completed' %}
-                <span class="badge badge-done" style="font-size:0.65rem;padding:1px 5px;">Done</span>
+                <span class="badge badge-done milestone-badge">Done</span>
               {% elif m.state == 'failed' %}
-                <span class="badge badge-danger" style="font-size:0.65rem;padding:1px 5px;">Failed</span>
+                <span class="badge badge-danger milestone-badge">Failed</span>
               {% endif %}
             </div>
             <div class="milestone-substeps">
@@ -395,27 +399,27 @@
       <div class="divider"></div>
 
       <!-- Recent Jobs -->
-      <div style="font-size:0.72rem;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--v-text-muted);margin-bottom:8px;">
+      <div class="recent-jobs-title">
         Recent Jobs
       </div>
       {% if jobs %}
-      <div id="jobs-container" style="display:flex;flex-direction:column;gap:6px;">
+      <div id="jobs-container">
         {% for job in jobs %}
         <div class="job-card" data-job-id="{{ job.id }}">
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-family:var(--v-font-mono);font-weight:600;">{{ job.kind }}</span>
-            <div style="display:flex;align-items:center;gap:5px;">
+          <div class="job-header-flex">
+            <span class="job-kind-mono">{{ job.kind }}</span>
+            <div class="job-badges-flex">
               {% if job.progress_pct is not none and job.status == 'running' %}
-                <span class="badge badge-info" style="font-size:0.65rem;padding:1px 5px;">{{ "%.0f"|format(job.progress_pct) }}%</span>
+                <span class="badge badge-info job-badge-sm">{{ "%.0f"|format(job.progress_pct) }}%</span>
               {% endif %}
-              <span class="badge {% if job.status == 'done' or job.status == 'success' %}badge-done{% elif job.status == 'running' %}badge-processing{% elif job.status == 'failed' %}badge-danger{% else %}badge-waiting{% endif %}" style="font-size:0.65rem;padding:1px 5px;">
+              <span class="badge job-badge-sm {% if job.status == 'done' or job.status == 'success' %}badge-done{% elif job.status == 'running' %}badge-processing{% elif job.status == 'failed' %}badge-danger{% else %}badge-waiting{% endif %}">
                 {% if job.status == 'running' %}<span class="spinner spinner-sm"></span>{% endif %}{{ job.status }}
               </span>
             </div>
           </div>
           {% if job.status == 'running' and job.progress_pct is not none %}
           <div class="job-progress-track">
-            <div class="job-progress-fill" style="width: {{ job.progress_pct }}%;"></div>
+            <div class="job-progress-fill" data-progress="{{ job.progress_pct }}"></div>
           </div>
           {% endif %}
           {% if job.started_at %}
@@ -432,19 +436,13 @@
         {% endfor %}
       </div>
       {% else %}
-      <div id="jobs-empty" style="font-size:0.75rem;color:var(--v-text-muted);">No pipeline jobs logged yet.</div>
+      <div id="jobs-empty">No pipeline jobs logged yet.</div>
       {% endif %}
 
     </div>
   </div>
 
 </div>
-
-<script>
-  const TALK_ID = {{ talk.id }};
-  const TALK_STATUS = "{{ talk.status }}";
-  const PREVIEW_URLS = {{ preview_urls | tojson }};
-</script>
 {% endblock %}
 
 {% block extra_scripts %}

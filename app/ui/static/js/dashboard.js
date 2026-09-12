@@ -459,3 +459,85 @@ document.addEventListener('click', (e) => {
   const title = btn.dataset.talkTitle || '';
   if (tid) window.deleteSingleTalk(tid, title);
 });
+
+document.addEventListener('DOMContentLoaded', () => {
+  const btnOpenImport = document.getElementById('btn-open-import');
+  if (btnOpenImport) btnOpenImport.addEventListener('click', window.openImportModal);
+
+  const btnOpenRoomAttach = document.getElementById('btn-open-room-attach');
+  if (btnOpenRoomAttach) btnOpenRoomAttach.addEventListener('click', window.openAttachRoomModal);
+
+  const btnOpenQuickTalk = document.getElementById('btn-open-quick-talk');
+  if (btnOpenQuickTalk) btnOpenQuickTalk.addEventListener('click', window.openQuickTalkModal);
+
+  document.querySelectorAll('.btn-close-import').forEach((b) => {
+    b.addEventListener('click', window.closeImportModal);
+  });
+  document.querySelectorAll('.btn-close-attach-room').forEach((b) => {
+    b.addEventListener('click', window.closeAttachRoomModal);
+  });
+  document.querySelectorAll('.btn-close-quick-talk').forEach((b) => {
+    b.addEventListener('click', window.closeQuickTalkModal);
+  });
+
+  const btnSubmitImport = document.getElementById('btn-submit-import');
+  if (btnSubmitImport) btnSubmitImport.addEventListener('click', window.submitScheduleImport);
+
+  const btnSubmitAttach = document.getElementById('btn-submit-attach-room');
+  if (btnSubmitAttach) btnSubmitAttach.addEventListener('click', window.submitAttachRoomRecording);
+
+  const btnSubmitQuickTalk = document.getElementById('btn-submit-quick-talk');
+  if (btnSubmitQuickTalk) btnSubmitQuickTalk.addEventListener('click', window.submitQuickTalk);
+
+  const selectAll = document.getElementById('select-all-talks');
+  if (selectAll) selectAll.addEventListener('change', () => window.toggleSelectAllTalks(selectAll));
+
+  const btnBulkDelete = document.getElementById('btn-bulk-delete');
+  if (btnBulkDelete) btnBulkDelete.addEventListener('click', window.submitBulkDelete);
+
+  const btnClearSelection = document.getElementById('btn-clear-selection');
+  if (btnClearSelection) btnClearSelection.addEventListener('click', window.clearBulkSelection);
+
+  document.addEventListener('change', (e) => {
+    if (e.target && e.target.classList && e.target.classList.contains('talk-checkbox')) {
+      window.updateBulkSelectionUI();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    const row = e.target.closest('tr[data-talk-id]');
+    if (!row) return;
+    if (
+      e.target.closest('.col-checkbox') ||
+      e.target.closest('.col-actions') ||
+      e.target.closest('button') ||
+      e.target.closest('a') ||
+      e.target.closest('input')
+    ) {
+      return;
+    }
+    const talkId = row.dataset.talkId;
+    if (talkId) {
+      window.location = `/studio/talks/${talkId}`;
+    }
+  });
+
+  // Initialize initial server-rendered job progress bars
+  document.querySelectorAll('.job-progress-fill[data-progress]').forEach((el) => {
+    const val = parseFloat(el.dataset.progress);
+    if (!isNaN(val)) {
+      el.style.width = `${Math.min(100, Math.max(0, val))}%`;
+    }
+  });
+
+  // Close modals on backdrop click
+  ['modal-import', 'modal-attach-room', 'modal-quick-talk'].forEach((id) => {
+    const m = document.getElementById(id);
+    if (m) {
+      m.addEventListener('click', (e) => {
+        if (e.target === m) m.style.display = 'none';
+      });
+    }
+  });
+});
+
