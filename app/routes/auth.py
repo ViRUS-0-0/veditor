@@ -55,7 +55,7 @@ def login_page(
         return RedirectResponse(url="/studio", status_code=status.HTTP_302_FOUND)
     return templates.TemplateResponse(
         request,
-        "login.html",
+        "login.html.jinja",
         {"error": None, "email": ""},
     )
 
@@ -71,7 +71,7 @@ def login_submit(
     if not clean_email or not password:
         return templates.TemplateResponse(
             request,
-            "login.html",
+            "login.html.jinja",
             {"error": "Invalid email or password.", "email": clean_email},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -83,7 +83,7 @@ def login_submit(
     if not user or not user.is_active or not valid_password:
         return templates.TemplateResponse(
             request,
-            "login.html",
+            "login.html.jinja",
             {"error": "Invalid email or password.", "email": clean_email},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -114,7 +114,7 @@ def signup_page(
         return RedirectResponse(url="/studio", status_code=status.HTTP_302_FOUND)
     return templates.TemplateResponse(
         request,
-        "signup.html",
+        "signup.html.jinja",
         {"error": None, "email": ""},
     )
 
@@ -131,7 +131,7 @@ def signup_submit(
     if len(clean_email) > 255 or not EMAIL_REGEX.match(clean_email):
         return templates.TemplateResponse(
             request,
-            "signup.html",
+            "signup.html.jinja",
             {"error": "Please enter a valid email address.", "email": clean_email},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -139,7 +139,7 @@ def signup_submit(
     if len(password) < 8:
         return templates.TemplateResponse(
             request,
-            "signup.html",
+            "signup.html.jinja",
             {
                 "error": "Password must be at least 8 characters long.",
                 "email": clean_email,
@@ -150,7 +150,7 @@ def signup_submit(
     if len(password) > 256:
         return templates.TemplateResponse(
             request,
-            "signup.html",
+            "signup.html.jinja",
             {
                 "error": "Password must not exceed 256 characters.",
                 "email": clean_email,
@@ -161,7 +161,7 @@ def signup_submit(
     if password != password_confirm:
         return templates.TemplateResponse(
             request,
-            "signup.html",
+            "signup.html.jinja",
             {"error": "Passwords do not match.", "email": clean_email},
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -170,7 +170,7 @@ def signup_submit(
     if existing:
         return templates.TemplateResponse(
             request,
-            "signup.html",
+            "signup.html.jinja",
             {
                 "error": "An account with this email already exists.",
                 "email": clean_email,
@@ -193,7 +193,7 @@ def signup_submit(
         db.rollback()
         return templates.TemplateResponse(
             request,
-            "signup.html",
+            "signup.html.jinja",
             {
                 "error": "An account with this email already exists.",
                 "email": clean_email,

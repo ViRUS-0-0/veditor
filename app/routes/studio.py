@@ -188,7 +188,7 @@ def dashboard(
 
     return templates.TemplateResponse(
         request,
-        "dashboard.html",
+        "dashboard.html.jinja",
         {
             "talks": talks,
             "stats": stats,
@@ -337,7 +337,7 @@ def studio(
 
     return templates.TemplateResponse(
         request,
-        "studio.html",
+        "studio.html.jinja",
         {
             "talk": talk,
             "jobs": jobs,

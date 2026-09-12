@@ -66,7 +66,10 @@ def test_templates_have_no_inline_css_or_js():
     )
     event_handler_pattern = re.compile(r'\bon[a-z]+=["\']', re.IGNORECASE)
 
-    for html_file in templates_dir.glob("*.html"):
+    jinja_files = list(templates_dir.glob("*.html.jinja"))
+    assert len(jinja_files) >= 5, "Expected at least 5 .html.jinja template files"
+
+    for html_file in jinja_files:
         content = html_file.read_text(encoding="utf-8")
         assert not style_attr_pattern.search(content), (
             f"Inline style attribute found in {html_file.name}"

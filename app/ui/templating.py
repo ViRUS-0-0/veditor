@@ -17,7 +17,7 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 _env = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(_TEMPLATES_DIR)),
-    autoescape=jinja2.select_autoescape(["html"]),
+    autoescape=jinja2.select_autoescape(["html", "jinja", "xml"]),
     cache_size=0,
 )
 
