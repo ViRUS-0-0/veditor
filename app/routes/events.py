@@ -101,8 +101,11 @@ def delete_event(
 ):
     event = check_event_access(event_id, user, db)
 
-    for talk in event.talks:
+    talks = list(event.talks)
+    for talk in talks:
         _cancel_talk_jobs(talk.id, storage)
+
+    for talk in talks:
         db.query(models.Review).filter(models.Review.talk_id == talk.id).delete()
         db.query(models.Job).filter(models.Job.talk_id == talk.id).delete()
         db.delete(talk)

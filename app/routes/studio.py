@@ -579,8 +579,11 @@ def delete_studio_event(
             detail="User is not authorized to delete this event",
         )
 
-    for talk in event.talks:
+    talks = list(event.talks)
+    for talk in talks:
         _cancel_talk_jobs(talk.id, storage)
+
+    for talk in talks:
         db.query(models.Review).filter(models.Review.talk_id == talk.id).delete()
         db.query(models.Job).filter(models.Job.talk_id == talk.id).delete()
         db.delete(talk)

@@ -455,6 +455,134 @@ def test_delete_studio_event_teardown_and_failure_resilience(
         app.dependency_overrides.pop(get_storage_backend, None)
 
 
+def test_delete_studio_event_multi_talk_failure_resilience_and_retry(
+    client: TestClient, db_session
+):
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import MagicMock
+
+    from app.storage import get_storage_backend
+
+    org = create_user(db_session, "multi_teardown_org@test.com", "organizer")
+    event = models.Event(name="Multi Teardown Event", created_by_user_id=org.id)
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk1 = models.Talk(
+        event_id=event.id,
+        title="Teardown Talk 1",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    talk2 = models.Talk(
+        event_id=event.id,
+        title="Teardown Talk 2",
+        room="Room 2",
+        start=now + timedelta(hours=1),
+        end=now + timedelta(hours=1, minutes=30),
+        status="preview",
+    )
+    db_session.add_all([talk1, talk2])
+    db_session.commit()
+    db_session.refresh(talk1)
+    db_session.refresh(talk2)
+
+    job1 = models.Job(talk_id=talk1.id, kind="transcode", status="queued")
+    review1 = models.Review(talk_id=talk1.id, user_id=org.id, decision="approve")
+    job2 = models.Job(talk_id=talk2.id, kind="transcode", status="queued")
+    review2 = models.Review(talk_id=talk2.id, user_id=org.id, decision="approve")
+    db_session.add_all([job1, review1, job2, review2])
+    db_session.commit()
+
+    def mock_delete(key: str):
+        if key == str(talk1.id):
+            return
+        raise RuntimeError("Storage failure on talk 2")
+
+    mock_storage = MagicMock()
+    mock_storage.delete.side_effect = mock_delete
+    app.dependency_overrides[get_storage_backend] = lambda: mock_storage
+
+    authenticate_client(client, org)
+    try:
+        with pytest.raises(RuntimeError, match="Cleanup failed for talk"):
+            client.post(f"/studio/events/{event.id}/delete")
+
+        # Verify event, both talks, and their jobs/reviews remain untouched in DB
+        assert (
+            db_session.query(models.Event).filter(models.Event.id == event.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Talk).filter(models.Talk.id == talk1.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Talk).filter(models.Talk.id == talk2.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Job).filter(models.Job.id == job1.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Job).filter(models.Job.id == job2.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Review)
+            .filter(models.Review.id == review1.id)
+            .first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Review)
+            .filter(models.Review.id == review2.id)
+            .first()
+            is not None
+        )
+    finally:
+        app.dependency_overrides.pop(get_storage_backend, None)
+
+    # When storage succeeds on retry, all talks, jobs, reviews, and event are deleted
+    mock_storage_ok = MagicMock()
+    app.dependency_overrides[get_storage_backend] = lambda: mock_storage_ok
+    try:
+        resp = client.post(f"/studio/events/{event.id}/delete", follow_redirects=False)
+        assert resp.status_code == 303
+
+        assert (
+            db_session.query(models.Event).filter(models.Event.id == event.id).first()
+            is None
+        )
+        assert (
+            db_session.query(models.Talk).filter(models.Talk.id == talk1.id).first()
+            is None
+        )
+        assert (
+            db_session.query(models.Talk).filter(models.Talk.id == talk2.id).first()
+            is None
+        )
+        assert (
+            db_session.query(models.Job)
+            .filter(models.Job.id.in_([job1.id, job2.id]))
+            .count()
+            == 0
+        )
+        assert (
+            db_session.query(models.Review)
+            .filter(models.Review.id.in_([review1.id, review2.id]))
+            .count()
+            == 0
+        )
+    finally:
+        app.dependency_overrides.pop(get_storage_backend, None)
+
+
 def test_dashboard_talks_scoped_to_organizers_events(client: TestClient, db_session):
     from datetime import UTC, datetime, timedelta
 
