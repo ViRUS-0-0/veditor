@@ -410,3 +410,69 @@ def test_deactivated_user_immediate_session_and_login_rejection(
     )
     assert res_token_post.status_code == 401
     assert res_token_post.json()["detail"] == "Invalid credentials"
+
+
+def test_concurrent_admin_demotion_prevents_zero_admins():
+    import threading
+
+    with SessionLocal() as s:
+        s.query(models.User).filter(
+            models.User.email.like("%@concurrent-test.com")
+        ).delete()
+        s.commit()
+        admin1 = models.User(
+            email="admin1@concurrent-test.com",
+            hashed_password=hash_password("pw1"),
+            role="admin",
+            is_active=True,
+        )
+        admin2 = models.User(
+            email="admin2@concurrent-test.com",
+            hashed_password=hash_password("pw2"),
+            role="admin",
+            is_active=True,
+        )
+        s.add_all([admin1, admin2])
+        s.commit()
+        id1, id2 = admin1.id, admin2.id
+
+    token1 = create_session_token(id1, "admin")
+    token2 = create_session_token(id2, "admin")
+
+    results = []
+
+    def demote_request(token, target_id):
+        t_client = TestClient(app)
+        t_client.cookies.set("veditor_session", token)
+        res = t_client.post(
+            f"/admin/users/{target_id}/promote", json={"role": "organizer"}
+        )
+        results.append((target_id, res.status_code, res.json()))
+
+    t1 = threading.Thread(target=demote_request, args=(token1, id2))
+    t2 = threading.Thread(target=demote_request, args=(token2, id1))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    # One succeeds (200), and the other fails (either 400 or 403)
+    status_codes = [r[1] for r in results]
+    assert 200 in status_codes
+    assert any(code in (400, 403) for code in status_codes)
+
+    with SessionLocal() as s:
+        remaining_admins = (
+            s.query(models.User)
+            .filter(
+                models.User.email.like("%@concurrent-test.com"),
+                models.User.role == "admin",
+                models.User.is_active.is_(True),
+            )
+            .all()
+        )
+        assert len(remaining_admins) == 1
+        s.query(models.User).filter(
+            models.User.email.like("%@concurrent-test.com")
+        ).delete()
+        s.commit()

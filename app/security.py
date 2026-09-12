@@ -204,9 +204,8 @@ def is_valid_email(email: str) -> bool:
         return bool(
             addr.username
             and addr.domain
-            and "." in addr.domain
             and not addr.domain.startswith(".")
             and not addr.domain.endswith(".")
         )
-    except HeaderParseError, ValueError, IndexError, TypeError:
+    except (HeaderParseError, ValueError, IndexError, TypeError) as _exc:
         return False

@@ -1,11 +1,12 @@
 import argparse
+import getpass
 import secrets
 import sys
 
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth import hash_api_key
+from app.auth import hash_api_key, lock_active_admins
 from app.db import SessionLocal
 from app.security import hash_password, is_valid_email
 
@@ -92,12 +93,9 @@ def promote_user(session: Session, email: str, role: str):
         sys.exit(1)
 
     if user.role == "admin" and user.is_active and role != "admin":
-        admin_count = (
-            session.query(models.User)
-            .filter(models.User.role == "admin", models.User.is_active.is_(True))
-            .count()
-        )
-        if admin_count <= 1:
+        admin_ids = lock_active_admins(session)
+        session.refresh(user)
+        if user.role == "admin" and user.is_active and len(admin_ids) <= 1:
             print(
                 "Error: Cannot demote user; operation would leave zero active administrators."
             )
@@ -153,12 +151,6 @@ def main():
     create_admin_parser.add_argument(
         "--email", type=str, required=True, help="Email address of the administrator"
     )
-    create_admin_parser.add_argument(
-        "--password",
-        type=str,
-        required=True,
-        help="Password for the administrator (minimum 8 characters)",
-    )
 
     # `admin promote-user` command
     promote_user_parser = admin_subparsers.add_parser(
@@ -186,7 +178,11 @@ def main():
             if args.subcommand == "create-client":
                 create_client(db, args.event_name, args.event_id)
             elif args.subcommand == "create-admin":
-                create_admin(db, args.email, args.password)
+                if not sys.stdin.isatty():
+                    password = sys.stdin.readline().rstrip("\r\n")
+                else:
+                    password = getpass.getpass("Password: ")
+                create_admin(db, args.email, password)
             elif args.subcommand == "promote-user":
                 promote_user(db, args.email, args.role)
             elif args.subcommand == "list-users":

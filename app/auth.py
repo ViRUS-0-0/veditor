@@ -45,6 +45,18 @@ def hash_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
 
 
+def lock_active_admins(session: Session) -> list[int]:
+    """Locks active administrator rows in ascending ID order and returns their IDs."""
+    rows = (
+        session.query(models.User.id)
+        .filter(models.User.role == "admin", models.User.is_active.is_(True))
+        .order_by(models.User.id.asc())
+        .with_for_update()
+        .all()
+    )
+    return [r[0] if isinstance(r, (tuple, list)) else getattr(r, "id", r) for r in rows]
+
+
 def get_client(
     api_key: Annotated[str | None, Security(api_key_header)],
     db: Annotated[Session, Depends(get_db)],

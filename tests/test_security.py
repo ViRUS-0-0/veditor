@@ -333,6 +333,8 @@ def test_is_valid_email():
     assert is_valid_email("user.name+tag@sub.domain.co") is True
     assert is_valid_email("admin@test.org") is True
     assert is_valid_email('  "quoted name"@domain.com  ') is True
+    assert is_valid_email("user@localhost") is True
+    assert is_valid_email("user@[IPv6:2001:db8::1]") is True
 
     # Invalid emails
     assert is_valid_email("") is False
@@ -342,7 +344,6 @@ def test_is_valid_email():
     assert is_valid_email("@missinguser.com") is False
     assert is_valid_email("missingdomain@") is False
     assert is_valid_email("spaces in@domain.com") is False
-    assert is_valid_email("user@domain") is False
     assert is_valid_email("user@.com") is False
     assert is_valid_email("user@domain.") is False
     assert is_valid_email("user@example..com") is False

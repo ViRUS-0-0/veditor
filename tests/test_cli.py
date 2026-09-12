@@ -195,9 +195,12 @@ def test_promote_user_guard_cannot_demote_last_admin():
 
     filter_mock = MagicMock()
     # First call: find user by email -> admin_user
-    # Second call: count active admins -> 1
+    # Second call: active admins query -> [(1,)]
     filter_mock.first.return_value = admin_user
     filter_mock.count.return_value = 1
+    filter_mock.order_by.return_value.with_for_update.return_value.all.return_value = [
+        (1,)
+    ]
     mock_session.query.return_value.filter.return_value = filter_mock
 
     with pytest.raises(SystemExit) as exc:
@@ -214,6 +217,10 @@ def test_promote_user_demote_admin_allowed_with_multiple_admins():
     filter_mock = MagicMock()
     filter_mock.first.return_value = admin_user
     filter_mock.count.return_value = 2
+    filter_mock.order_by.return_value.with_for_update.return_value.all.return_value = [
+        (1,),
+        (2,),
+    ]
     mock_session.query.return_value.filter.return_value = filter_mock
 
     promote_user(mock_session, email="admin@example.com", role="organizer")
@@ -247,19 +254,21 @@ def test_list_users_populated(capsys):
     assert "False" in captured.out
 
 
+@patch("getpass.getpass", return_value="pass123456")
 @patch("app.cli.create_admin")
 @patch("app.cli.SessionLocal")
-def test_cli_main_create_admin(mock_session_local, mock_create_admin):
+def test_cli_main_create_admin(mock_session_local, mock_create_admin, mock_getpass):
     test_args = [
         "veditor",
         "admin",
         "create-admin",
         "--email",
         "admin@example.com",
-        "--password",
-        "pass123456",
     ]
-    with patch.object(sys, "argv", test_args):
+    with (
+        patch.object(sys, "argv", test_args),
+        patch("sys.stdin.isatty", return_value=True),
+    ):
         main()
 
     mock_session_local.assert_called_once()
@@ -267,6 +276,27 @@ def test_cli_main_create_admin(mock_session_local, mock_create_admin):
         mock_session_local.return_value, "admin@example.com", "pass123456"
     )
     mock_session_local.return_value.close.assert_called_once()
+
+
+@patch("app.cli.create_admin")
+@patch("app.cli.SessionLocal")
+def test_cli_main_create_admin_piped_stdin(mock_session_local, mock_create_admin):
+    import io
+
+    test_args = [
+        "veditor",
+        "admin",
+        "create-admin",
+        "--email",
+        "admin@example.com",
+    ]
+    fake_stdin = io.StringIO("pipedpassword123\n")
+    with patch.object(sys, "argv", test_args), patch("sys.stdin", fake_stdin):
+        main()
+
+    mock_create_admin.assert_called_once_with(
+        mock_session_local.return_value, "admin@example.com", "pipedpassword123"
+    )
 
 
 @patch("app.cli.promote_user")

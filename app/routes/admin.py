@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, lock_active_admins, require_role
 from app.db import get_db
 
 router = APIRouter(
@@ -43,13 +43,9 @@ def promote_user(
         )
 
     if target.role == "admin" and target.is_active and payload.role != "admin":
-        admin_ids = (
-            db.query(models.User.id)
-            .filter(models.User.role == "admin", models.User.is_active.is_(True))
-            .with_for_update()
-            .all()
-        )
-        if len(admin_ids) <= 1:
+        admin_ids = lock_active_admins(db)
+        db.refresh(target)
+        if target.role == "admin" and target.is_active and len(admin_ids) <= 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot demote user; operation would leave zero active administrators",
@@ -81,13 +77,9 @@ def deactivate_user(
         )
 
     if target.role == "admin" and target.is_active:
-        admin_ids = (
-            db.query(models.User.id)
-            .filter(models.User.role == "admin", models.User.is_active.is_(True))
-            .with_for_update()
-            .all()
-        )
-        if len(admin_ids) <= 1:
+        admin_ids = lock_active_admins(db)
+        db.refresh(target)
+        if target.role == "admin" and target.is_active and len(admin_ids) <= 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot deactivate the last active administrator",

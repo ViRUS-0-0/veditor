@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException, status
 
-from app.auth import get_client, hash_api_key, verify_event_access
-from app.models import Client
+from app.auth import get_client, hash_api_key, lock_active_admins, verify_event_access
+from app.models import Client, User
 
 
 def test_hash_api_key():
@@ -74,7 +74,7 @@ from app.auth import (
     require_event_access,
     require_role,
 )
-from app.models import Event, User
+from app.models import Event
 from app.security import create_access_token, create_session_token
 
 
@@ -531,3 +531,13 @@ def test_get_current_user_cookie_fail_fast_over_bearer():
         get_current_user(request=mock_request, db=mock_db)
     assert excinfo.value.status_code == 401
     assert "session token" in excinfo.value.detail.lower()
+
+
+def test_lock_active_admins_mock():
+    mock_session = MagicMock()
+    mock_session.query.return_value.filter.return_value.order_by.return_value.with_for_update.return_value.all.return_value = [
+        (1,),
+        (2,),
+    ]
+    admin_ids = lock_active_admins(mock_session)
+    assert admin_ids == [1, 2]
