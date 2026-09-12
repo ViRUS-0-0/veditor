@@ -271,6 +271,21 @@ def require_role(min_role: Literal["user", "organizer", "admin"] | str):
     return _role_checker
 
 
+def require_admin(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> CurrentUser:
+    """
+    Dependency enforcing that the caller is an authenticated human administrator
+    (cookie or JWT session with user_id set), rejecting machine API key clients.
+    """
+    if not user.is_human_admin or user.user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation requires a human administrator",
+        )
+    return user
+
+
 def check_event_access(
     event_id: int,
     user: CurrentUser,

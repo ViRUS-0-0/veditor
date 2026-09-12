@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import models
-from app.auth import hash_api_key
+from app.auth import CurrentUser, hash_api_key
 from app.db import Base, SessionLocal, engine, get_db
 from app.main import app
 from app.security import create_access_token, create_session_token, hash_password
@@ -139,7 +139,7 @@ def test_admin_users_list_success_and_pagination(client: TestClient, db_session)
     assert res_invalid_skip.status_code == 422
 
 
-def test_admin_users_list_via_api_key(client: TestClient, db_session):
+def test_admin_routes_reject_api_key(client: TestClient, db_session):
     client_obj = models.Client(
         hashed_key=hash_api_key("test-admin-api-key"),
         event_ids=[],
@@ -151,8 +151,8 @@ def test_admin_users_list_via_api_key(client: TestClient, db_session):
         "/admin/users",
         headers={"X-API-Key": "test-admin-api-key"},
     )
-    assert res.status_code == 200
-    assert isinstance(res.json(), list)
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Operation requires a human administrator"
 
 
 def test_promote_user_not_found(client: TestClient, db_session):
@@ -266,13 +266,6 @@ def test_deactivate_user_not_found(client: TestClient, db_session):
 
 
 def test_deactivate_guard_cannot_deactivate_last_admin(client: TestClient, db_session):
-    # Using API key client (has no user_id, so self-deactivate guard does not fire)
-    client_obj = models.Client(
-        hashed_key=hash_api_key("api-key-deact"),
-        event_ids=[],
-    )
-    db_session.add(client_obj)
-
     # Ensure only 1 active admin
     db_session.query(models.User).filter(models.User.role == "admin").delete()
     db_session.commit()
@@ -281,12 +274,17 @@ def test_deactivate_guard_cannot_deactivate_last_admin(client: TestClient, db_se
         db_session, "sole_adm_d@admin-test.com", role="admin"
     )
 
-    res = client.post(
-        f"/admin/users/{sole_admin.id}/deactivate",
-        headers={"X-API-Key": "api-key-deact"},
+    from app.auth import get_current_user
+
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        user_id=99999, role="admin", source="cookie"
     )
-    assert res.status_code == 400
-    assert res.json()["detail"] == "Cannot deactivate the last active administrator"
+    try:
+        res = client.post(f"/admin/users/{sole_admin.id}/deactivate")
+        assert res.status_code == 400
+        assert res.json()["detail"] == "Cannot deactivate the last active administrator"
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def test_deactivate_user_success(client: TestClient, db_session):
@@ -347,13 +345,13 @@ def test_deactivated_user_immediate_session_and_login_rejection(
     res_cookie_pre = client.get("/admin/users")
     client.cookies.clear()
     assert res_cookie_pre.status_code == 403
-    assert res_cookie_pre.json()["detail"] == "Operation requires minimum role 'admin'"
+    assert res_cookie_pre.json()["detail"] == "Operation requires a human administrator"
 
     res_bearer_pre = client.get(
         "/admin/users", headers={"Authorization": f"Bearer {bearer_token}"}
     )
     assert res_bearer_pre.status_code == 403
-    assert res_bearer_pre.json()["detail"] == "Operation requires minimum role 'admin'"
+    assert res_bearer_pre.json()["detail"] == "Operation requires a human administrator"
 
     # Also verify login with password succeeds prior to deactivation
     res_login_pre = client.post(

@@ -4,13 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.auth import CurrentUser, get_current_user, lock_active_admins, require_role
+from app.auth import (
+    CurrentUser,
+    get_current_user,
+    lock_active_admins,
+    require_admin,
+)
 from app.db import get_db
 
 router = APIRouter(
     prefix="/admin",
     tags=["admin"],
-    dependencies=[Depends(require_role("admin"))],
+    dependencies=[Depends(require_admin)],
 )
 
 

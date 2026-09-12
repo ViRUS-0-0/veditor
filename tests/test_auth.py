@@ -71,6 +71,7 @@ from app.auth import (
     CurrentUser,
     check_event_access,
     get_current_user,
+    require_admin,
     require_event_access,
     require_role,
 )
@@ -301,6 +302,24 @@ def test_require_role_hierarchy():
     assert excinfo.value.status_code == status.HTTP_403_FORBIDDEN
 
     assert check_admin(admin_user) == admin_user
+
+
+def test_require_admin():
+    regular_user = CurrentUser(user_id=1, role="user", source="jwt")
+    machine_admin = CurrentUser(role="admin", source="api_key")
+    human_admin = CurrentUser(user_id=2, role="admin", source="cookie")
+
+    with pytest.raises(HTTPException) as excinfo:
+        require_admin(regular_user)
+    assert excinfo.value.status_code == status.HTTP_403_FORBIDDEN
+    assert excinfo.value.detail == "Operation requires a human administrator"
+
+    with pytest.raises(HTTPException) as excinfo:
+        require_admin(machine_admin)
+    assert excinfo.value.status_code == status.HTTP_403_FORBIDDEN
+    assert excinfo.value.detail == "Operation requires a human administrator"
+
+    assert require_admin(human_admin) == human_admin
 
 
 # ---------------------------------------------------------------------------
