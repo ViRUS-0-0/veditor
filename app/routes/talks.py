@@ -19,7 +19,6 @@ from fastapi import (
     status,
 )
 from rq.command import send_stop_job_command
-from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1148,21 +1147,10 @@ async def import_schedule(
             event = existing_event
         else:
             created_by = user.user_id if not user.is_machine else None
-            event = models.Event(
-                id=target_event_id, name=event_name, created_by_user_id=created_by
-            )
+            event = models.Event(name=event_name, created_by_user_id=created_by)
             db.add(event)
             db.flush()
             is_new_event = True
-            try:
-                with db.begin_nested():
-                    db.execute(
-                        text(
-                            "SELECT setval(pg_get_serial_sequence('events', 'id'), (SELECT MAX(id) FROM events))"
-                        )
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Failed coordinating event sequence: %s", exc)
 
     if not event:
         # Check if caller already has an event with matching name

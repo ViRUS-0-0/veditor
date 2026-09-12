@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import CurrentUser, check_event_access, require_role
 from app.db import get_db
+from app.routes.talks import _cancel_talk_jobs
 from app.storage import StorageBackend, get_storage_backend
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,20 @@ def create_event(
         created_by_user_id=created_by,
     )
     db.add(event)
+    db.flush()
+    if user.is_machine:
+        if event.id not in user.event_ids:
+            user.event_ids.append(event.id)
+        if user.client_id:
+            client_record = (
+                db.query(models.Client)
+                .filter(models.Client.id == user.client_id)
+                .first()
+            )
+            if client_record and event.id not in (client_record.event_ids or []):
+                client_record.event_ids = list(
+                    set((client_record.event_ids or []) + [event.id])
+                )
     db.commit()
     db.refresh(event)
     return event
@@ -40,14 +55,15 @@ def list_events(
     user: Annotated[CurrentUser, Depends(require_role("organizer"))],
     db: Annotated[Session, Depends(get_db)],
 ):
+    if user.is_machine:
+        return db.query(models.Event).filter(models.Event.id.in_(user.event_ids)).all()
     if user.role == "admin":
         return db.query(models.Event).all()
-    else:
-        return (
-            db.query(models.Event)
-            .filter(models.Event.created_by_user_id == user.user_id)
-            .all()
-        )
+    return (
+        db.query(models.Event)
+        .filter(models.Event.created_by_user_id == user.user_id)
+        .all()
+    )
 
 
 @router.patch("/{event_id}", response_model=schemas.EventRead)
@@ -86,10 +102,10 @@ def delete_event(
     event = check_event_access(event_id, user, db)
 
     for talk in event.talks:
-        try:
-            storage.delete(str(talk.id))
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Failed deleting storage for talk %s: %s", talk.id, exc)
+        _cancel_talk_jobs(talk.id, storage)
+        db.query(models.Review).filter(models.Review.talk_id == talk.id).delete()
+        db.query(models.Job).filter(models.Job.talk_id == talk.id).delete()
+        db.delete(talk)
 
     db.delete(event)
     db.commit()

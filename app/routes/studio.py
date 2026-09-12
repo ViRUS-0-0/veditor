@@ -578,11 +578,19 @@ def delete_studio_event(
             detail="User is not authorized to delete this event",
         )
 
+    failed_talk_ids = []
     for talk in event.talks:
         try:
             storage.delete(str(talk.id))
         except Exception as exc:  # noqa: BLE001
             logger.debug("Failed deleting storage for talk %s: %s", talk.id, exc)
+            failed_talk_ids.append(talk.id)
+
+    if failed_talk_ids:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed deleting storage for talks: {failed_talk_ids}",
+        )
 
     db.delete(event)
     db.commit()

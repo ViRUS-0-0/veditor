@@ -300,7 +300,10 @@ def check_event_access(
             )
         event = db.query(models.Event).filter(models.Event.id == event_id).first()
         if not event:
-            return models.Event(id=event_id, name="")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Event not found",
+            )
         return event
 
     event = db.query(models.Event).filter(models.Event.id == event_id).first()
