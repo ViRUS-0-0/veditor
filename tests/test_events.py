@@ -41,6 +41,8 @@ def mock_db():
             obj.created_at = datetime.now(UTC)
 
     db.refresh.side_effect = fake_refresh
+    mock_filter = db.query.return_value.filter.return_value
+    mock_filter.with_for_update.return_value = mock_filter
     return db
 
 
@@ -548,6 +550,7 @@ def test_delete_event_success_for_owner(mock_db):
     res = client.delete("/events/1")
     assert res.status_code == 200
     assert res.json() == {"status": "ok", "deleted_id": 1}
+    assert mock_db.query.return_value.filter.return_value.with_for_update.called
     fake_storage.delete.assert_called_with("42")
     mock_db.delete.assert_called_with(event)
 

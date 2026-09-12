@@ -63,6 +63,76 @@ def get_optional_ui_client(
     )
 
 
+def _authorize_studio_talk(
+    talk_id: int,
+    request: Request,
+    db: Session,
+    not_found_detail: str = "Talk not found",
+) -> models.Talk:
+    """
+    Authorizes access to a talk in studio endpoints.
+    Supports:
+    1. Authenticated human session users (veditor_session cookie):
+       - admin: access to any talk
+       - organizer/user: access to talks in events created by the user
+    2. API Key machine clients (X-API-Key header or veditor_api_key cookie):
+       - access if talk.event_id in client.event_ids
+    Raises 401 if unauthenticated, 404 if talk does not exist or caller is unauthorized.
+    """
+    user = _get_authenticated_user_from_cookie(request, db)
+    if user:
+        talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+        if not talk:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=not_found_detail,
+            )
+        if user.role == "admin":
+            return talk
+        event = db.query(models.Event).filter(models.Event.id == talk.event_id).first()
+        if event and event.created_by_user_id == user.id:
+            return talk
+        api_key = request.headers.get("X-API-Key") or request.cookies.get(
+            "veditor_api_key"
+        )
+        if api_key:
+            hashed_key = hash_api_key(api_key)
+            client = (
+                db.query(models.Client)
+                .filter(models.Client.hashed_key == hashed_key)
+                .first()
+            )
+            if client and talk.event_id in client.event_ids:
+                return talk
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=not_found_detail,
+        )
+
+    api_key = request.headers.get("X-API-Key") or request.cookies.get("veditor_api_key")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API Key. Please provide X-API-Key header or veditor_api_key cookie.",
+        )
+    hashed_key = hash_api_key(api_key)
+    client = (
+        db.query(models.Client).filter(models.Client.hashed_key == hashed_key).first()
+    )
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key",
+        )
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or talk.event_id not in client.event_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=not_found_detail,
+        )
+    return talk
+
+
 ALL_STATUSES = [
     "waiting_for_files",
     "detecting",
@@ -267,15 +337,13 @@ ALLOWED_MEDIA_CATEGORIES = frozenset(
 
 @router.get("/media/{talk_id}/{filename}")
 def get_talk_media_default(
+    request: Request,
     talk_id: int,
     filename: str,
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
-    client: Annotated[models.Client, Depends(get_ui_client)],
 ):
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
-    if not talk or talk.event_id not in client.event_ids:
-        raise HTTPException(status_code=404, detail="Media not found")
+    _authorize_studio_talk(talk_id, request, db, not_found_detail="Media not found")
 
     safe_filename = Path(filename).name
     candidate_keys = [
@@ -299,20 +367,18 @@ def get_talk_media_default(
 
 @router.get("/media/{talk_id}/{category}/{filename}")
 def get_talk_media_categorized(
+    request: Request,
     talk_id: int,
     category: str,
     filename: str,
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
-    client: Annotated[models.Client, Depends(get_ui_client)],
 ):
     safe_category = Path(category).name
     if safe_category not in ALLOWED_MEDIA_CATEGORIES:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
-    if not talk or talk.event_id not in client.event_ids:
-        raise HTTPException(status_code=404, detail="Media not found")
+    _authorize_studio_talk(talk_id, request, db, not_found_detail="Media not found")
 
     safe_filename = Path(filename).name
     key = f"{talk_id}/{safe_category}/{safe_filename}"
@@ -332,11 +398,10 @@ def studio(
     talk_id: int,
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
-    client: Annotated[models.Client, Depends(get_ui_client)],
 ):
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
-    if not talk or talk.event_id not in client.event_ids:
-        raise HTTPException(status_code=404, detail="Talk not found")
+    talk = _authorize_studio_talk(
+        talk_id, request, db, not_found_detail="Talk not found"
+    )
 
     jobs = (
         db.query(models.Job)
@@ -567,7 +632,12 @@ def delete_studio_event(
             detail="Operation requires minimum role 'organizer'",
         )
 
-    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    event = (
+        db.query(models.Event)
+        .filter(models.Event.id == event_id)
+        .with_for_update()
+        .first()
+    )
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"

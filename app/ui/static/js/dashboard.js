@@ -81,9 +81,13 @@ function renderActiveJobCell(cell, statusText, pct, remainingStr) {
 
 async function pollTalk(talkId) {
   try {
+    const isSessionLoggedIn = Boolean(
+      document.querySelector('.user-email') ||
+      document.getElementById('logout-btn')
+    );
     const key = (window.getApiKey && window.getApiKey()) || '';
-    if (!key) return;
-    const headers = { 'X-API-Key': key };
+    if (!key && !isSessionLoggedIn) return;
+    const headers = key ? { 'X-API-Key': key } : {};
     const cell = document.querySelector(`.status-cell[data-talk-id="${talkId}"]`);
     const row  = document.querySelector(`tr[data-talk-id="${talkId}"]`);
     if (!cell) return;
@@ -91,7 +95,7 @@ async function pollTalk(talkId) {
     let talkStatus = row ? row.dataset.status : '';
     let jobs = [];
 
-    const r = await (window.authFetch || fetch)(`/studio/talks/${talkId}/jobs`, { headers, _isPolling: true });
+    const r = await (window.authFetch || fetch)(`/talks/${talkId}/jobs`, { headers, _isPolling: true });
     if (!r.ok) return;
     const data = await r.json();
     talkStatus = data.status || talkStatus;

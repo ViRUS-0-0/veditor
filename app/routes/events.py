@@ -99,7 +99,17 @@ def delete_event(
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
-    event = check_event_access(event_id, user, db)
+    check_event_access(event_id, user, db)
+    event = (
+        db.query(models.Event)
+        .filter(models.Event.id == event_id)
+        .with_for_update()
+        .first()
+    )
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
+        )
 
     talks = list(event.talks)
     for talk in talks:
