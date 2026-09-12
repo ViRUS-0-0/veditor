@@ -17,6 +17,7 @@ from app import models
 from app.auth import hash_api_key
 from app.db import get_db
 from app.routes.auth import _get_authenticated_user_from_cookie
+from app.routes.talks import _cancel_talk_jobs
 from app.storage import StorageBackend, get_storage_backend
 from app.ui.templating import templates
 
@@ -578,19 +579,11 @@ def delete_studio_event(
             detail="User is not authorized to delete this event",
         )
 
-    failed_talk_ids = []
     for talk in event.talks:
-        try:
-            storage.delete(str(talk.id))
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Failed deleting storage for talk %s: %s", talk.id, exc)
-            failed_talk_ids.append(talk.id)
-
-    if failed_talk_ids:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed deleting storage for talks: {failed_talk_ids}",
-        )
+        _cancel_talk_jobs(talk.id, storage)
+        db.query(models.Review).filter(models.Review.talk_id == talk.id).delete()
+        db.query(models.Job).filter(models.Job.talk_id == talk.id).delete()
+        db.delete(talk)
 
     db.delete(event)
     db.commit()

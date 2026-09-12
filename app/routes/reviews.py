@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser, check_event_access, require_role
 from app.db import get_db
 from app.review_handlers import DECISION_HANDLERS
 from app.storage import StorageBackend, get_storage_backend
@@ -23,7 +23,7 @@ router = APIRouter(
 def review_talk(
     talk_id: int,
     payload: schemas.ReviewRequest,
-    user: Annotated[CurrentUser, Depends(get_current_user)],
+    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -39,11 +39,7 @@ def review_talk(
             detail="Talk not found",
         )
 
-    if user.is_machine and talk.event_id not in user.event_ids:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Client is not authorized to access this event",
-        )
+    check_event_access(talk.event_id, user, db)
 
     if talk.status != "preview":
         raise HTTPException(

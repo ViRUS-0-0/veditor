@@ -362,6 +362,99 @@ def test_post_events_delete_success_and_permissions(client: TestClient, db_sessi
     )
 
 
+def test_delete_studio_event_teardown_and_failure_resilience(
+    client: TestClient, db_session
+):
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import MagicMock
+
+    from app.storage import get_storage_backend
+
+    org = create_user(db_session, "teardown_org@test.com", "organizer")
+    event = models.Event(name="Teardown Event", created_by_user_id=org.id)
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Teardown Talk",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    job = models.Job(talk_id=talk.id, kind="transcode", status="queued")
+    review = models.Review(talk_id=talk.id, user_id=org.id, decision="approve")
+    db_session.add_all([job, review])
+    db_session.commit()
+
+    # 1. When storage fails, RuntimeError is propagated and event is NOT deleted
+    mock_storage = MagicMock()
+    mock_storage.delete.side_effect = RuntimeError("Storage disk unreachable")
+    app.dependency_overrides[get_storage_backend] = lambda: mock_storage
+
+    authenticate_client(client, org)
+    try:
+        with pytest.raises(RuntimeError, match="Cleanup failed"):
+            client.post(f"/studio/events/{event.id}/delete")
+
+        # Verify event, talk, job, and review still exist
+        assert (
+            db_session.query(models.Event).filter(models.Event.id == event.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Talk).filter(models.Talk.id == talk.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Job).filter(models.Job.id == job.id).first()
+            is not None
+        )
+        assert (
+            db_session.query(models.Review)
+            .filter(models.Review.id == review.id)
+            .first()
+            is not None
+        )
+    finally:
+        app.dependency_overrides.pop(get_storage_backend, None)
+
+    # 2. When storage succeeds, jobs/reviews/talk/event are deleted
+    mock_storage_ok = MagicMock()
+    app.dependency_overrides[get_storage_backend] = lambda: mock_storage_ok
+    try:
+        resp = client.post(f"/studio/events/{event.id}/delete", follow_redirects=False)
+        assert resp.status_code == 303
+        mock_storage_ok.delete.assert_called_once_with(str(talk.id))
+
+        assert (
+            db_session.query(models.Event).filter(models.Event.id == event.id).first()
+            is None
+        )
+        assert (
+            db_session.query(models.Talk).filter(models.Talk.id == talk.id).first()
+            is None
+        )
+        assert (
+            db_session.query(models.Job).filter(models.Job.id == job.id).first() is None
+        )
+        assert (
+            db_session.query(models.Review)
+            .filter(models.Review.id == review.id)
+            .first()
+            is None
+        )
+    finally:
+        app.dependency_overrides.pop(get_storage_backend, None)
+
+
 def test_dashboard_talks_scoped_to_organizers_events(client: TestClient, db_session):
     from datetime import UTC, datetime, timedelta
 

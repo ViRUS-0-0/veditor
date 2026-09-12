@@ -255,12 +255,22 @@ def test_review_records_human_user_id(mock_db):
         end=datetime.now(UTC),
         status="preview",
     )
-    mock_db.query.return_value.filter.return_value.with_for_update.return_value.first.return_value = talk
+    event = models.Event(id=1, name="Keynote Event", created_by_user_id=42)
+
+    def mock_query(model):
+        m = MagicMock()
+        if model == models.Event:
+            m.filter.return_value.first.return_value = event
+        else:
+            m.filter.return_value.with_for_update.return_value.first.return_value = talk
+        return m
+
+    mock_db.query.side_effect = mock_query
 
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[get_storage_backend] = lambda: mock_storage
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(
-        user_id=42, email="reviewer@example.com", role="user", source="jwt"
+        user_id=42, email="reviewer@example.com", role="organizer", source="jwt"
     )
 
     res = client.post("/talks/5/review", json={"decision": "approve", "note": "Great!"})
