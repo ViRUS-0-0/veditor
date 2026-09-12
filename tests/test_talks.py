@@ -178,6 +178,7 @@ def test_post_talks_concurrent_race_handled():
 
     mock_db.query.return_value.filter.return_value.first.side_effect = [
         None,
+        None,
         existing_talk,
     ]
 

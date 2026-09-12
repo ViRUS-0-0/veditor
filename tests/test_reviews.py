@@ -76,13 +76,13 @@ def preview_talk():
 
 
 def test_review_unauthorized():
-    """POST /talks/{id}/review without API key returns 401."""
+    """POST /talks/{id}/review without credentials returns 401."""
     response = client.post(
         "/talks/1/review",
         json={"decision": "approve"},
     )
     assert response.status_code == 401
-    assert response.json()["detail"] == "Missing API Key"
+    assert response.json()["detail"] == "Not authenticated"
 
 
 def test_review_invalid_decision_returns_422_without_db_query(mock_db):
