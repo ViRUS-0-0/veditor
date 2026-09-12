@@ -26,6 +26,8 @@ from app import models, schemas
 from app.auth import (
     CurrentUser,
     check_event_access,
+    check_talk_access,
+    get_client,
     get_current_user,
     require_role,
 )
@@ -38,6 +40,7 @@ from app.ingest import (
     stage_recording,
 )
 from app.queue import heavy_queue, light_queue
+from app.security import create_sso_token
 from app.states import advance
 from app.storage import StorageBackend, cleanup_intermediates, get_storage_backend
 from app.tasks import (
@@ -139,7 +142,7 @@ def get_talk(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
-    check_event_access(talk.event_id, user, db)
+    check_talk_access(talk, user, db)
 
     candidate_keys = [
         f"{talk.id}/preview/{name}.mp4" for name in settings.preview_presets
@@ -166,7 +169,7 @@ def get_talk_jobs(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
-    check_event_access(talk.event_id, user, db)
+    check_talk_access(talk, user, db)
     jobs = (
         db.query(models.Job)
         .filter(models.Job.talk_id == talk_id)
@@ -357,7 +360,7 @@ def raw_preview(
 def submit_cut_bounds(
     talk_id: int,
     payload: schemas.CutBoundsRequest,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -372,7 +375,15 @@ def submit_cut_bounds(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
-    check_event_access(talk.event_id, user, db)
+    if user.source == "sso":
+        check_talk_access(talk, user, db)
+    else:
+        if user.role not in ("organizer", "admin") and not user.is_machine:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Operation requires minimum role 'organizer'",
+            )
+        check_event_access(talk.event_id, user, db)
 
     if talk.status != "pending_bounds":
         raise HTTPException(
@@ -1234,3 +1245,46 @@ async def import_schedule(
         "event_name": event.name,
         "imported_count": created_count,
     }
+
+
+@router.post(
+    "/{talk_id}/sso-token",
+    response_model=schemas.SSOTokenResponse,
+    status_code=status.HTTP_200_OK,
+)
+def create_talk_sso_token(
+    talk_id: int,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """
+    Issues a short-lived, talk-scoped SSO token carrying role=speaker.
+    Requires caller to be authenticated via X-API-Key only.
+    """
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Talk not found",
+        )
+    if talk.event_id not in (client.event_ids or []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Client is not authorized to mint an SSO token for this talk",
+        )
+
+    token = create_sso_token(
+        scope_type="talk",
+        scope_id=talk_id,
+        role="speaker",
+        expires_in_seconds=settings.sso_token_expire_seconds,
+    )
+    return schemas.SSOTokenResponse(
+        token=token,
+        token_type="bearer",
+        scope_type="talk",
+        scope_id=talk_id,
+        role="speaker",
+        expires_in_seconds=settings.sso_token_expire_seconds,
+        url=f"/studio/talks/{talk_id}?sso_token={token}",
+    )

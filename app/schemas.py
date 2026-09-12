@@ -295,6 +295,16 @@ class TokenResponse(BaseModel):
     expires_in: int
 
 
+class SSOTokenResponse(BaseModel):
+    token: str
+    token_type: str = "bearer"
+    scope_type: Literal["event", "talk"]
+    scope_id: int
+    role: str
+    expires_in_seconds: int
+    url: str
+
+
 class TalkUpdate(BaseModel):
     title: str | None = None
     room: str | None = None

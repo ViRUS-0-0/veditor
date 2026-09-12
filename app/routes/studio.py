@@ -15,9 +15,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.auth import hash_api_key
+from app.config import settings
 from app.db import get_db
 from app.routes.auth import _get_authenticated_user_from_cookie
 from app.routes.talks import _cancel_talk_jobs
+from app.security import decode_sso_token
 from app.storage import StorageBackend, get_storage_backend
 from app.ui.templating import templates
 
@@ -79,6 +81,31 @@ def _authorize_studio_talk(
        - access if talk.event_id in client.event_ids
     Raises 401 if unauthenticated, 404 if talk does not exist or caller is unauthorized.
     """
+    cookie_token = request.cookies.get("veditor_session")
+    if cookie_token:
+        sso_payload = decode_sso_token(cookie_token)
+        if sso_payload:
+            talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+            if not talk:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=not_found_detail,
+                )
+            if (
+                sso_payload.get("scope_type") == "talk"
+                and sso_payload.get("scope_id") == talk.id
+            ):
+                return talk
+            if (
+                sso_payload.get("scope_type") == "event"
+                and sso_payload.get("scope_id") == talk.event_id
+            ):
+                return talk
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=not_found_detail,
+            )
+
     user = _get_authenticated_user_from_cookie(request, db)
     if user:
         talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
@@ -219,53 +246,114 @@ def dashboard(
     event_id: int | None = None,
     status_filter: str | None = None,
     q: str | None = None,
+    sso_token: str | None = None,
 ):
-    user = _get_authenticated_user_from_cookie(request, db)
-    if user:
-        if user.role == "admin":
-            user_events = db.query(models.Event).order_by(models.Event.name.asc()).all()
+    # 1. Check if landing with ?sso_token=...
+    if sso_token is not None or "sso_token" in request.query_params:
+        raw_sso = (
+            sso_token
+            if sso_token is not None
+            else request.query_params.get("sso_token")
+        )
+        if not raw_sso:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired SSO token",
+            )
+        sso_payload = decode_sso_token(raw_sso)
+        if not sso_payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired SSO token",
+            )
+        is_secure = (request.url.scheme == "https") or (
+            settings.environment.lower() in ("production", "prod")
+        )
+        if sso_payload["scope_type"] == "talk":
+            dest_url = f"/studio/talks/{sso_payload['scope_id']}"
         else:
+            dest_url = f"/studio?event_id={sso_payload['scope_id']}"
+        resp = RedirectResponse(url=dest_url, status_code=status.HTTP_303_SEE_OTHER)
+        resp.set_cookie(
+            key="veditor_session",
+            value=raw_sso,
+            max_age=settings.sso_token_expire_seconds,
+            httponly=True,
+            samesite="lax",
+            secure=is_secure,
+            path="/",
+        )
+        return resp
+
+    # 2. Check for active SSO session in cookie
+    cookie_token = request.cookies.get("veditor_session")
+    sso_user = decode_sso_token(cookie_token) if cookie_token else None
+
+    user = None
+    if sso_user:
+        if sso_user["scope_type"] == "talk":
+            return RedirectResponse(
+                url=f"/studio/talks/{sso_user['scope_id']}",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        scoped_event_id = sso_user["scope_id"]
+        user_events = (
+            db.query(models.Event).filter(models.Event.id == scoped_event_id).all()
+        )
+        query = (
+            db.query(models.Talk)
+            .options(selectinload(models.Talk.jobs))
+            .filter(models.Talk.event_id == scoped_event_id)
+        )
+    else:
+        user = _get_authenticated_user_from_cookie(request, db)
+        if user:
+            if user.role == "admin":
+                user_events = (
+                    db.query(models.Event).order_by(models.Event.name.asc()).all()
+                )
+            else:
+                user_events = (
+                    db.query(models.Event)
+                    .filter(models.Event.created_by_user_id == user.id)
+                    .order_by(models.Event.name.asc())
+                    .all()
+                )
+        elif client is not None:
             user_events = (
                 db.query(models.Event)
-                .filter(models.Event.created_by_user_id == user.id)
+                .filter(models.Event.id.in_(client.event_ids))
                 .order_by(models.Event.name.asc())
                 .all()
             )
-    elif client is not None:
-        user_events = (
-            db.query(models.Event)
-            .filter(models.Event.id.in_(client.event_ids))
-            .order_by(models.Event.name.asc())
-            .all()
-        )
-    else:
-        user_events = []
+        else:
+            user_events = []
 
-    query = db.query(models.Talk).options(selectinload(models.Talk.jobs))
-    if user:
-        if user.role == "organizer":
-            org_event_ids = [e.id for e in user_events]
-            query = query.filter(models.Talk.event_id.in_(org_event_ids))
+        query = db.query(models.Talk).options(selectinload(models.Talk.jobs))
+        if user:
+            if user.role == "organizer":
+                org_event_ids = [e.id for e in user_events]
+                query = query.filter(models.Talk.event_id.in_(org_event_ids))
+                if event_id is not None:
+                    if event_id not in org_event_ids:
+                        query = query.filter(models.Talk.id == -1)
+                    else:
+                        query = query.filter(models.Talk.event_id == event_id)
+            elif user.role == "admin":
+                if event_id is not None:
+                    query = query.filter(models.Talk.event_id == event_id)
+            else:
+                query = query.filter(models.Talk.id == -1)
+        elif client is not None:
+            query = query.filter(models.Talk.event_id.in_(client.event_ids))
             if event_id is not None:
-                if event_id not in org_event_ids:
+                if event_id not in client.event_ids:
                     query = query.filter(models.Talk.id == -1)
                 else:
                     query = query.filter(models.Talk.event_id == event_id)
-        elif user.role == "admin":
+        else:
             if event_id is not None:
                 query = query.filter(models.Talk.event_id == event_id)
-        else:
-            query = query.filter(models.Talk.id == -1)
-    elif client is not None:
-        query = query.filter(models.Talk.event_id.in_(client.event_ids))
-        if event_id is not None:
-            if event_id not in client.event_ids:
-                query = query.filter(models.Talk.id == -1)
-            else:
-                query = query.filter(models.Talk.event_id == event_id)
-    else:
-        if event_id is not None:
-            query = query.filter(models.Talk.event_id == event_id)
 
     if status_filter:
         query = query.filter(models.Talk.status == status_filter)
@@ -275,7 +363,13 @@ def dashboard(
         q_lower = q.lower()
         talks = [t for t in talks if q_lower in t.title.lower()]
 
-    if user:
+    if sso_user:
+        all_talks = (
+            db.query(models.Talk)
+            .filter(models.Talk.event_id == sso_user["scope_id"])
+            .all()
+        )
+    elif user:
         if user.role == "organizer":
             org_event_ids = [e.id for e in user_events]
             all_talks = (
@@ -398,7 +492,57 @@ def studio(
     talk_id: int,
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+    sso_token: str | None = None,
 ):
+    if sso_token is not None or "sso_token" in request.query_params:
+        raw_sso = (
+            sso_token
+            if sso_token is not None
+            else request.query_params.get("sso_token")
+        )
+        if not raw_sso:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired SSO token",
+            )
+        sso_payload = decode_sso_token(raw_sso)
+        if not sso_payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired SSO token",
+            )
+        if sso_payload["scope_type"] == "talk" and sso_payload["scope_id"] != talk_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="SSO token is not authorized for this talk",
+            )
+        if sso_payload["scope_type"] == "event":
+            talk_obj = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+            if not talk_obj:
+                raise HTTPException(status_code=404, detail="Talk not found")
+            if talk_obj.event_id != sso_payload["scope_id"]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="SSO token is not authorized for this event",
+                )
+
+        is_secure = (request.url.scheme == "https") or (
+            settings.environment.lower() in ("production", "prod")
+        )
+        resp = RedirectResponse(
+            url=f"/studio/talks/{talk_id}", status_code=status.HTTP_303_SEE_OTHER
+        )
+        resp.set_cookie(
+            key="veditor_session",
+            value=raw_sso,
+            max_age=settings.sso_token_expire_seconds,
+            httponly=True,
+            samesite="lax",
+            secure=is_secure,
+            path="/",
+        )
+        return resp
+
     talk = _authorize_studio_talk(
         talk_id, request, db, not_found_detail="Talk not found"
     )
@@ -479,6 +623,13 @@ def list_studio_events(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
 ):
+    cookie_token = request.cookies.get("veditor_session")
+    if cookie_token and decode_sso_token(cookie_token) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO sessions are not authorized to access event management",
+        )
+
     user = _get_authenticated_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
@@ -522,6 +673,13 @@ def create_studio_event(
     db: Annotated[Session, Depends(get_db)],
     name: Annotated[str, Form()] = "",
 ):
+    cookie_token = request.cookies.get("veditor_session")
+    if cookie_token and decode_sso_token(cookie_token) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO sessions are not authorized to access event management",
+        )
+
     user = _get_authenticated_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
@@ -581,6 +739,13 @@ def edit_studio_event(
     db: Annotated[Session, Depends(get_db)],
     name: Annotated[str, Form()] = "",
 ):
+    cookie_token = request.cookies.get("veditor_session")
+    if cookie_token and decode_sso_token(cookie_token) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO sessions are not authorized to access event management",
+        )
+
     user = _get_authenticated_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
@@ -622,6 +787,13 @@ def delete_studio_event(
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
+    cookie_token = request.cookies.get("veditor_session")
+    if cookie_token and decode_sso_token(cookie_token) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO sessions are not authorized to access event management",
+        )
+
     user = _get_authenticated_user_from_cookie(request, db)
     if not user:
         return RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
