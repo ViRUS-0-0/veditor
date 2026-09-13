@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ _env = jinja2.Environment(
     autoescape=jinja2.select_autoescape(["html", "jinja", "xml"]),
     cache_size=0,
 )
+_env.globals["UTC"] = UTC
 
 
 def auth_context_processor(request: Request) -> dict[str, Any]:

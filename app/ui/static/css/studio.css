@@ -85,6 +85,7 @@
     overflow: visible;
   }
   .player-viewport {
+    flex: none;
     height: 50vh;
     min-height: 240px;
   }

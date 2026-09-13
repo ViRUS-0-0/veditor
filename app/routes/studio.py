@@ -94,8 +94,7 @@ def _authorize_studio_talk(
             )
         if user.role == "admin":
             return talk
-        event = db.query(models.Event).filter(models.Event.id == talk.event_id).first()
-        if event and event.created_by_user_id == user.id:
+        if talk.event and talk.event.created_by_user_id == user.id:
             return talk
         api_key = request.headers.get("X-API-Key") or request.cookies.get(
             "veditor_api_key"

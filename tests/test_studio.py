@@ -1087,3 +1087,44 @@ def test_delete_talk_propagates_storage_error(client: TestClient, db_session):
         assert talk is not None
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)
+
+
+def test_talk_studio_offset_aware_start_normalizes_to_utc(
+    client: TestClient, db_session
+):
+    from datetime import timezone
+
+    event = models.Event(name=f"TZ Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    # Offset +05:30 (15:30 IST -> 10:00 UTC)
+    ist = timezone(timedelta(hours=5, minutes=30))
+    start_ist = datetime(2026, 9, 15, 15, 30, tzinfo=ist)
+    end_ist = start_ist + timedelta(minutes=45)
+
+    talk = models.Talk(
+        event_id=event.id,
+        title="TZ Talk",
+        room="Hall A",
+        start=start_ist,
+        end=end_ist,
+        status="waiting_for_files",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    api_key = f"key_{uuid.uuid4().hex}"
+    client_model = models.Client(
+        hashed_key=hash_api_key(api_key),
+        event_ids=[event.id],
+    )
+    db_session.add(client_model)
+    db_session.commit()
+
+    res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
+    assert res.status_code == 200
+    assert "Sep 15, 10:00 UTC" in res.text
+    assert "(45m)" in res.text

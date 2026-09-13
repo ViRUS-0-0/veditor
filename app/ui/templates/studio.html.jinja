@@ -39,7 +39,8 @@
 
 {% block topbar_actions %}
   {% if talk.start %}
-    <span class="topbar-time-meta">{{ talk.start.strftime('%b %d, %H:%M UTC') }}{% if duration_seconds and duration_seconds > 0 %} ({{ duration_seconds // 60 }}m){% endif %}</span>
+    {% set start_utc = talk.start.astimezone(UTC) if talk.start.tzinfo else talk.start %}
+    <span class="topbar-time-meta">{{ start_utc.strftime('%b %d, %H:%M UTC') }}{% if duration_seconds and duration_seconds > 0 %} ({{ duration_seconds // 60 }}m){% endif %}</span>
   {% endif %}
   {{ status_badge(talk.status) }}
 {% endblock %}
