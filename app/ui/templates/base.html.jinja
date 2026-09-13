@@ -70,8 +70,15 @@
 
   <!-- ── Sidebar ─────────────────────────────────────────────── -->
   <aside class="sidebar" id="app-sidebar" aria-label="Sidebar navigation">
-    <nav class="sidebar-nav" id="sidebar-nav">
+    <div class="sidebar-header">
       <span class="nav-label">Workspace</span>
+      <button type="button" class="btn btn-ghost btn-sm sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="app-sidebar">
+        <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+    </div>
+    <nav class="sidebar-nav" id="sidebar-nav">
       {% if user and user.role in ['organizer', 'admin'] %}
       <a href="/studio/events" class="nav-item {% if '/events' in request.url.path %}active{% endif %}" id="nav-events-link">
         <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">

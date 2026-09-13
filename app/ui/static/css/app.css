@@ -110,9 +110,35 @@ a:hover { color: var(--v-primary-hover); }
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.2s ease;
 }
 
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 4px 16px;
+}
+
+.sidebar-header .nav-label {
+  padding: 0;
+}
+
+.sidebar-collapse-btn {
+  padding: 4px 6px;
+  color: var(--v-text-muted);
+  border-radius: var(--v-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sidebar-collapse-btn:hover {
+  color: var(--v-text-primary);
+  background: var(--v-bg-surface-hover);
+}
+
 .sidebar-nav {
   flex: 1;
-  padding: 12px 8px;
+  padding: 8px 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 3px;

@@ -100,9 +100,14 @@ window.VEditorConfig = window.VEditorConfig || {
       localStorage.setItem('veditor_sidebar_state', state);
     }
 
+    const isExpanded = String(!collapsed);
     const toggleBtn = document.getElementById('sidebar-toggle-btn');
     if (toggleBtn) {
-      toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+      toggleBtn.setAttribute('aria-expanded', isExpanded);
+    }
+    const collapseBtn = document.getElementById('sidebar-collapse-btn');
+    if (collapseBtn) {
+      collapseBtn.setAttribute('aria-expanded', isExpanded);
     }
 
     window.dispatchEvent(new Event('resize'));
@@ -130,6 +135,11 @@ window.VEditorConfig = window.VEditorConfig || {
       const toggleBtn = document.getElementById('sidebar-toggle-btn');
       if (toggleBtn) {
         toggleBtn.addEventListener('click', window.toggleSidebar);
+      }
+
+      const collapseBtn = document.getElementById('sidebar-collapse-btn');
+      if (collapseBtn) {
+        collapseBtn.addEventListener('click', () => setSidebarCollapsed(true));
       }
     }
   });

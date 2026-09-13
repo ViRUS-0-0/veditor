@@ -1073,6 +1073,7 @@ def test_sidebar_declutter_and_buttons(client: TestClient):
     # Fixed topbar and toggle button are present
     assert 'id="app-topbar"' in response.text
     assert 'id="sidebar-toggle-btn"' in response.text
+    assert 'id="sidebar-collapse-btn"' in response.text
     assert 'id="topbar-brand-link"' in response.text
 
     # Talks link is present
