@@ -47,6 +47,7 @@ from app.tasks import (
     STAGE_CONFIG,
     dispatch_assembly,
     job_cut,
+    job_deliver_webhook,
     job_detect,
     job_ingest,
 )
@@ -274,7 +275,12 @@ def approve_talk(
     Returns 404 if talk not found or not in caller's event_ids.
     Returns 409 if talk status is not 'pending_approval'.
     """
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    talk = (
+        db.query(models.Talk)
+        .filter(models.Talk.id == talk_id)
+        .with_for_update()
+        .first()
+    )
     if not talk or (user.is_machine and talk.event_id not in user.event_ids):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
@@ -301,6 +307,84 @@ def approve_talk(
         cleanup_intermediates(storage, talk_id)
 
     return schemas.TalkRead.model_validate(talk)
+
+
+def _dispatch_talk_cut_webhook(
+    talk: models.Talk,
+    user: CurrentUser,
+    db: Session,
+) -> None:
+    try:
+        candidate_clients: list[models.Client] = []
+        try:
+            candidate_clients = (
+                db.query(models.Client)
+                .filter(
+                    models.Client.event_ids.any(talk.event_id),
+                    models.Client.webhook_url.is_not(None),
+                )
+                .all()
+            )
+        except Exception:  # noqa: BLE001
+            candidate_clients = []
+
+        if not candidate_clients:
+            all_clients = (
+                db.query(models.Client)
+                .filter(models.Client.webhook_url.is_not(None))
+                .all()
+            )
+            candidate_clients = [
+                c
+                for c in all_clients
+                if isinstance(getattr(c, "event_ids", None), list)
+                and talk.event_id in c.event_ids
+            ]
+
+        if not candidate_clients and user.is_machine and user.client_id:
+            client_record = (
+                db.query(models.Client)
+                .filter(
+                    models.Client.id == user.client_id,
+                    models.Client.webhook_url.is_not(None),
+                )
+                .first()
+            )
+            if client_record and isinstance(client_record, models.Client):
+                candidate_clients = [client_record]
+
+        for c in candidate_clients:
+            if not isinstance(c, models.Client):
+                continue
+            webhook_url = c.webhook_url
+            webhook_secret = c.webhook_secret
+            if webhook_url and webhook_secret:
+                payload_data = {
+                    "talk_id": talk.id,
+                    "event_id": talk.event_id,
+                    "timestamp": datetime.now(UTC).isoformat(),
+                }
+                try:
+                    light_queue.enqueue(
+                        job_deliver_webhook,
+                        webhook_url,
+                        webhook_secret,
+                        payload_data,
+                        job_timeout=30,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to enqueue webhook notification for talk %d to client %s: %s",
+                        talk.id,
+                        getattr(c, "id", None),
+                        exc,
+                    )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Failed to dispatch webhook notification for talk %d: %s",
+            talk.id,
+            exc,
+        )
 
 
 RAW_PREVIEW_ALLOWED_STATES = frozenset(
@@ -375,7 +459,12 @@ def submit_cut_bounds(
     Persists bounds on Talk, advances state to cutting, enqueues job_cut.
     Returns 409 if not in pending_bounds. Returns 422 if bounds are invalid.
     """
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    talk = (
+        db.query(models.Talk)
+        .filter(models.Talk.id == talk_id)
+        .with_for_update()
+        .first()
+    )
     if not talk or (user.is_machine and talk.event_id not in user.event_ids):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
@@ -436,6 +525,8 @@ def submit_cut_bounds(
         raw_key,
         job_timeout=STAGE_CONFIG["cut"]["job_timeout"],
     )
+
+    _dispatch_talk_cut_webhook(talk, user, db)
 
     return schemas.TalkRead.model_validate(talk)
 

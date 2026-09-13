@@ -621,6 +621,9 @@ def test_post_approve_forbidden_event_returns_404():
         status="pending_approval",
     )
     mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+        mock_db.query.return_value.filter.return_value
+    )
 
     response = client.post(
         "/talks/1/approve",
@@ -649,6 +652,9 @@ def test_post_approve_invalid_state_conflict():
         status="waiting_for_files",
     )
     mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+        mock_db.query.return_value.filter.return_value
+    )
 
     response = client.post(
         "/talks/1/approve",
@@ -681,6 +687,9 @@ def test_post_approve_no_raw_recording_fails():
         status="pending_approval",
     )
     mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+        mock_db.query.return_value.filter.return_value
+    )
 
     response = client.post(
         "/talks/1/approve",
@@ -711,6 +720,9 @@ def test_post_approve_success_enqueues_cut():
         status="pending_approval",
     )
     mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+        mock_db.query.return_value.filter.return_value
+    )
 
     with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue:
         response = client.post(
@@ -748,6 +760,9 @@ def test_post_approve_with_custom_raw_key():
         status="pending_approval",
     )
     mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+        mock_db.query.return_value.filter.return_value
+    )
 
     # Old raw_key field is ignored — body parsed as ApproveRequest(decision="approve")
     response = client.post(
@@ -782,6 +797,9 @@ def test_post_approve_with_mismatched_talk_raw_key_rejected():
             status="pending_approval",
         )
         mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+        mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+            mock_db.query.return_value.filter.return_value
+        )
 
         response = client.post(
             "/talks/1/approve",
@@ -819,6 +837,9 @@ def test_post_approve_reject_storage_delete_resilient():
             status="pending_approval",
         )
         mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+        mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+            mock_db.query.return_value.filter.return_value
+        )
 
         response = client.post(
             "/talks/1/approve",
@@ -871,6 +892,7 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
     mock_db_session.query.return_value.filter.return_value.first.side_effect = lambda: (
         talk
     )
+    mock_db_session.query.return_value.filter.return_value.with_for_update.return_value = mock_db_session.query.return_value.filter.return_value
     mock_db_session.commit = MagicMock()
     mock_db_session.refresh = MagicMock()
 
