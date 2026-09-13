@@ -1089,7 +1089,7 @@ def test_sidebar_declutter_and_buttons(client: TestClient):
 
 
 def test_studio_mode_body_class(client: TestClient, db_session):
-    """Test that /studio/talks/{id} includes is-studio-mode body class."""
+    """Test that Studio routes (/studio, /studio/events, /studio/talks/{id}) include is-studio-mode body class."""
     event = models.Event(name=f"Event {uuid.uuid4().hex}")
     db_session.add(event)
     db_session.commit()
@@ -1113,7 +1113,18 @@ def test_studio_mode_body_class(client: TestClient, db_session):
     db_session.commit()
     db_session.refresh(talk)
 
+    # Talk studio view
     res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
     assert res.status_code == 200
     assert "is-studio-mode" in res.text
     assert 'id="sidebar-toggle-btn"' in res.text
+
+    # Talks dashboard view
+    res_dash = client.get("/studio")
+    assert res_dash.status_code == 200
+    assert "is-studio-mode" in res_dash.text
+
+    # Non-studio view should not have is-studio-mode
+    res_login = client.get("/login")
+    assert res_login.status_code == 200
+    assert "is-studio-mode" not in res_login.text

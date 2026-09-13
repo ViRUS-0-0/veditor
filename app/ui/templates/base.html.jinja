@@ -13,7 +13,7 @@
   <script src="/static/js/theme.js"></script>
   {% block extra_head %}{% endblock %}
 </head>
-<body class="{% if request.url.path.startswith('/studio/talks/') %}is-studio-mode{% endif %}{% if not user or user.role not in ['organizer', 'admin'] %} is-speaker{% endif %}">
+<body class="{% if request.url.path == '/studio' or request.url.path.startswith('/studio/') %}is-studio-mode{% endif %}{% if (not user or user.role not in ['organizer', 'admin']) and request.url.path.startswith('/studio/talks/') %} is-speaker{% endif %}">
 <div class="app-shell">
 
   <!-- ── Full-Width Fixed Topbar ──────────────────────────────── -->

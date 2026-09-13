@@ -64,12 +64,16 @@ window.VEditorConfig = window.VEditorConfig || {
 
 // ── Sidebar Manager ─────────────────────────────────────────────
 (function () {
-  function isStudioPath() {
-    return window.location.pathname.includes('/studio/talks/');
+  function isStudioPath(path = window.location.pathname) {
+    return path === '/studio' || path.startsWith('/studio/');
+  }
+
+  function isTalkPath(path = window.location.pathname) {
+    return path.includes('/studio/talks/');
   }
 
   function checkSpeakerStudioMode() {
-    if (isStudioPath()) {
+    if (isTalkPath()) {
       const role = typeof window.getUserRole === 'function'
         ? window.getUserRole()
         : (localStorage.getItem('veditor_role') || 'admin');
@@ -86,7 +90,7 @@ window.VEditorConfig = window.VEditorConfig || {
     const saved = localStorage.getItem('veditor_sidebar_state');
     if (saved === 'collapsed') return true;
     if (saved === 'expanded') return false;
-    // Default to collapsed in Video Studio mode or on mobile screens
+    // Default to collapsed in Studio mode or on mobile screens
     return isStudioPath() || window.innerWidth < 850;
   }
 
