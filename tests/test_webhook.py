@@ -150,6 +150,51 @@ def test_cli_create_client_with_webhook():
     assert mock_session.commit.called
 
 
+def test_cli_create_client_webhook_secret_without_url_does_not_persist_event():
+    mock_session = MagicMock()
+    with pytest.raises(SystemExit) as excinfo:
+        create_client(
+            mock_session,
+            event_name="Should Not Be Created",
+            event_id=None,
+            webhook_url=None,
+            webhook_secret="secret_without_url",
+        )
+    assert excinfo.value.code == 1
+    assert mock_session.add.call_count == 0
+    assert not mock_session.commit.called
+
+
+def test_cli_create_client_webhook_secret_too_long_does_not_persist_event():
+    mock_session = MagicMock()
+    with pytest.raises(SystemExit) as excinfo:
+        create_client(
+            mock_session,
+            event_name="Should Not Be Created",
+            event_id=None,
+            webhook_url="https://example.com/hook",
+            webhook_secret="a" * 256,
+        )
+    assert excinfo.value.code == 1
+    assert mock_session.add.call_count == 0
+    assert not mock_session.commit.called
+
+
+def test_cli_create_client_invalid_webhook_url_does_not_persist_event():
+    mock_session = MagicMock()
+    with pytest.raises(SystemExit) as excinfo:
+        create_client(
+            mock_session,
+            event_name="Should Not Be Created",
+            event_id=None,
+            webhook_url="ftp://invalid.com/hook",
+            webhook_secret="valid_secret",
+        )
+    assert excinfo.value.code == 1
+    assert mock_session.add.call_count == 0
+    assert not mock_session.commit.called
+
+
 # --- 3. Delivery, HMAC Signing & Retry Unit Tests ---
 
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.auth import hash_api_key, lock_active_admins
 from app.db import SessionLocal
+from app.schemas import WebhookRegisterRequest
 from app.security import hash_password, is_valid_email
 
 
@@ -25,6 +26,21 @@ def create_client(
     if event_name and event_id:
         print("Error: Cannot provide both --event-name and --event-id.")
         sys.exit(1)
+
+    if webhook_secret and not webhook_url:
+        print("Error: Cannot provide --webhook-secret without --webhook-url.")
+        sys.exit(1)
+
+    if webhook_secret and len(webhook_secret) > 255:
+        print("Error: Webhook secret cannot exceed 255 characters.")
+        sys.exit(1)
+
+    if webhook_url:
+        try:
+            WebhookRegisterRequest.validate_url(webhook_url)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
 
     if event_name:
         event = models.Event(name=event_name)
@@ -44,10 +60,6 @@ def create_client(
 
     raw_api_key = secrets.token_urlsafe(32)
     hashed_key = hash_api_key(raw_api_key)
-
-    if webhook_secret and not webhook_url:
-        print("Error: Cannot provide --webhook-secret without --webhook-url.")
-        sys.exit(1)
 
     secret = None
     if webhook_url:
