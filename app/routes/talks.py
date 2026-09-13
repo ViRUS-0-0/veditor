@@ -356,13 +356,21 @@ def _dispatch_talk_cut_webhook(
                     "event_id": talk.event_id,
                     "timestamp": datetime.now(UTC).isoformat(),
                 }
-                light_queue.enqueue(
-                    job_deliver_webhook,
-                    webhook_url,
-                    webhook_secret,
-                    payload_data,
-                    job_timeout=30,
-                )
+                try:
+                    light_queue.enqueue(
+                        job_deliver_webhook,
+                        webhook_url,
+                        webhook_secret,
+                        payload_data,
+                        job_timeout=30,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to enqueue webhook notification for talk %d to client %s: %s",
+                        talk.id,
+                        getattr(c, "id", None),
+                        exc,
+                    )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "Failed to dispatch webhook notification for talk %d: %s",

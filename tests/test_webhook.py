@@ -592,3 +592,80 @@ def test_submit_cut_bounds_webhook_failure_decoupled():
             assert mock_db.commit.called
     finally:
         app.dependency_overrides.clear()
+
+
+def test_submit_cut_bounds_multi_client_isolation():
+    """Verify that an enqueue failure on one client does not abort webhooks for other clients."""
+    mock_db = MagicMock()
+    mock_client_1 = models.Client(
+        id=1,
+        event_ids=[1],
+        webhook_url="https://subscriber-1.example/hook",
+        webhook_secret="secret-1",
+    )
+    mock_client_2 = models.Client(
+        id=2,
+        event_ids=[1],
+        webhook_url="https://subscriber-2.example/hook",
+        webhook_secret="secret-2",
+    )
+    mock_talk = models.Talk(
+        id=14,
+        event_id=1,
+        title="Multi Client Talk",
+        room="Room E",
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+        status="pending_bounds",
+        raw_duration_seconds=3600.0,
+    )
+
+    def mock_query(model):
+        q = MagicMock()
+        if model is models.Talk:
+            q.filter.return_value.first.return_value = mock_talk
+            q.filter.return_value.with_for_update.return_value = q.filter.return_value
+        elif model is models.Client:
+            q.filter.return_value.all.return_value = [mock_client_1, mock_client_2]
+            q.filter.return_value.first.return_value = mock_client_1
+        return q
+
+    mock_db.query = mock_query
+
+    fake_storage = FakeStorageBackend()
+    fake_storage.put("14/raw/recording.mp4", b"raw video bytes")
+    app.dependency_overrides[get_client] = lambda: mock_client_1
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
+
+    calls_made = []
+
+    def enqueue_side_effect(fn, *args, **kwargs):
+        calls_made.append((fn, args))
+        if fn == job_deliver_webhook and args[0] == "https://subscriber-1.example/hook":
+            raise RuntimeError("Failure for client 1")
+        return MagicMock()
+
+    try:
+        with patch(
+            "app.routes.talks.light_queue.enqueue",
+            side_effect=enqueue_side_effect,
+        ):
+            resp = client.post(
+                "/talks/14/cut",
+                json={"cut_start": "00:00:10", "cut_end": "00:45:00"},
+                headers={"X-API-Key": "valid_key"},
+            )
+            assert resp.status_code == 202
+            assert resp.json()["status"] == "cutting"
+            assert mock_talk.status == "cutting"
+
+            # Verify job_cut + client_1 attempt + client_2 attempt (all 3 called)
+            assert len(calls_made) == 3
+            assert calls_made[0][0] == job_cut
+            assert calls_made[1][0] == job_deliver_webhook
+            assert calls_made[1][1][0] == "https://subscriber-1.example/hook"
+            assert calls_made[2][0] == job_deliver_webhook
+            assert calls_made[2][1][0] == "https://subscriber-2.example/hook"
+    finally:
+        app.dependency_overrides.clear()
