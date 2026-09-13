@@ -1063,3 +1063,56 @@ def test_delete_talk_propagates_storage_error(client: TestClient, db_session):
         assert talk is not None
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)
+
+
+def test_sidebar_declutter_and_buttons(client: TestClient):
+    """Test sidebar declutter: only Events and Talks, no status filters, toggle button present."""
+    response = client.get("/studio")
+    assert response.status_code == 200
+
+    # Fixed topbar and toggle button are present
+    assert 'id="app-topbar"' in response.text
+    assert 'id="sidebar-toggle-btn"' in response.text
+    assert 'id="topbar-brand-link"' in response.text
+
+    # Talks link is present
+    assert 'id="nav-talks-link"' in response.text
+    assert "Talks" in response.text
+
+    # Redundant status filter links are absent from sidebar
+    assert 'href="/studio?status_filter=pending_approval"' not in response.text
+    assert 'href="/studio?status_filter=preview"' not in response.text
+    assert 'href="/studio?status_filter=done"' not in response.text
+    assert 'href="/studio?status_filter=broken"' not in response.text
+    assert "REST API Docs" not in response.text
+
+
+def test_studio_mode_body_class(client: TestClient, db_session):
+    """Test that /studio/talks/{id} includes is-studio-mode body class."""
+    event = models.Event(name=f"Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Studio Mode Talk",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
+    assert res.status_code == 200
+    assert "is-studio-mode" in res.text
+    assert 'id="sidebar-toggle-btn"' in res.text
