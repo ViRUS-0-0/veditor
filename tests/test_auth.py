@@ -74,8 +74,9 @@ from app.auth import (
     require_admin,
     require_event_access,
     require_role,
+    require_talk_access,
 )
-from app.models import Event
+from app.models import Event, Talk
 from app.security import create_access_token, create_session_token
 
 
@@ -571,3 +572,52 @@ def test_lock_active_admins_mock():
     ]
     admin_ids = lock_active_admins(mock_session)
     assert admin_ids == [1, 2]
+
+
+def test_require_talk_access_invalid_path_param_format():
+    test_app = FastAPI()
+
+    @test_app.get("/talks/{talk_id}")
+    def endpoint(talk: Annotated[Talk, Depends(require_talk_access())]):
+        return {"id": talk.id}
+
+    test_app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        role="admin", source="jwt"
+    )
+
+    client = TestClient(test_app)
+    resp = client.get("/talks/not-an-int")
+    assert resp.status_code == 400
+    assert "Invalid talk ID" in resp.json()["detail"]
+
+
+def test_require_talk_access_success_and_unauthorized():
+    test_app = FastAPI()
+
+    @test_app.get("/talks/{id}")
+    def endpoint(talk: Annotated[Talk, Depends(require_talk_access("id"))]):
+        return {"id": talk.id}
+
+    mock_talk = Talk(id=10, event_id=1, status="done")
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+
+    from app.db import get_db
+
+    test_app.dependency_overrides[get_db] = lambda: mock_db
+
+    # Authorized user (admin)
+    test_app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        role="admin", source="jwt"
+    )
+    client = TestClient(test_app)
+    resp = client.get("/talks/10")
+    assert resp.status_code == 200
+    assert resp.json() == {"id": 10}
+
+    # Unauthorized machine client (talk.event_id 1 not in client event_ids [2])
+    test_app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        role="organizer", source="api_key", event_ids=[2]
+    )
+    resp = client.get("/talks/10")
+    assert resp.status_code == 403

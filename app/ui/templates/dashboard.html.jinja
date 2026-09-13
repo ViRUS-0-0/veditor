@@ -99,6 +99,7 @@
   </div>
 
   <!-- Bulk Actions Bar -->
+  {% if not (user and user.is_sso) %}
   <div id="bulk-actions-bar">
     <div class="bulk-actions-info">
       <span id="selected-count-text">0 talks selected</span>
@@ -111,6 +112,7 @@
       </button>
     </div>
   </div>
+  {% endif %}
 
   <!-- Talks Table -->
   <div class="table-wrap">
@@ -120,12 +122,13 @@
         <span class="table-count table-count-spaced">{{ talks | length }} result{% if talks | length != 1 %}s{% endif %}</span>
       </div>
       <div class="table-header-actions">
-        {% if user and user.role in ['organizer', 'admin'] %}
+        {% if user and user.role in ['organizer', 'admin'] and not user.is_sso %}
         <a href="/studio/events" class="btn btn-ghost btn-sm" id="btn-events-link">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
           Events
         </a>
         {% endif %}
+        {% if not (user and user.is_sso) %}
         <button class="btn btn-ghost btn-sm" id="btn-open-import">
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Import Schedule
@@ -138,6 +141,7 @@
           <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           + New Talk
         </button>
+        {% endif %}
       </div>
     </div>
 
@@ -145,9 +149,11 @@
     <table>
       <thead>
         <tr>
+          {% if not (user and user.is_sso) %}
           <th class="col-checkbox">
             <input type="checkbox" id="select-all-talks" title="Select all talks">
           </th>
+          {% endif %}
           <th>Talk Title</th>
           <th>Room</th>
           <th>Start Time</th>
@@ -159,9 +165,11 @@
       <tbody>
         {% for talk in talks %}
         <tr data-talk-id="{{ talk.id }}" data-status="{{ talk.status }}">
+          {% if not (user and user.is_sso) %}
           <td class="col-checkbox">
             <input type="checkbox" class="talk-checkbox" value="{{ talk.id }}">
           </td>
+          {% endif %}
           <td class="td-title">
             <strong>{{ talk.title }}</strong>
             <small>ID #{{ talk.id }} &bull; Event #{{ talk.event_id }}</small>
@@ -202,15 +210,17 @@
               <a href="/studio/talks/{{ talk.id }}" class="btn btn-ghost btn-sm">
                 Open Studio
               </a>
+              {% if not (user and user.is_sso) %}
               <button class="btn btn-ghost btn-sm btn-delete-talk" data-talk-id="{{ talk.id }}" data-talk-title="{{ talk.title }}" title="Delete Talk">
                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               </button>
+              {% endif %}
             </div>
           </td>
         </tr>
         {% endfor %}
         <tr id="no-client-matches-row">
-          <td colspan="7" class="no-matches-cell">
+          <td colspan="{% if user and user.is_sso %}6{% else %}7{% endif %}" class="no-matches-cell">
             <div class="no-matches-title">No matching talks</div>
             <div class="no-matches-desc">No talks match the active search or filter.</div>
           </td>
@@ -233,6 +243,7 @@
 
 </div>
 
+{% if not (user and user.is_sso) %}
 <!-- ── MODAL: Import Schedule ────────────────────────────────────── -->
 <div id="modal-import" class="dashboard-modal-backdrop">
   <div class="dashboard-modal-card modal-import-card">
@@ -350,6 +361,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}

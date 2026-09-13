@@ -5,9 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app import models, schemas
-from app.auth import CurrentUser, check_event_access, require_role
+from app.auth import CurrentUser, check_event_access, get_client, require_role
+from app.config import settings
 from app.db import get_db
 from app.routes.talks import _cancel_talk_jobs
+from app.security import create_sso_token
 from app.storage import StorageBackend, get_storage_backend
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,11 @@ def create_event(
     user: Annotated[CurrentUser, Depends(require_role("organizer"))],
     db: Annotated[Session, Depends(get_db)],
 ):
+    if user.is_sso:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO sessions are not permitted to create events",
+        )
     created_by = user.user_id if not user.is_machine else None
     event = models.Event(
         name=payload.name,
@@ -55,6 +62,13 @@ def list_events(
     user: Annotated[CurrentUser, Depends(require_role("organizer"))],
     db: Annotated[Session, Depends(get_db)],
 ):
+    if user.is_sso:
+        if user.scope_type == "event" and user.scope_id:
+            return db.query(models.Event).filter(models.Event.id == user.scope_id).all()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO session is not authorized to list events",
+        )
     if user.is_machine:
         return db.query(models.Event).filter(models.Event.id.in_(user.event_ids)).all()
     if user.role == "admin":
@@ -73,6 +87,11 @@ def update_event(
     user: Annotated[CurrentUser, Depends(require_role("organizer"))],
     db: Annotated[Session, Depends(get_db)],
 ):
+    if user.is_sso:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO sessions are not permitted to modify events",
+        )
     event = check_event_access(event_id, user, db)
 
     if payload.name is not None:
@@ -99,6 +118,11 @@ def delete_event(
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
+    if user.is_sso:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO sessions are not permitted to delete events",
+        )
     check_event_access(event_id, user, db)
     event = (
         db.query(models.Event)
@@ -123,3 +147,46 @@ def delete_event(
     db.delete(event)
     db.commit()
     return {"status": "ok", "deleted_id": event_id}
+
+
+@router.post(
+    "/{event_id}/sso-token",
+    response_model=schemas.SSOTokenResponse,
+    status_code=status.HTTP_200_OK,
+)
+def create_event_sso_token(
+    event_id: int,
+    client: Annotated[models.Client, Depends(get_client)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """
+    Issues a short-lived, event-scoped SSO token carrying role=organizer.
+    Requires caller to be authenticated via X-API-Key only.
+    """
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        )
+    if event_id not in (client.event_ids or []):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Client is not authorized to mint an SSO token for this event",
+        )
+
+    token = create_sso_token(
+        scope_type="event",
+        scope_id=event_id,
+        role="organizer",
+        expires_in_seconds=settings.sso_token_expire_seconds,
+    )
+    return schemas.SSOTokenResponse(
+        token=token,
+        token_type="bearer",
+        scope_type="event",
+        scope_id=event_id,
+        role="organizer",
+        expires_in_seconds=settings.sso_token_expire_seconds,
+        url=f"/studio?event_id={event_id}&sso_token={token}",
+    )
