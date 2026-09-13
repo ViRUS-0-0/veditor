@@ -267,7 +267,12 @@ def approve_talk(
     Returns 404 if talk not found or not in caller's event_ids.
     Returns 409 if talk status is not 'pending_approval'.
     """
-    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    talk = (
+        db.query(models.Talk)
+        .filter(models.Talk.id == talk_id)
+        .with_for_update()
+        .first()
+    )
     if not talk or (user.is_machine and talk.event_id not in user.event_ids):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"

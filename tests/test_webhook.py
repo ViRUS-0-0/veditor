@@ -336,6 +336,7 @@ def test_approve_talk_triggers_webhook_when_configured():
         q = MagicMock()
         if model is models.Talk:
             q.filter.return_value.first.return_value = mock_talk
+            q.filter.return_value.with_for_update.return_value = q.filter.return_value
         elif model is models.Client:
             q.filter.return_value.all.return_value = [mock_client]
             q.filter.return_value.first.return_value = mock_client
@@ -399,6 +400,7 @@ def test_approve_talk_silent_when_no_webhook_url():
         q = MagicMock()
         if model is models.Talk:
             q.filter.return_value.first.return_value = mock_talk
+            q.filter.return_value.with_for_update.return_value = q.filter.return_value
         elif model is models.Client:
             q.filter.return_value.all.return_value = []
             q.filter.return_value.first.return_value = None
@@ -444,6 +446,9 @@ def test_reject_talk_does_not_trigger_webhook():
     )
 
     mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+    mock_db.query.return_value.filter.return_value.with_for_update.return_value = (
+        mock_db.query.return_value.filter.return_value
+    )
 
     fake_storage = FakeStorageBackend()
     app.dependency_overrides[get_client] = lambda: mock_client
@@ -487,6 +492,7 @@ def test_approve_talk_queue_failure_decoupled():
         q = MagicMock()
         if model is models.Talk:
             q.filter.return_value.first.return_value = mock_talk
+            q.filter.return_value.with_for_update.return_value = q.filter.return_value
         elif model is models.Client:
             q.filter.return_value.all.return_value = [mock_client]
             q.filter.return_value.first.return_value = mock_client

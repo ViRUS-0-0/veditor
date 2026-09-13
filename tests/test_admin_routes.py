@@ -208,25 +208,26 @@ def test_promote_user_success(client: TestClient, db_session):
 
 def test_promote_guard_cannot_demote_last_admin(client: TestClient, db_session):
     # Ensure only 1 active admin exists during the test without deleting pre-existing admins
-    existing_admin_ids = [
-        uid
-        for (uid,) in db_session.query(models.User.id)
-        .filter(models.User.role == "admin", models.User.is_active.is_(True))
-        .all()
-    ]
-    if existing_admin_ids:
-        db_session.query(models.User).filter(
-            models.User.id.in_(existing_admin_ids)
-        ).update({"is_active": False}, synchronize_session=False)
-        db_session.commit()
-
-    admin_user = _create_test_user(
-        db_session, "sole_admin@admin-test.com", role="admin"
-    )
-    token = create_session_token(admin_user.id, admin_user.role)
-    client.cookies.set("veditor_session", token)
-
+    existing_admin_ids = []
     try:
+        existing_admin_ids = [
+            uid
+            for (uid,) in db_session.query(models.User.id)
+            .filter(models.User.role == "admin", models.User.is_active.is_(True))
+            .all()
+        ]
+        if existing_admin_ids:
+            db_session.query(models.User).filter(
+                models.User.id.in_(existing_admin_ids)
+            ).update({"is_active": False}, synchronize_session=False)
+            db_session.commit()
+
+        admin_user = _create_test_user(
+            db_session, "sole_admin@admin-test.com", role="admin"
+        )
+        token = create_session_token(admin_user.id, admin_user.role)
+        client.cookies.set("veditor_session", token)
+
         # Demoting the sole active admin
         res = client.post(
             f"/admin/users/{admin_user.id}/promote", json={"role": "organizer"}
@@ -286,28 +287,29 @@ def test_deactivate_user_not_found(client: TestClient, db_session):
 
 def test_deactivate_guard_cannot_deactivate_last_admin(client: TestClient, db_session):
     # Ensure only 1 active admin exists during the test without deleting pre-existing admins
-    existing_admin_ids = [
-        uid
-        for (uid,) in db_session.query(models.User.id)
-        .filter(models.User.role == "admin", models.User.is_active.is_(True))
-        .all()
-    ]
-    if existing_admin_ids:
-        db_session.query(models.User).filter(
-            models.User.id.in_(existing_admin_ids)
-        ).update({"is_active": False}, synchronize_session=False)
-        db_session.commit()
-
-    sole_admin = _create_test_user(
-        db_session, "sole_adm_d@admin-test.com", role="admin"
-    )
-
     from app.auth import get_current_user
 
-    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
-        user_id=99999, role="admin", source="cookie"
-    )
+    existing_admin_ids = []
     try:
+        existing_admin_ids = [
+            uid
+            for (uid,) in db_session.query(models.User.id)
+            .filter(models.User.role == "admin", models.User.is_active.is_(True))
+            .all()
+        ]
+        if existing_admin_ids:
+            db_session.query(models.User).filter(
+                models.User.id.in_(existing_admin_ids)
+            ).update({"is_active": False}, synchronize_session=False)
+            db_session.commit()
+
+        sole_admin = _create_test_user(
+            db_session, "sole_adm_d@admin-test.com", role="admin"
+        )
+
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            user_id=99999, role="admin", source="cookie"
+        )
         res = client.post(f"/admin/users/{sole_admin.id}/deactivate")
         assert res.status_code == 400
         assert res.json()["detail"] == "Cannot deactivate the last active administrator"
