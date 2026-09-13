@@ -126,29 +126,6 @@ window.loadVideoSrc = function(url) {
   video.load();
   video.currentTime = 0;
   video.play().catch(() => {});
-
-  // Highlight active row in Generated Media Assets
-  document.querySelectorAll('.media-asset-row').forEach(row => {
-    const rowUrl = row.getAttribute('data-asset-url');
-    const btn = row.querySelector('.btn-play-asset');
-    if (rowUrl === url) {
-      row.style.borderColor = 'var(--v-primary)';
-      row.style.background = 'var(--v-primary-subtle)';
-      if (btn) {
-        btn.textContent = 'Active in Studio';
-        btn.classList.remove('btn-ghost');
-        btn.classList.add('btn-primary');
-      }
-    } else {
-      row.style.borderColor = 'var(--v-border-subtle)';
-      row.style.background = 'var(--v-bg-subtle)';
-      if (btn) {
-        btn.textContent = 'Play in Studio';
-        btn.classList.remove('btn-primary');
-        btn.classList.add('btn-ghost');
-      }
-    }
-  });
 };
 
 function initInitialVideo() {
@@ -791,13 +768,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('.btn-play-asset');
-    if (!btn) return;
-    const url = btn.getAttribute('data-asset-url') || btn.closest('.media-asset-row')?.getAttribute('data-asset-url');
-    if (url) window.loadVideoSrc(url);
-  });
 
   // Auto-poll status when in background processing states
   const activeProcessingStates = ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'];

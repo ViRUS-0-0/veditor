@@ -108,7 +108,7 @@ def db_session():
         try:
             db.rollback()
 
-            for obj in created:
+            for obj in reversed(created):
                 try:
                     insp = inspect(obj)
                     if insp and insp.has_identity and insp.identity:
@@ -130,6 +130,10 @@ def db_session():
                         elif isinstance(obj, models.Event):
                             db.query(models.Event).filter(
                                 models.Event.id == obj_id
+                            ).delete()
+                        elif isinstance(obj, models.User):
+                            db.query(models.User).filter(
+                                models.User.id == obj_id
                             ).delete()
                 except Exception:  # noqa: BLE001, S110
                     pass
@@ -212,6 +216,20 @@ def test_talk_studio_page(client: TestClient, db_session):
     assert "text/html" in response.headers.get("content-type", "")
     assert "Test Studio Detail Talk" in response.text
     assert "Room 101" in response.text
+    assert "Test Studio Page Event" in response.text
+    assert "breadcrumb-event" in response.text
+    assert "breadcrumb-room" in response.text
+    assert "topbar-time-meta" in response.text
+    assert "(30m)" in response.text
+    assert response.text.index("topbar-time-meta") < response.text.index(
+        "topbar-control-group"
+    )
+    assert "broadcast-banner" not in response.text
+    assert f"Talk #{talk.id}" not in response.text
+    assert "Talk Metadata" not in response.text
+    assert "Generated Media Assets" not in response.text
+    assert "Gate 1" not in response.text
+    assert "Gate 2" not in response.text
 
 
 def test_talk_studio_human_session_user_access(client: TestClient, db_session):
@@ -251,6 +269,12 @@ def test_talk_studio_human_session_user_access(client: TestClient, db_session):
     assert res.status_code == 200
     assert "Human Session Talk" in res.text
     assert "Main Hall" in res.text
+    assert "user-menu-btn" in res.text
+    assert "user-dropdown-menu" in res.text
+    assert "Dark Mode" in res.text
+    assert "Log out" in res.text
+    assert "Gate 1" not in res.text
+    assert "Gate 2" not in res.text
 
     # 2. Admin can access talk via session cookie even if created by someone else
     admin = models.User(

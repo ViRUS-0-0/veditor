@@ -36,6 +36,10 @@ window.VEditorConfig = window.VEditorConfig || {
         moonIcon.style.display = theme === 'dark' ? 'none' : 'block';
       }
     }
+    const label = document.getElementById('theme-toggle-label');
+    if (label) {
+      label.textContent = theme === 'dark' ? 'Light Mode' : 'Dark Mode';
+    }
   }
 
   window.toggleTheme = function () {
@@ -59,6 +63,20 @@ window.VEditorConfig = window.VEditorConfig || {
     if (themeBtn) {
       themeBtn.addEventListener('click', window.toggleTheme);
     }
+
+    // ── User Dropdown Menu (native <details> dismiss) ───────────────
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('user-menu-wrapper');
+      if (menu?.open && !menu.contains(e.target)) {
+        menu.removeAttribute('open');
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.getElementById('user-menu-wrapper')?.removeAttribute('open');
+      }
+    });
   });
 })();
 
