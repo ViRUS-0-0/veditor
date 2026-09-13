@@ -374,14 +374,32 @@ a:hover { color: var(--v-primary-hover); }
   color: var(--v-status-success-text);
   border-color: var(--v-status-success-border);
 }
-.btn-success:hover { background: var(--v-status-success-border); color: #fff; }
+.btn-success:hover {
+  background: var(--v-status-success-text);
+  color: #fff;
+  border-color: var(--v-status-success-text);
+}
 
 .btn-danger {
   background: var(--v-status-danger-bg);
   color: var(--v-status-danger-text);
   border-color: var(--v-status-danger-border);
 }
-.btn-danger:hover { background: var(--v-status-danger-border); color: #fff; }
+.btn-danger:hover {
+  background: var(--v-status-danger-text);
+  color: #fff;
+  border-color: var(--v-status-danger-text);
+}
+
+[data-theme="dark"] .btn-success:hover {
+  background: var(--v-status-success-border);
+  border-color: var(--v-status-success-border);
+}
+
+[data-theme="dark"] .btn-danger:hover {
+  background: var(--v-status-danger-border);
+  border-color: var(--v-status-danger-border);
+}
 
 .btn-ghost {
   background: var(--v-bg-surface);

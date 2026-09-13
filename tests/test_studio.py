@@ -1063,3 +1063,86 @@ def test_delete_talk_propagates_storage_error(client: TestClient, db_session):
         assert talk is not None
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)
+
+
+def test_studio_speaker_timeline_omits_bumpers(client: TestClient, db_session):
+    """When viewed with a speaker token, studio scrubber omits INTRO/OUTRO and enables speaker mode."""
+    from app.security import create_sso_token
+
+    event = models.Event(name=f"Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Speaker Talk",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=45),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    speaker_token = create_sso_token(
+        scope_type="talk", scope_id=talk.id, role="speaker"
+    )
+    client.cookies.set("veditor_session", speaker_token)
+
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+
+    # Speaker must NOT see INTRO or OUTRO bumper blocks
+    assert 'id="tl-intro"' not in res.text
+    assert 'id="tl-outro"' not in res.text
+
+    # Live duration badge is present
+    assert 'id="cut-duration-badge"' in res.text
+
+
+def test_studio_organizer_timeline_omits_bumpers(client: TestClient, db_session):
+    """When viewed by an organizer, studio scrubber also omits INTRO and OUTRO bumper blocks from timeline."""
+    from app.security import create_session_token
+
+    org = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    db_session.add(org)
+    db_session.commit()
+    db_session.refresh(org)
+
+    event = models.Event(name=f"Event {uuid.uuid4().hex}", created_by_user_id=org.id)
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Organizer Talk",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=45),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    token = create_session_token(org.id, org.role)
+    client.cookies.set("veditor_session", token)
+
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+
+    # INTRO and OUTRO bumper blocks are NOT on the timeline
+    assert 'id="tl-intro"' not in res.text
+    assert 'id="tl-outro"' not in res.text
+
+    # Live duration badge is present
+    assert 'id="cut-duration-badge"' in res.text

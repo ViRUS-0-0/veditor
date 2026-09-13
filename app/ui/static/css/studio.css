@@ -183,29 +183,61 @@
   cursor: crosshair;
 }
 
-#tl-intro {
-  left: 0;
-  width: 5%;
-}
-
 #tl-content {
-  left: 5%;
-  width: 90%;
-}
-
-#tl-outro {
-  right: 0;
-  width: 5%;
+  left: 0;
+  width: 100%;
+  background: var(--v-primary-subtle);
+  color: var(--v-primary);
 }
 
 #tl-start-marker {
-  left: 5%;
+  left: 0;
   cursor: ew-resize;
+  z-index: 10;
 }
 
 #tl-end-marker {
-  left: 95%;
+  left: 100%;
+  transform: translateX(-100%);
   cursor: ew-resize;
+  z-index: 10;
+}
+
+/* Generous 24px hit area for easy grabbing */
+.tl-marker::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -11px;
+  right: -11px;
+  cursor: ew-resize;
+  z-index: 1;
+}
+
+.tl-marker::after {
+  top: 0;
+  width: 14px;
+  height: 14px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+#tl-start-marker::after {
+  left: 0;
+  transform: none;
+  border-bottom-right-radius: 4px;
+}
+
+#tl-end-marker::after {
+  left: auto;
+  right: 0;
+  transform: none;
+  border-bottom-left-radius: 4px;
+}
+
+.tl-marker {
+  touch-action: none;
 }
 
 #tl-playhead {
@@ -227,32 +259,79 @@
   padding-top: 10px;
   border-top: 1px solid var(--v-border-subtle);
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 12px;
 }
 
 .bounds-inputs-group {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bounds-input-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bounds-inputs-group .btn-sm,
+.bounds-action-btns .btn-sm {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  font-size: 0.75rem;
+}
+
+#btn-set-in {
+  border-color: var(--v-status-success-text);
+}
+
+#btn-set-out {
+  border-color: var(--v-status-danger-text);
 }
 
 .bounds-time-input {
-  width: 100px;
-  padding: 3px 6px;
+  width: 96px;
+  height: 28px;
+  padding: 0 6px;
   font-family: var(--v-font-mono);
   font-size: 0.75rem;
   text-align: center;
+  box-sizing: border-box;
+  border-radius: var(--v-radius-xs);
 }
 
 .bounds-to-label {
   color: var(--v-text-muted);
   font-size: 0.75rem;
+  font-weight: 500;
+  user-select: none;
+}
+
+.bounds-duration-badge {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  font-family: var(--v-font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-sizing: border-box;
+  border-radius: var(--v-radius-xs);
 }
 
 .bounds-action-btns {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .review-box {

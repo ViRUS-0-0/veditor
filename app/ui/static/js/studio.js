@@ -159,6 +159,12 @@ function initInitialVideo() {
 }
 
 // ── Timecode Sync & Timeline Markers ────────────────────────────
+function formatSelectedDuration(sec) {
+  if (!sec || sec <= 0) return '0s';
+  const t = Math.round(sec), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}h ${m}m ${s}s` : m ? `${m}m ${s}s` : `${s}s`;
+}
+
 function updateTimecode() {
   if (!video) return;
   if (timecode) timecode.textContent = formatTimecode(video.currentTime);
@@ -193,8 +199,8 @@ function updateTimelineTicks() {
 }
 
 function updateCutMarkersUI() {
-  const dur = video && video.duration ? video.duration : (outPointSec || 10);
-  if (dur <= 0) return;
+  const dur = video && video.duration ? video.duration : outPointSec;
+  if (!dur || dur <= 0) return;
 
   const inPct  = Math.max(0, Math.min(100, (inPointSec / dur) * 100));
   const outPct = Math.max(0, Math.min(100, (outPointSec / dur) * 100));
@@ -210,6 +216,12 @@ function updateCutMarkersUI() {
 
   if (inputInPoint)  inputInPoint.value  = formatTimecode(inPointSec);
   if (inputOutPoint) inputOutPoint.value = formatTimecode(outPointSec);
+
+  const cutDurationBadge = document.getElementById('cut-duration-badge');
+  if (cutDurationBadge) {
+    const cutDuration = Math.max(0, outPointSec - inPointSec);
+    cutDurationBadge.textContent = `Selected Cut: ${formatSelectedDuration(cutDuration)}`;
+  }
 }
 
 function setInPoint(timeSec) {
@@ -228,7 +240,8 @@ function setOutPoint(timeSec) {
 // ── Interactive Timeline Dragging & Seeking ─────────────────────
 if (tlTrack) {
   tlTrack.addEventListener('click', e => {
-    if (e.target === tlStartMarker || e.target === tlEndMarker) return;
+    if (tlStartMarker && (e.target === tlStartMarker || tlStartMarker.contains(e.target))) return;
+    if (tlEndMarker && (e.target === tlEndMarker || tlEndMarker.contains(e.target))) return;
     const rect = tlTrack.getBoundingClientRect();
     const clickX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
     const pct = clickX / rect.width;
@@ -240,34 +253,34 @@ if (tlTrack) {
 
 function setupMarkerDrag(markerEl, isStart) {
   if (!markerEl || !tlTrack) return;
-  markerEl.addEventListener('mousedown', e => {
+
+  markerEl.addEventListener('pointerdown', e => {
     e.preventDefault();
     e.stopPropagation();
+    markerEl.setPointerCapture(e.pointerId);
 
-    function onMouseMove(moveEvent) {
+    function onPointerMove(ev) {
       const rect = tlTrack.getBoundingClientRect();
-      const x = Math.max(0, Math.min(rect.width, moveEvent.clientX - rect.left));
+      const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
       const pct = x / rect.width;
       const dur = video && video.duration ? video.duration : (outPointSec || 10);
       const timeAtCursor = pct * dur;
 
-      if (isStart) {
-        setInPoint(timeAtCursor);
-      } else {
-        setOutPoint(timeAtCursor);
-      }
-      if (video && video.duration) {
-        video.currentTime = timeAtCursor;
-      }
+      if (isStart) setInPoint(timeAtCursor);
+      else setOutPoint(timeAtCursor);
+      if (video && video.duration) video.currentTime = timeAtCursor;
     }
 
-    function onMouseUp() {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+    function onPointerUp(ev) {
+      try { markerEl.releasePointerCapture(ev.pointerId); } catch (_) {}
+      markerEl.removeEventListener('pointermove', onPointerMove);
+      markerEl.removeEventListener('pointerup', onPointerUp);
+      markerEl.removeEventListener('pointercancel', onPointerUp);
     }
 
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    markerEl.addEventListener('pointermove', onPointerMove);
+    markerEl.addEventListener('pointerup', onPointerUp);
+    markerEl.addEventListener('pointercancel', onPointerUp);
   });
 }
 
