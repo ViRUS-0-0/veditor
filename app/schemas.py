@@ -32,8 +32,21 @@ class EventCreate(EventBase):
     pass
 
 
+class EventUpdate(BaseModel):
+    name: str | None = None
+    retention_overrides: dict[str, Any] | None = None
+
+    @field_validator("retention_overrides")
+    @classmethod
+    def _validate_retention_overrides(
+        cls, v: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return validate_retention_overrides(v)
+
+
 class EventRead(EventBase):
     id: int
+    created_by_user_id: int | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -200,6 +213,7 @@ class ReviewRead(ReviewBase):
     id: int
     talk_id: int
     created_at: datetime
+    user_id: int | None = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -308,6 +322,19 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+class UserRead(BaseModel):
+    id: int
+    email: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserPromoteRequest(BaseModel):
+    role: Literal["user", "organizer", "admin"]
 
 
 class TalkUpdate(BaseModel):
