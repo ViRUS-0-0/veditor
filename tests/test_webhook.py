@@ -14,7 +14,7 @@ from app.cli import create_client
 from app.db import get_db
 from app.main import app
 from app.storage import get_storage_backend
-from app.tasks import job_deliver_webhook
+from app.tasks import job_cut, job_deliver_webhook
 from tests.conftest import FakeStorageBackend
 
 client = TestClient(app)
@@ -310,10 +310,84 @@ def test_job_deliver_webhook_fails_quietly_after_two_attempts():
         mock_sleep.assert_called_once_with(1)
 
 
-# --- 4. Trigger on Talk Approval Integration Tests ---
+# --- 4. Trigger on Talk Cut Bounds (Active Cutting) Integration Tests ---
 
 
-def test_approve_talk_triggers_webhook_when_configured():
+def test_submit_cut_bounds_triggers_webhook_when_configured():
+    mock_db = MagicMock()
+    mock_client = models.Client(
+        id=1,
+        event_ids=[1],
+        webhook_url="https://subscriber.example/hook",
+        webhook_secret="sub-secret-key",
+    )
+    mock_talk = models.Talk(
+        id=10,
+        event_id=1,
+        title="Keynote Talk",
+        room="Main Hall",
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+        status="pending_bounds",
+        raw_duration_seconds=3600.0,
+    )
+
+    def mock_query(model):
+        q = MagicMock()
+        if model is models.Talk:
+            q.filter.return_value.first.return_value = mock_talk
+            q.filter.return_value.with_for_update.return_value = q.filter.return_value
+        elif model is models.Client:
+            q.filter.return_value.all.return_value = [mock_client]
+            q.filter.return_value.first.return_value = mock_client
+        return q
+
+    mock_db.query = mock_query
+
+    fake_storage = FakeStorageBackend()
+    fake_storage.put("10/raw/recording.mp4", b"raw video bytes")
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
+
+    try:
+        with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue:
+            resp = client.post(
+                "/talks/10/cut",
+                json={"cut_start": "00:00:10", "cut_end": "00:45:00"},
+                headers={"X-API-Key": "valid_key"},
+            )
+            assert resp.status_code == 202
+            assert resp.json()["status"] == "cutting"
+            assert mock_talk.status == "cutting"
+            assert mock_talk.cut_start == 10.0
+            assert mock_talk.cut_end == 2700.0
+            assert mock_db.commit.called
+
+            # Verify both job_cut and webhook deliveries were enqueued
+            assert mock_enqueue.call_count == 2
+            cut_call = mock_enqueue.call_args_list[0]
+            assert cut_call[0][0] == job_cut
+            assert cut_call[0][1] == 10
+            assert cut_call[0][2] == "10/raw/recording.mp4"
+
+            webhook_call = mock_enqueue.call_args_list[1]
+            assert webhook_call[0][0] == job_deliver_webhook
+            assert webhook_call[0][1] == "https://subscriber.example/hook"
+            assert webhook_call[0][2] == "sub-secret-key"
+
+            payload = webhook_call[0][3]
+            assert payload["talk_id"] == 10
+            assert payload["event_id"] == 1
+            assert "timestamp" in payload
+            # Acceptance criteria: ONLY talk_id, event_id, and timestamp
+            assert set(payload.keys()) == {"talk_id", "event_id", "timestamp"}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_approve_talk_does_not_trigger_webhook():
+    """Approving a talk moves it to pending_bounds; it must not trigger the webhook."""
     mock_db = MagicMock()
     mock_client = models.Client(
         id=1,
@@ -331,7 +405,6 @@ def test_approve_talk_triggers_webhook_when_configured():
         status="pending_approval",
     )
 
-    # First query is for Talk, subsequent queries are for Client
     def mock_query(model):
         q = MagicMock()
         if model is models.Talk:
@@ -359,26 +432,12 @@ def test_approve_talk_triggers_webhook_when_configured():
             assert resp.status_code == 200
             assert resp.json()["status"] == "pending_bounds"
             assert mock_talk.status == "pending_bounds"
-            assert mock_db.commit.called
-
-            # Verify webhook job enqueue
-            mock_enqueue.assert_called_once()
-            call_args = mock_enqueue.call_args
-            assert call_args[0][0] == job_deliver_webhook
-            assert call_args[0][1] == "https://subscriber.example/hook"
-            assert call_args[0][2] == "sub-secret-key"
-
-            payload = call_args[0][3]
-            assert payload["talk_id"] == 10
-            assert payload["event_id"] == 1
-            assert "timestamp" in payload
-            # Acceptance criteria: ONLY talk_id, event_id, and timestamp
-            assert set(payload.keys()) == {"talk_id", "event_id", "timestamp"}
+            mock_enqueue.assert_not_called()
     finally:
         app.dependency_overrides.clear()
 
 
-def test_approve_talk_silent_when_no_webhook_url():
+def test_submit_cut_bounds_silent_when_no_webhook_url():
     mock_db = MagicMock()
     mock_client = models.Client(
         id=1,
@@ -393,7 +452,8 @@ def test_approve_talk_silent_when_no_webhook_url():
         room="Room B",
         start=datetime.now(UTC),
         end=datetime.now(UTC),
-        status="pending_approval",
+        status="pending_bounds",
+        raw_duration_seconds=3600.0,
     )
 
     def mock_query(model):
@@ -409,6 +469,7 @@ def test_approve_talk_silent_when_no_webhook_url():
     mock_db.query = mock_query
 
     fake_storage = FakeStorageBackend()
+    fake_storage.put("11/raw/recording.mp4", b"raw video bytes")
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[get_storage_backend] = lambda: fake_storage
@@ -416,13 +477,15 @@ def test_approve_talk_silent_when_no_webhook_url():
     try:
         with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue:
             resp = client.post(
-                "/talks/11/approve",
-                json={"decision": "approve"},
+                "/talks/11/cut",
+                json={"cut_start": "00:00:10", "cut_end": "00:45:00"},
                 headers={"X-API-Key": "valid_key"},
             )
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "pending_bounds"
-            mock_enqueue.assert_not_called()
+            assert resp.status_code == 202
+            assert resp.json()["status"] == "cutting"
+            # Only job_cut should be enqueued, no webhook
+            mock_enqueue.assert_called_once()
+            assert mock_enqueue.call_args[0][0] == job_cut
     finally:
         app.dependency_overrides.clear()
 
@@ -470,7 +533,7 @@ def test_reject_talk_does_not_trigger_webhook():
         app.dependency_overrides.clear()
 
 
-def test_approve_talk_queue_failure_decoupled():
+def test_submit_cut_bounds_webhook_failure_decoupled():
     mock_db = MagicMock()
     mock_client = models.Client(
         id=1,
@@ -481,11 +544,12 @@ def test_approve_talk_queue_failure_decoupled():
     mock_talk = models.Talk(
         id=13,
         event_id=1,
-        title="Talk With Queue Outage",
+        title="Talk With Webhook Queue Outage",
         room="Room D",
         start=datetime.now(UTC),
         end=datetime.now(UTC),
-        status="pending_approval",
+        status="pending_bounds",
+        raw_duration_seconds=3600.0,
     )
 
     def mock_query(model):
@@ -501,24 +565,30 @@ def test_approve_talk_queue_failure_decoupled():
     mock_db.query = mock_query
 
     fake_storage = FakeStorageBackend()
+    fake_storage.put("13/raw/recording.mp4", b"raw video bytes")
     app.dependency_overrides[get_client] = lambda: mock_client
     app.dependency_overrides[get_db] = lambda: mock_db
     app.dependency_overrides[get_storage_backend] = lambda: fake_storage
 
+    def enqueue_side_effect(fn, *args, **kwargs):
+        if fn == job_deliver_webhook:
+            raise RuntimeError("Webhook queue broker unreachable")
+        return MagicMock()
+
     try:
         with patch(
             "app.routes.talks.light_queue.enqueue",
-            side_effect=Exception("Redis connection refused"),
+            side_effect=enqueue_side_effect,
         ):
             resp = client.post(
-                "/talks/13/approve",
-                json={"decision": "approve"},
+                "/talks/13/cut",
+                json={"cut_start": "00:00:10", "cut_end": "00:45:00"},
                 headers={"X-API-Key": "valid_key"},
             )
-            # Must succeed despite queue outage
-            assert resp.status_code == 200
-            assert resp.json()["status"] == "pending_bounds"
-            assert mock_talk.status == "pending_bounds"
+            # Must succeed despite webhook enqueue failure
+            assert resp.status_code == 202
+            assert resp.json()["status"] == "cutting"
+            assert mock_talk.status == "cutting"
             assert mock_db.commit.called
     finally:
         app.dependency_overrides.clear()
