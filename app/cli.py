@@ -37,7 +37,7 @@ def create_client(
 
     if webhook_url:
         try:
-            WebhookRegisterRequest.validate_url(webhook_url)
+            webhook_url = WebhookRegisterRequest.validate_url(webhook_url)
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
