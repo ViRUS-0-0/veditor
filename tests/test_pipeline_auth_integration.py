@@ -156,7 +156,12 @@ def test_complete_user_lifecycle_and_pipeline_auth(
     # -------------------------------------------------------------------------
     admin_token = create_session_token(admin.id, admin.role)
     client.cookies.set("veditor_session", admin_token)
-    list_resp = client.get("/admin/users")
+    earlier_count = (
+        db_session.query(models.User)
+        .filter(models.User.id < min(user1.id, admin.id))
+        .count()
+    )
+    list_resp = client.get(f"/admin/users?skip={earlier_count}")
     client.cookies.clear()
 
     assert list_resp.status_code == 200
