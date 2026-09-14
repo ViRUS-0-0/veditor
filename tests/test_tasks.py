@@ -623,11 +623,20 @@ def test_transcode_enqueues_publish_on_light(dummy_talk, mock_storage):
 
 
 def test_transcode_cleans_up_bumpers(dummy_talk, mock_storage, tmp_path):
+    import uuid
+
+    from app.ingest import get_bumper_staging_dir
+
     dummy_talk.status = "transcoding"
-    custom_bumper = tmp_path / "custom_intro.mp4"
-    custom_bumper.write_bytes(b"dummy")
-    dummy_talk.custom_intro_path = str(custom_bumper)
-    dummy_talk.custom_outro_path = None
+    staging_dir = get_bumper_staging_dir()
+    staged_bumper = staging_dir / f"test_staged_{uuid.uuid4().hex}.mp4"
+    staged_bumper.write_bytes(b"dummy")
+
+    non_staged_bumper = tmp_path / "custom_outro.mp4"
+    non_staged_bumper.write_bytes(b"keep_me")
+
+    dummy_talk.custom_intro_path = str(staged_bumper)
+    dummy_talk.custom_outro_path = str(non_staged_bumper)
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
@@ -639,7 +648,8 @@ def test_transcode_cleans_up_bumpers(dummy_talk, mock_storage, tmp_path):
     ):
         job_transcode(1, "1/cut/cut_loud.mp4", "1/final/final.mp4")
 
-    assert not custom_bumper.exists()
+    assert not staged_bumper.exists()
+    assert non_staged_bumper.exists()
     mock_storage.delete.assert_any_call("1/intro")
     mock_storage.delete.assert_any_call("1/outro")
 

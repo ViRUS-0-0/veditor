@@ -111,6 +111,7 @@ def get_current_user(
     db: Annotated[Session, Depends(get_db)] = None,
     api_key: Annotated[str | None, Security(api_key_header)] = None,
     cookie_token: Annotated[str | None, Cookie(alias="veditor_session")] = None,
+    cookie_api_key: Annotated[str | None, Cookie(alias="veditor_api_key")] = None,
     bearer_creds: Annotated[
         HTTPAuthorizationCredentials | None, Security(bearer_security)
     ] = None,
@@ -118,7 +119,7 @@ def get_current_user(
     """
     Resolves the authenticated caller into a CurrentUser instance.
     Checks credentials in strict order:
-    1. Machine client header (X-API-Key)
+    1. Machine client header (X-API-Key) or cookie (veditor_api_key)
     2. Session cookie (veditor_session)
     3. Authorization header (Authorization: Bearer <token>)
 
@@ -143,34 +144,17 @@ def get_current_user(
                 event_ids=list(client.event_ids or []),
             )
 
-    req_headers = (
-        request.headers if request is not None and hasattr(request, "headers") else {}
-    )
-    req_cookies = (
-        request.cookies if request is not None and hasattr(request, "cookies") else {}
-    )
+    req_headers = getattr(request, "headers", {}) or {}
+    req_cookies = getattr(request, "cookies", {}) or {}
 
-    # 1. Machine client header (X-API-Key)
+    # 1. Machine client header (X-API-Key) or cookie (veditor_api_key)
+    header_key = req_headers.get("X-API-Key") or req_headers.get("x-api-key")
+    cookie_api = cookie_api_key or req_cookies.get("veditor_api_key")
     has_api_key = (
-        api_key is not None
-        or (
-            isinstance(req_headers, dict)
-            and ("X-API-Key" in req_headers or "x-api-key" in req_headers)
-        )
-        or (
-            hasattr(req_headers, "get")
-            and (
-                req_headers.get("X-API-Key") is not None
-                or req_headers.get("x-api-key") is not None
-            )
-        )
+        api_key is not None or header_key is not None or cookie_api is not None
     )
     if has_api_key:
-        raw_key = (
-            api_key
-            if api_key is not None
-            else (req_headers.get("X-API-Key") or req_headers.get("x-api-key"))
-        )
+        raw_key = api_key or header_key or cookie_api
         if not isinstance(raw_key, str) or not raw_key:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

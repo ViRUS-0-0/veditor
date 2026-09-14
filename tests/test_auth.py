@@ -127,6 +127,22 @@ def test_get_current_user_api_key_valid():
     assert user.is_machine
 
 
+def test_get_current_user_cookie_api_key_valid():
+    mock_client = Client(
+        id=1, hashed_key=hash_api_key("secret-cookie-key"), event_ids=[42]
+    )
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_client
+
+    user = get_current_user(cookie_api_key="secret-cookie-key", db=mock_db)
+    assert user.source == "api_key"
+    assert user.role == "admin"
+    assert user.user_id is None
+    assert user.email is None
+    assert user.event_ids == [42]
+    assert user.is_machine
+
+
 def test_get_current_user_api_key_invalid():
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None

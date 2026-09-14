@@ -573,10 +573,23 @@ async def upload_bumper_file(
         staging_dir / f"bumper_{talk_id}_{kind}_{uuid.uuid4().hex}{ext}"
     ).resolve()
 
-    # storage-boundary-exempt: bumper staging upload
-    with open(staged_path, "wb") as f_out:  # noqa: ASYNC230
-        while chunk := await file.read(1024 * 1024):
-            f_out.write(chunk)
+    max_size = settings.max_bumper_upload_size_bytes
+    total_bytes = 0
+    try:
+        # storage-boundary-exempt: bumper staging upload
+        with open(staged_path, "wb") as f_out:  # noqa: ASYNC230
+            while chunk := await file.read(1024 * 1024):
+                total_bytes += len(chunk)
+                if total_bytes > max_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail=f"Bumper file exceeds maximum allowed size of {max_size} bytes",
+                    )
+                f_out.write(chunk)
+    except Exception:
+        # storage-boundary-exempt: bumper staging cleanup
+        staged_path.unlink(missing_ok=True)
+        raise
 
     return {"path": str(staged_path), "filename": file.filename}
 

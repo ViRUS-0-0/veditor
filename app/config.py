@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     ingest_roots: list[Path] = []
     preview_presets: dict[str, PreviewPreset] = PREVIEW_PRESETS
     disk_guard_multiplier: float = 3.0
+    max_bumper_upload_size_bytes: int = 500 * 1024 * 1024
 
     environment: str = "development"
     session_secret: str | None = None

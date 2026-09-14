@@ -11,11 +11,11 @@
   {% elif status == 'detecting' %}
     <span class="badge badge-processing"><span class="spinner spinner-sm"></span>Detecting</span>
   {% elif status in ['pending_approval', 'pending_bounds'] %}
-    <span class="badge badge-pending"><span class="badge-dot"></span>Pending Review (Gate 1)</span>
+    <span class="badge badge-pending"><span class="badge-dot"></span>Pending Review</span>
   {% elif status in ['cutting', 'generating_previews', 'transcoding', 'uploading'] %}
     <span class="badge badge-processing"><span class="spinner spinner-sm"></span>{{ status | replace('_', ' ') | title }}</span>
   {% elif status == 'preview' %}
-    <span class="badge badge-preview"><span class="badge-dot"></span>Preview Ready (Gate 2)</span>
+    <span class="badge badge-preview"><span class="badge-dot"></span>Preview Ready</span>
   {% elif status == 'needs_work' %}
     <span class="badge badge-pending"><span class="badge-dot"></span>Needs Work</span>
   {% elif status == 'done' %}
@@ -282,7 +282,7 @@
     </div>
     <div class="studio-panel-body">
 
-      <!-- Action Panel for Human Review Gates -->
+      <!-- Action Panel for Review Actions -->
       <div class="review-box">
         <div class="review-box-title">
           Review Actions
@@ -356,7 +356,7 @@
             </button>
           {% elif talk.status == 'preview' %}
             <button class="btn btn-success w-full" id="btn-approve">
-              Approve Preview (Gate 2)
+              Approve Preview
             </button>
             <button class="btn btn-warning w-full" id="btn-needs-work">
               Request Changes (Needs Work)
@@ -530,75 +530,59 @@
         </div>
       </div>
 
-      {# 4 Lifecycle Milestones & Recent Jobs (Admin Only) #}
-      {% if user and user.role == 'admin' and not is_speaker %}
-      <div class="milestones-title">
-        Pipeline Milestones
-      </div>
-      <div class="milestones-stepper">
-        {% for m in milestones %}
-          <div class="milestone-card {% if m.state == 'active' %}active{% elif m.state == 'completed' %}completed{% elif m.state == 'failed' %}failed{% endif %}">
-            <div class="milestone-header">
-              <span class="milestone-title">
-                {% if m.state == 'completed' %}✓{% else %}{{ m.num }}.{% endif %} {{ m.title }}
-              </span>
-              {% if m.state == 'active' %}
-                <span class="badge badge-processing milestone-badge"><span class="spinner spinner-sm"></span>In Progress</span>
-              {% elif m.state == 'completed' %}
-                <span class="badge badge-done milestone-badge">Done</span>
-              {% elif m.state == 'failed' %}
-                <span class="badge badge-danger milestone-badge">Failed</span>
-              {% endif %}
-            </div>
-            <div class="milestone-substeps">
-              {{ m.desc }}
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-
-      <div class="divider"></div>
-
-      {# Recent Jobs #}
-      <div class="recent-jobs-title">
-        Recent Jobs
-      </div>
-      {% if jobs %}
-      <div id="jobs-container">
-        {% for job in jobs %}
-        <div class="job-card" data-job-id="{{ job.id }}">
-          <div class="job-header-flex">
-            <span class="job-kind-mono">{{ job.kind }}</span>
-            <div class="job-badges-flex">
-              {% if job.progress_pct is not none and job.status == 'running' %}
-                <span class="badge badge-info job-badge-sm">{{ "%.0f"|format(job.progress_pct) }}%</span>
-              {% endif %}
-              <span class="badge job-badge-sm {% if job.status == 'done' or job.status == 'success' %}badge-done{% elif job.status == 'running' %}badge-processing{% elif job.status == 'failed' %}badge-danger{% else %}badge-waiting{% endif %}">
-                {% if job.status == 'running' %}<span class="spinner spinner-sm"></span>{% endif %}{{ job.status }}
-              </span>
-            </div>
-          </div>
-          {% if job.status == 'running' and job.progress_pct is not none %}
-          <div class="job-progress-track">
-            <div class="job-progress-fill" data-progress="{{ job.progress_pct }}"></div>
-          </div>
-          {% endif %}
-          {% if job.started_at %}
-          <div class="job-timing-meta">
-            <span>Started {{ job.started_at.strftime('%H:%M:%S UTC') }}</span>
-            {% if job.estimated_remaining is not none and job.status == 'running' %}
-              <span>~{{ "%.0f"|format(job.estimated_remaining) }}s remaining</span>
-            {% elif job.elapsed_time is not none %}
-              <span>{{ "%.0f"|format(job.elapsed_time) }}s elapsed</span>
-            {% endif %}
-          </div>
-          {% endif %}
+      <!-- ── Pipeline Milestones Stepper ────────────────────────── -->
+      {% if milestones %}
+      <div class="milestones-card">
+        <div class="milestones-header">
+          <span class="milestones-title-label">Pipeline Milestones</span>
+          <span class="milestones-step-count">
+            {% set completed_count = milestones | selectattr('state', 'equalto', 'completed') | list | length %}
+            {{ completed_count }} of {{ milestones | length }} Complete
+          </span>
         </div>
-        {% endfor %}
+        <div class="stepper-timeline">
+          {% for m in milestones %}
+            <div class="stepper-step stepper-step-{{ m.state }}">
+              <div class="stepper-track-col">
+                <div class="stepper-node" title="{{ m.title }} ({{ m.state | replace('_', ' ') | title }})">
+                  {% if m.state == 'completed' %}
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                  {% elif m.state == 'active' %}
+                    <span class="stepper-pulse-dot"></span>
+                  {% elif m.state == 'failed' %}
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  {% else %}
+                    <span class="stepper-num">{{ m.num }}</span>
+                  {% endif %}
+                </div>
+                {% if not loop.last %}
+                  <div class="stepper-connector {% if m.state == 'completed' %}is-completed{% endif %}"></div>
+                {% endif %}
+              </div>
+              <div class="stepper-info">
+                <div class="stepper-heading">
+                  <span class="stepper-name">{{ m.num }}. {{ m.title }}</span>
+                  {% if m.state == 'completed' %}
+                    <span class="badge badge-done badge-micro">Done</span>
+                  {% elif m.state == 'active' %}
+                    <span class="badge badge-processing badge-micro"><span class="spinner spinner-xs"></span>In Progress</span>
+                  {% elif m.state == 'failed' %}
+                    <span class="badge badge-danger badge-micro">Failed</span>
+                  {% else %}
+                    <span class="badge badge-waiting badge-micro">Pending</span>
+                  {% endif %}
+                </div>
+                <div class="stepper-desc">{{ m.desc }}</div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
       </div>
-      {% else %}
-      <div id="jobs-empty">No pipeline jobs logged yet.</div>
-      {% endif %}
       {% endif %}
 
     </div>

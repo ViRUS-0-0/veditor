@@ -151,7 +151,10 @@ window.VEditorConfig = window.VEditorConfig || {
 
 // ── Auth & Role Manager ─────────────────────────────────────────
 window.getApiKey = function () {
-  return localStorage.getItem('veditor_api_key') || '';
+  const local = localStorage.getItem('veditor_api_key');
+  if (local) return local;
+  const match = document.cookie.match(/(?:^|;\s*)veditor_api_key=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
 };
 
 window.setApiKey = function (key) {
@@ -173,15 +176,14 @@ window.setUserRole = function (role) {
 window.authFetch = function (url, options = {}) {
   options.headers = options.headers || {};
   const isSessionLoggedIn = Boolean(
-    document.querySelector('.user-email') ||
-    document.getElementById('logout-btn')
+    document.querySelector('.user-email')
   );
   if (!isSessionLoggedIn) {
     const key = window.getApiKey();
     if (key) {
       if (options.headers instanceof Headers) {
-        options.headers.set('X-API-Key', key);
-      } else {
+        if (!options.headers.has('X-API-Key')) options.headers.set('X-API-Key', key);
+      } else if (!options.headers['X-API-Key']) {
         options.headers['X-API-Key'] = key;
       }
     }

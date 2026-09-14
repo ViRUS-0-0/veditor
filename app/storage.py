@@ -216,11 +216,14 @@ def cleanup_bumpers(
                 talk_id,
                 exc,
             )
+    from app.ingest import get_bumper_staging_dir
+
+    staging_dir = get_bumper_staging_dir().resolve()
     for path_str in custom_paths:
         if path_str:
             try:
-                p = Path(path_str)
-                if p.is_file():
+                p = Path(path_str).resolve()
+                if p.is_file() and p.is_relative_to(staging_dir):
                     p.unlink(missing_ok=True)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(

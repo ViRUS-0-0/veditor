@@ -637,130 +637,7 @@ window.handleVideoFileUpload = async function(e, talkId) {
   }
 };
 
-// ── Real-time Recent Jobs Polling & Dynamic Rendering ─────────────
-function renderRecentJobs(jobs) {
-  const container = document.getElementById('jobs-container');
-  const empty = document.getElementById('jobs-empty');
-  if (!jobs || jobs.length === 0) {
-    if (container) {
-      container.textContent = '';
-      container.style.display = 'none';
-    }
-    if (empty) empty.style.display = 'block';
-    return;
-  }
 
-  if (empty) empty.style.display = 'none';
-  if (!container) return;
-
-  container.textContent = '';
-  container.style.display = 'flex';
-
-  jobs.forEach(job => {
-    const isRunning = job.status === 'running';
-    const isDone = job.status === 'done' || job.status === 'success';
-    const isFailed = job.status === 'failed';
-    const badgeClass = isDone ? 'badge-done' : (isRunning ? 'badge-processing' : (isFailed ? 'badge-danger' : 'badge-waiting'));
-
-    const card = document.createElement('div');
-    card.className = 'job-card';
-    if (job.id) card.dataset.jobId = String(job.id);
-
-    const header = document.createElement('div');
-    header.className = 'job-header-flex';
-
-    const kindSpan = document.createElement('span');
-    kindSpan.className = 'job-kind-mono';
-    kindSpan.textContent = job.kind || '';
-
-    const badgeGroup = document.createElement('div');
-    badgeGroup.className = 'job-badges-flex';
-
-    if (job.progress_pct !== null && job.progress_pct !== undefined && isRunning) {
-      const progressBadge = document.createElement('span');
-      progressBadge.className = 'badge badge-info job-badge-sm';
-      progressBadge.textContent = `${Math.round(job.progress_pct)}%`;
-      badgeGroup.appendChild(progressBadge);
-    }
-
-    const statusBadge = document.createElement('span');
-    statusBadge.className = `badge job-badge-sm ${badgeClass}`;
-    if (isRunning) {
-      const spinner = document.createElement('span');
-      spinner.className = 'spinner spinner-sm';
-      statusBadge.appendChild(spinner);
-    }
-    statusBadge.appendChild(document.createTextNode(job.status || ''));
-    badgeGroup.appendChild(statusBadge);
-
-    header.appendChild(kindSpan);
-    header.appendChild(badgeGroup);
-    card.appendChild(header);
-
-    if (isRunning && job.progress_pct !== null && job.progress_pct !== undefined) {
-      const track = document.createElement('div');
-      track.className = 'job-progress-track';
-      const fill = document.createElement('div');
-      fill.className = 'job-progress-fill animated';
-      fill.style.width = `${Math.min(100, Math.max(0, job.progress_pct))}%`;
-      track.appendChild(fill);
-      card.appendChild(track);
-    }
-
-    if (job.started_at) {
-      const d = new Date(job.started_at);
-      const timeStr = !isNaN(d.getTime()) ? `${d.toISOString().slice(11, 19)} UTC` : '';
-      const meta = document.createElement('div');
-      meta.className = 'job-timing-meta';
-
-      const startedSpan = document.createElement('span');
-      startedSpan.textContent = `Started ${timeStr}`;
-      meta.appendChild(startedSpan);
-
-      if (isRunning && job.estimated_remaining !== null && job.estimated_remaining !== undefined) {
-        const remSpan = document.createElement('span');
-        remSpan.textContent = `~${Math.round(job.estimated_remaining)}s remaining`;
-        meta.appendChild(remSpan);
-      } else if (job.elapsed_time !== null && job.elapsed_time !== undefined) {
-        const elSpan = document.createElement('span');
-        elSpan.textContent = `${Math.round(job.elapsed_time)}s elapsed`;
-        meta.appendChild(elSpan);
-      }
-      card.appendChild(meta);
-    }
-
-    container.appendChild(card);
-  });
-}
-
-let studioPollInterval = null;
-async function pollStudioJobs() {
-  const talkId = getTalkId();
-  if (!talkId || isNaN(talkId)) return;
-
-  try {
-    const key = (window.getApiKey && window.getApiKey()) || '';
-    const headers = key ? { 'X-API-Key': key } : {};
-    const res = await (window.authFetch || fetch)(`/talks/${talkId}/jobs`, { headers, _isPolling: true });
-    if (!res.ok) return;
-    const data = await res.json();
-    const jobs = Array.isArray(data) ? data : (data.jobs || []);
-    renderRecentJobs(jobs);
-
-    const hasRunningJob = jobs.some(j => j.status === 'running');
-    const talkStatus = data.status;
-    const isTerminal = ['done', 'failed', 'rejected', 'broken'].includes(talkStatus);
-    if (!hasRunningJob && isTerminal && studioPollInterval) {
-      clearInterval(studioPollInterval);
-      studioPollInterval = null;
-    }
-  } catch { /* skip */ }
-}
-
-function startStudioPolling() {
-  if (studioPollInterval) clearInterval(studioPollInterval);
-  studioPollInterval = setInterval(pollStudioJobs, 2500);
-}
 
 // ── Collapsible Right Sidebar ────────────────────────────────────
 function initRightPanelCollapse() {
@@ -807,6 +684,7 @@ function initBumperStudio() {
     const path = document.getElementById(`custom-${type}-path`);
     const dropzone = document.getElementById(`${type}-dropzone`);
     const fileName = document.getElementById(`${type}-file-name`);
+    let currentUploadGen = 0;
 
     radios.forEach(r => {
       r.addEventListener('change', () => {
@@ -817,6 +695,7 @@ function initBumperStudio() {
 
     async function handleSelectedFile(selected) {
       if (!selected) return;
+      const uploadGen = ++currentUploadGen;
       if (fileName) {
         fileName.textContent = `${selected.name} (Uploading...)`;
         fileName.classList.remove('is-ready');
@@ -830,8 +709,10 @@ function initBumperStudio() {
           method: 'POST',
           body: fd,
         });
+        if (uploadGen !== currentUploadGen) return;
         if (res.ok) {
           const data = await res.json();
+          if (uploadGen !== currentUploadGen) return;
           if (data.path) {
             if (path) path.value = data.path;
             if (fileName) {
@@ -841,7 +722,9 @@ function initBumperStudio() {
           }
         }
       } catch (_) {
-        if (fileName) fileName.textContent = selected.name;
+        if (uploadGen === currentUploadGen && fileName) {
+          fileName.textContent = selected.name;
+        }
       }
     }
 
@@ -899,8 +782,6 @@ document.addEventListener('DOMContentLoaded', () => {
   updateCutMarkersUI();
   initRightPanelCollapse();
   initBumperStudio();
-  pollStudioJobs();
-  startStudioPolling();
 
   const videoInput = document.getElementById('video-file-input');
   if (videoInput) {

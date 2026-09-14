@@ -927,6 +927,31 @@ def test_upload_bumper_file_success(mock_db, auth_client, pending_talk):
     Path(data["path"]).unlink(missing_ok=True)
 
 
+def test_upload_bumper_file_exceeds_max_size(
+    mock_db, auth_client, pending_talk, monkeypatch
+):
+    """POST /talks/{id}/bumpers/upload exceeding max size returns 413 and unlinks partial file."""
+    mock_db.query.return_value.filter.return_value.first.return_value = pending_talk
+    app.dependency_overrides[get_client] = lambda: auth_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+    monkeypatch.setattr(settings, "max_bumper_upload_size_bytes", 10)
+
+    response = client.post(
+        "/talks/1/bumpers/upload",
+        files={
+            "file": (
+                "large_bumper.mp4",
+                b"this payload is longer than 10 bytes",
+                "video/mp4",
+            )
+        },
+        data={"kind": "intro"},
+        headers={"X-API-Key": "valid_key"},
+    )
+    assert response.status_code == 413
+    assert "exceeds maximum allowed size" in response.json()["detail"]
+
+
 def test_upload_bumper_file_invalid_kind(mock_db, auth_client, pending_talk):
     """POST /talks/{id}/bumpers/upload with invalid kind returns 400."""
     mock_db.query.return_value.filter.return_value.first.return_value = pending_talk

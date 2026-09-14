@@ -208,23 +208,23 @@ ALL_STATUSES = [
 MILESTONES_DEF = [
     {
         "num": 1,
-        "title": "Ingest & Detect",
-        "desc": "Recording ingestion & talk bounds detection",
+        "title": "Upload & Detect",
+        "desc": "Receive recording and detect talk duration",
     },
     {
         "num": 2,
-        "title": "Timestamp Review (Gate 1)",
-        "desc": "Human verification of speaker In/Out points",
+        "title": "Timestamp Review",
+        "desc": "Confirm speaker start and end times",
     },
     {
         "num": 3,
-        "title": "Processing & Preview (Gate 2)",
-        "desc": "Cut, loudness, title slates & low-res preview",
+        "title": "Preview & Review",
+        "desc": "Trim clip, balance audio, and inspect preview",
     },
     {
         "num": 4,
         "title": "Transcode & Publish",
-        "desc": "Final quality master encode & upload",
+        "desc": "Encode high-definition video and publish final release",
     },
 ]
 
@@ -602,14 +602,6 @@ def studio(
         talk_id, request, db, not_found_detail="Talk not found"
     )
 
-    jobs = (
-        db.query(models.Job)
-        .filter(models.Job.talk_id == talk_id)
-        .order_by(models.Job.id.desc())
-        .limit(10)
-        .all()
-    )
-
     duration_seconds = None
     if talk.start and talk.end:
         duration_seconds = int((talk.end - talk.start).total_seconds())
@@ -672,7 +664,6 @@ def studio(
         "studio.html.jinja",
         {
             "talk": talk,
-            "jobs": jobs,
             "milestones": get_evaluated_milestones(talk.status),
             "duration_seconds": duration_seconds,
             "media_assets": media_assets,

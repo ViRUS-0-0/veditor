@@ -751,12 +751,13 @@ def test_dashboard_and_studio_render_active_job_progress(
     assert "72%" in dash_res.text
     assert "job-progress-fill" in dash_res.text
 
-    # 2. Studio should render the job card with progress and timing
+    # 2. Studio should render the pipeline progress and milestones stepper without job cards
     studio_res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
     assert studio_res.status_code == 200
-    assert "72%" in studio_res.text
-    assert "job-card" in studio_res.text
     assert "pipeline-progress-wrap" in studio_res.text
+    assert "stepper-timeline" in studio_res.text
+    assert "Recent Jobs" not in studio_res.text
+    assert "job-card" not in studio_res.text
 
 
 def test_import_schedule_mm_ss_duration(client: TestClient, db_session):
@@ -1300,7 +1301,7 @@ def test_studio_review_notes_present_for_preview(client: TestClient, db_session)
     res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
     assert res.status_code == 200
     assert "review-notes-input" in res.text
-    assert "Approve Preview (Gate 2)" in res.text
+    assert "Approve Preview" in res.text
 
     # Verify pending_bounds also renders review-notes-input, timestamps card, and 'Submit Timestamps'
     talk.status = "pending_bounds"
@@ -1321,7 +1322,7 @@ def test_studio_review_notes_present_for_preview(client: TestClient, db_session)
 
 
 def test_studio_milestones_role_visibility(client: TestClient, db_session):
-    """Test milestones are shown only to admin, and hidden for speaker and user roles."""
+    """Test milestones stepper is rendered in studio while recent jobs section is omitted."""
     from app.security import create_session_token, create_sso_token, hash_password
 
     # Create admin, organizer, and standard user
@@ -1362,33 +1363,51 @@ def test_studio_milestones_role_visibility(client: TestClient, db_session):
     db_session.commit()
     db_session.refresh(talk)
 
-    # 1. Admin session sees milestones & recent jobs
+    # 1. Admin session sees milestones stepper & NO recent jobs
     admin_token = create_session_token(admin.id, admin.role)
     client.cookies.set("veditor_session", admin_token)
     res_admin = client.get(f"/studio/talks/{talk.id}")
     assert res_admin.status_code == 200
     assert "Pipeline Milestones" in res_admin.text
-    assert "Recent Jobs" in res_admin.text
+    assert "stepper-timeline" in res_admin.text
+    assert "Recent Jobs" not in res_admin.text
+    assert 'id="jobs-container"' not in res_admin.text
 
-    # 2. Speaker SSO session does NOT see milestones or recent jobs
+    # 2. Organizer session sees milestones stepper & NO recent jobs
+    org_token = create_session_token(organizer.id, organizer.role)
+    client.cookies.set("veditor_session", org_token)
+    res_org = client.get(f"/studio/talks/{talk.id}")
+    assert res_org.status_code == 200
+    assert "Pipeline Milestones" in res_org.text
+    assert "stepper-timeline" in res_org.text
+    assert "Recent Jobs" not in res_org.text
+    assert 'id="jobs-container"' not in res_org.text
+
+    # 3. Speaker SSO session sees milestones stepper & NO recent jobs
     speaker_token = create_sso_token(
         scope_type="talk", scope_id=talk.id, role="speaker"
     )
     client.cookies.set("veditor_session", speaker_token)
     res_speaker = client.get(f"/studio/talks/{talk.id}")
     assert res_speaker.status_code == 200
-    assert "Pipeline Milestones" not in res_speaker.text
+    assert "Pipeline Milestones" in res_speaker.text
+    assert "stepper-timeline" in res_speaker.text
     assert "Recent Jobs" not in res_speaker.text
+    assert 'id="jobs-container"' not in res_speaker.text
 
-    # 3. Organizer SSO session does NOT see milestones or recent jobs
-    org_sso_token = create_sso_token(
-        scope_type="talk", scope_id=talk.id, role="organizer"
+    # 4. Standard unauthorized user does NOT see talk studio
+    std_user = models.User(
+        email=f"user_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password=hash_password("password123"),
+        role="user",
+        is_active=True,
     )
-    client.cookies.set("veditor_session", org_sso_token)
-    res_sso_org = client.get(f"/studio/talks/{talk.id}")
-    assert res_sso_org.status_code == 200
-    assert "Pipeline Milestones" not in res_sso_org.text
-    assert "Recent Jobs" not in res_sso_org.text
+    db_session.add(std_user)
+    db_session.commit()
+    user_token = create_session_token(std_user.id, std_user.role)
+    client.cookies.set("veditor_session", user_token)
+    res_user = client.get(f"/studio/talks/{talk.id}")
+    assert res_user.status_code == 404 or "Pipeline Milestones" not in res_user.text
 
     # Clean up cookie
     client.cookies.delete("veditor_session")
