@@ -242,7 +242,7 @@ function setOutPoint(timeSec) {
 
 // ── Interactive Timeline Dragging & Seeking ─────────────────────
 if (tlTrack) {
-  let isTrackScrubbing = false;
+  let activeTrackPointerId = null;
 
   function seekTrackFromEvent(e) {
     const rect = tlTrack.getBoundingClientRect();
@@ -254,22 +254,23 @@ if (tlTrack) {
   }
 
   tlTrack.addEventListener('pointerdown', e => {
+    if (activeTrackPointerId !== null) return;
     if (tlStartMarker && (e.target === tlStartMarker || tlStartMarker.contains(e.target))) return;
     if (tlEndMarker && (e.target === tlEndMarker || tlEndMarker.contains(e.target))) return;
-    isTrackScrubbing = true;
-    try { tlTrack.setPointerCapture(e.pointerId); } catch (_) {}
+    activeTrackPointerId = e.pointerId;
+    try { tlTrack.setPointerCapture(activeTrackPointerId); } catch (_) {}
     seekTrackFromEvent(e);
   });
 
   tlTrack.addEventListener('pointermove', e => {
-    if (!isTrackScrubbing) return;
+    if (activeTrackPointerId === null || e.pointerId !== activeTrackPointerId) return;
     seekTrackFromEvent(e);
   });
 
   function stopTrackScrub(e) {
-    if (!isTrackScrubbing) return;
-    isTrackScrubbing = false;
-    try { tlTrack.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (activeTrackPointerId === null || e.pointerId !== activeTrackPointerId) return;
+    try { tlTrack.releasePointerCapture(activeTrackPointerId); } catch (_) {}
+    activeTrackPointerId = null;
   }
 
   tlTrack.addEventListener('pointerup', stopTrackScrub);
