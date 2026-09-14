@@ -1383,15 +1383,15 @@ def test_studio_milestones_role_visibility(client: TestClient, db_session):
     assert "Recent Jobs" not in res_org.text
     assert 'id="jobs-container"' not in res_org.text
 
-    # 3. Speaker SSO session sees milestones stepper & NO recent jobs
+    # 3. Speaker SSO session does NOT see milestones stepper or recent jobs
     speaker_token = create_sso_token(
         scope_type="talk", scope_id=talk.id, role="speaker"
     )
     client.cookies.set("veditor_session", speaker_token)
     res_speaker = client.get(f"/studio/talks/{talk.id}")
     assert res_speaker.status_code == 200
-    assert "Pipeline Milestones" in res_speaker.text
-    assert "stepper-timeline" in res_speaker.text
+    assert "Pipeline Milestones" not in res_speaker.text
+    assert "stepper-timeline" not in res_speaker.text
     assert "Recent Jobs" not in res_speaker.text
     assert 'id="jobs-container"' not in res_speaker.text
 

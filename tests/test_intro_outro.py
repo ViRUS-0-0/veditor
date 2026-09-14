@@ -6,10 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app import models
 from app.auth import get_client
-from app.config import settings
+from app.config import Settings, settings
 from app.db import get_db
 from app.main import app
 from app.storage import get_storage_backend
@@ -950,6 +951,18 @@ def test_upload_bumper_file_exceeds_max_size(
     )
     assert response.status_code == 413
     assert "exceeds maximum allowed size" in response.json()["detail"]
+
+
+def test_settings_max_bumper_upload_size_strictly_positive():
+    """Settings rejects zero and negative values for max_bumper_upload_size_bytes."""
+    with pytest.raises(ValidationError):
+        Settings(max_bumper_upload_size_bytes=0)
+
+    with pytest.raises(ValidationError):
+        Settings(max_bumper_upload_size_bytes=-100)
+
+    valid = Settings(max_bumper_upload_size_bytes=1024)
+    assert valid.max_bumper_upload_size_bytes == 1024
 
 
 def test_upload_bumper_file_invalid_kind(mock_db, auth_client, pending_talk):

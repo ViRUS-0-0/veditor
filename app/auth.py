@@ -106,6 +106,33 @@ def verify_event_access(event_id: int, client: models.Client) -> None:
         )
 
 
+def _authenticate_api_key(raw_key: str | None, db: Session) -> CurrentUser:
+    if not isinstance(raw_key, str) or not raw_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    hashed_key = hash_api_key(raw_key)
+    client = (
+        db.query(models.Client).filter(models.Client.hashed_key == hashed_key).first()
+    )
+    if not client:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API Key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return CurrentUser(
+        user_id=None,
+        client_id=client.id,
+        email=None,
+        role="admin",
+        source="api_key",
+        event_ids=list(client.event_ids or []),
+    )
+
+
 def get_current_user(
     request: Request = None,
     db: Annotated[Session, Depends(get_db)] = None,
@@ -119,9 +146,10 @@ def get_current_user(
     """
     Resolves the authenticated caller into a CurrentUser instance.
     Checks credentials in strict order:
-    1. Machine client header (X-API-Key) or cookie (veditor_api_key)
+    1. Machine client header (X-API-Key)
     2. Session cookie (veditor_session)
-    3. Authorization header (Authorization: Bearer <token>)
+    3. Machine client cookie fallback (veditor_api_key)
+    4. Authorization header (Authorization: Bearer <token>)
 
     Raises HTTP 401 Unauthorized if no credentials are present, or if
     provided credentials are invalid, expired, or deactivated.
@@ -147,40 +175,13 @@ def get_current_user(
     req_headers = getattr(request, "headers", {}) or {}
     req_cookies = getattr(request, "cookies", {}) or {}
 
-    # 1. Machine client header (X-API-Key) or cookie (veditor_api_key)
+    # 1. Explicit machine client header (X-API-Key)
     header_key = req_headers.get("X-API-Key") or req_headers.get("x-api-key")
-    cookie_api = cookie_api_key or req_cookies.get("veditor_api_key")
-    has_api_key = (
-        api_key is not None or header_key is not None or cookie_api is not None
+    has_header_api_key = (
+        api_key is not None or "X-API-Key" in req_headers or "x-api-key" in req_headers
     )
-    if has_api_key:
-        raw_key = api_key or header_key or cookie_api
-        if not isinstance(raw_key, str) or not raw_key:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API Key",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        hashed_key = hash_api_key(raw_key)
-        client = (
-            db.query(models.Client)
-            .filter(models.Client.hashed_key == hashed_key)
-            .first()
-        )
-        if not client:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API Key",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        return CurrentUser(
-            user_id=None,
-            client_id=client.id,
-            email=None,
-            role="admin",
-            source="api_key",
-            event_ids=list(client.event_ids or []),
-        )
+    if has_header_api_key:
+        return _authenticate_api_key(api_key or header_key, db)
 
     # 2. SSO header (X-SSO-Token)
     raw_sso = None
@@ -272,7 +273,13 @@ def get_current_user(
             event_ids=[],
         )
 
-    # 4. Authorization header (Authorization: Bearer <token>)
+    # 4. Machine client cookie fallback (veditor_api_key)
+    cookie_api = cookie_api_key or req_cookies.get("veditor_api_key")
+    has_cookie_api = cookie_api_key is not None or "veditor_api_key" in req_cookies
+    if has_cookie_api:
+        return _authenticate_api_key(cookie_api, db)
+
+    # 5. Authorization header (Authorization: Bearer <token>)
     auth_header = req_headers.get("Authorization") or req_headers.get("authorization")
     has_auth_header = auth_header is not None or bearer_creds is not None
     if has_auth_header:

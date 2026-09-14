@@ -530,8 +530,8 @@
         </div>
       </div>
 
-      <!-- ── Pipeline Milestones Stepper ────────────────────────── -->
-      {% if milestones %}
+      {% if user and user.role in ['organizer', 'admin'] and not is_speaker and milestones %}
+      {# ── Pipeline Milestones Stepper ────────────────────────── #}
       <div class="milestones-card">
         <div class="milestones-header">
           <span class="milestones-title-label">Pipeline Milestones</span>

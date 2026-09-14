@@ -266,7 +266,7 @@ def test_get_current_user_precedence_api_key_over_cookie():
 
 
 def test_get_current_user_fail_fast_on_invalid_api_key():
-    # If API key is provided but invalid, fails immediately with 401 instead of falling back.
+    # If explicit API key is provided but invalid, fails immediately with 401 instead of falling back.
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None
 
@@ -275,6 +275,20 @@ def test_get_current_user_fail_fast_on_invalid_api_key():
         get_current_user(api_key="bad-key", cookie_token=token, db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert excinfo.value.detail == "Invalid API Key"
+
+
+def test_get_current_user_precedence_session_over_cookie_api_key():
+    # Valid session cookie takes precedence over stale or invalid cookie_api_key.
+    mock_user = User(id=2, email="u@example.com", role="user", is_active=True)
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_user
+
+    token = create_session_token(user_id=2, role="user")
+    user = get_current_user(
+        cookie_token=token, cookie_api_key="stale-or-invalid-key", db=mock_db
+    )
+    assert user.source == "cookie"
+    assert user.user_id == 2
 
 
 # ---------------------------------------------------------------------------
