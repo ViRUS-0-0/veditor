@@ -1293,3 +1293,75 @@ def test_studio_organizer_timeline_omits_bumpers(client: TestClient, db_session)
 
     # Live duration badge is present
     assert 'id="cut-duration-badge"' in res.text
+
+
+def test_studio_upload_pending_state_hides_timeline(client: TestClient, db_session):
+    from app.security import create_session_token
+
+    org = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    db_session.add(org)
+    db_session.commit()
+    db_session.refresh(org)
+
+    event = models.Event(name=f"Event {uuid.uuid4().hex}", created_by_user_id=org.id)
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    # 1. Talk in waiting_for_files state (upload pending)
+    pending_talk = models.Talk(
+        event_id=event.id,
+        title="Pending Upload Talk",
+        room="Hall 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+    )
+    # 2. Talk in preview state (video available)
+    ready_talk = models.Talk(
+        event_id=event.id,
+        title="Ready Preview Talk",
+        room="Hall 2",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(pending_talk)
+    db_session.add(ready_talk)
+    db_session.commit()
+
+    token = create_session_token(org.id, org.role)
+    client.cookies.set("veditor_session", token)
+
+    # When upload is pending:
+    res_pending = client.get(f"/studio/talks/{pending_talk.id}")
+    assert res_pending.status_code == 200
+    # Shows the upload dropzone box and browse button
+    assert "upload-dropzone-box" in res_pending.text
+    assert "Attach Recording Video" in res_pending.text
+    assert 'id="btn-browse-file"' in res_pending.text
+    assert 'id="video-file-input"' in res_pending.text
+    # Hides timeline track, controls, and timecode bar
+    assert 'id="timeline-track"' not in res_pending.text
+    assert "timeline-section" not in res_pending.text
+    assert "player-controls" not in res_pending.text
+    assert "timecode-bar" not in res_pending.text
+    assert 'id="main-video"' not in res_pending.text
+
+    # When upload is complete / preview ready:
+    res_ready = client.get(f"/studio/talks/{ready_talk.id}")
+    assert res_ready.status_code == 200
+    # Shows video player, timecode bar, player controls, and timeline track
+    assert 'id="main-video"' in res_ready.text
+    assert "timecode-bar" in res_ready.text
+    assert "player-controls" in res_ready.text
+    assert "timeline-section" in res_ready.text
+    assert 'id="timeline-track"' in res_ready.text
+    assert 'id="timeline-ticks"' in res_ready.text
+    # Does NOT show upload-pending-container
+    assert "upload-pending-container" not in res_ready.text

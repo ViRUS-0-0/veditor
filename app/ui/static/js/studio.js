@@ -56,7 +56,6 @@ const video           = document.getElementById('main-video');
 const noPreview       = document.getElementById('no-preview-msg');
 const timecode        = document.getElementById('timecode-display');
 const durationDisplay = document.getElementById('duration-display');
-const scrubber        = document.getElementById('video-scrubber');
 const speedSel        = document.getElementById('speed-select');
 const jumpInput       = document.getElementById('jump-time-input');
 
@@ -172,7 +171,6 @@ function updateTimecode() {
 
   if (dur > 0 && isFinite(dur)) {
     const pct = (video.currentTime / dur) * 100;
-    if (scrubber) scrubber.value = Math.round((video.currentTime / dur) * 1000);
     if (tlPlayhead) tlPlayhead.style.left = `${pct}%`;
 
     if (isPlayingCut && video.currentTime >= outPointSec) {
@@ -182,9 +180,13 @@ function updateTimecode() {
   }
 }
 
+function formatTickTime(sec) {
+  return new Date(Math.max(0, Math.round(sec || 0)) * 1000).toISOString().slice(11, 19);
+}
+
 function updateTimelineTicks() {
-  const dur = video.duration || 0;
-  if (!dur || !isFinite(dur)) return;
+  const dur = (video && Number.isFinite(video.duration) && video.duration > 0) ? video.duration : (outPointSec || 0);
+  if (!dur || dur <= 0) return;
   const ticks = document.getElementById('timeline-ticks');
   if (!ticks) return;
   const steps = 5;
@@ -192,7 +194,8 @@ function updateTimelineTicks() {
     ...Array.from({ length: steps }, (_, i) => {
       const t = (dur / (steps - 1)) * i;
       const span = document.createElement('span');
-      span.textContent = formatTimecode(t).slice(0, 5);
+      span.className = 'tl-tick';
+      span.textContent = formatTickTime(t);
       return span;
     })
   );
@@ -239,27 +242,53 @@ function setOutPoint(timeSec) {
 
 // ── Interactive Timeline Dragging & Seeking ─────────────────────
 if (tlTrack) {
-  tlTrack.addEventListener('click', e => {
-    if (tlStartMarker && (e.target === tlStartMarker || tlStartMarker.contains(e.target))) return;
-    if (tlEndMarker && (e.target === tlEndMarker || tlEndMarker.contains(e.target))) return;
+  let isTrackScrubbing = false;
+
+  function seekTrackFromEvent(e) {
     const rect = tlTrack.getBoundingClientRect();
     const clickX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
     const pct = clickX / rect.width;
     if (video && video.duration && isFinite(video.duration)) {
       video.currentTime = pct * video.duration;
     }
+  }
+
+  tlTrack.addEventListener('pointerdown', e => {
+    if (tlStartMarker && (e.target === tlStartMarker || tlStartMarker.contains(e.target))) return;
+    if (tlEndMarker && (e.target === tlEndMarker || tlEndMarker.contains(e.target))) return;
+    isTrackScrubbing = true;
+    try { tlTrack.setPointerCapture(e.pointerId); } catch (_) {}
+    seekTrackFromEvent(e);
   });
+
+  tlTrack.addEventListener('pointermove', e => {
+    if (!isTrackScrubbing) return;
+    seekTrackFromEvent(e);
+  });
+
+  function stopTrackScrub(e) {
+    if (!isTrackScrubbing) return;
+    isTrackScrubbing = false;
+    try { tlTrack.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  tlTrack.addEventListener('pointerup', stopTrackScrub);
+  tlTrack.addEventListener('pointercancel', stopTrackScrub);
 }
 
 function setupMarkerDrag(markerEl, isStart) {
   if (!markerEl || !tlTrack) return;
+  let activePointerId = null;
 
   markerEl.addEventListener('pointerdown', e => {
+    if (activePointerId !== null) return;
     e.preventDefault();
     e.stopPropagation();
-    markerEl.setPointerCapture(e.pointerId);
+    activePointerId = e.pointerId;
+    markerEl.setPointerCapture(activePointerId);
 
     function onPointerMove(ev) {
+      if (ev.pointerId !== activePointerId) return;
       const rect = tlTrack.getBoundingClientRect();
       const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
       const pct = x / rect.width;
@@ -272,7 +301,9 @@ function setupMarkerDrag(markerEl, isStart) {
     }
 
     function onPointerUp(ev) {
-      try { markerEl.releasePointerCapture(ev.pointerId); } catch (_) {}
+      if (ev.pointerId !== activePointerId) return;
+      try { markerEl.releasePointerCapture(activePointerId); } catch (_) {}
+      activePointerId = null;
       markerEl.removeEventListener('pointermove', onPointerMove);
       markerEl.removeEventListener('pointerup', onPointerUp);
       markerEl.removeEventListener('pointercancel', onPointerUp);
@@ -359,7 +390,6 @@ if (video) {
     isPlayingCut = false;
   });
   video.addEventListener('loadedmetadata', () => {
-    if (scrubber) scrubber.max = 1000;
     outPointSec = video.duration || 10;
     inPointSec = 0;
     updateTimecode();
@@ -369,6 +399,7 @@ if (video) {
     const lbl = document.getElementById('tl-range-label');
     if (lbl) lbl.textContent = formatTimecode(video.duration);
   });
+  video.addEventListener('durationchange', updateTimelineTicks);
 }
 
 if (btnPlay)         btnPlay.addEventListener('click', togglePlay);
@@ -385,14 +416,6 @@ if (btnNextFrame)    btnNextFrame.addEventListener('click', () => { if(video && 
 if (speedSel) {
   speedSel.addEventListener('change', () => {
     if (video) video.playbackRate = parseFloat(speedSel.value);
-  });
-}
-
-if (scrubber) {
-  scrubber.addEventListener('input', () => {
-    if (video && video.duration && isFinite(video.duration)) {
-      video.currentTime = (scrubber.value / 1000) * video.duration;
-    }
   });
 }
 
@@ -558,8 +581,10 @@ window.handleVideoFileUpload = async function(e, talkId) {
 
   const progressWrap = document.getElementById('upload-progress-wrap');
   const progressText = document.getElementById('upload-progress-text');
+  const browseBtn = document.getElementById('btn-browse-file');
   if (progressWrap) progressWrap.style.display = 'block';
-  if (progressText) progressText.textContent = `Uploading "${file.name}" and validating streams...`;
+  if (progressText) progressText.textContent = `Uploading "${file.name}"...`;
+  if (browseBtn) browseBtn.disabled = true;
 
   try {
     const fd = new FormData();
@@ -575,11 +600,24 @@ window.handleVideoFileUpload = async function(e, talkId) {
       throw new Error(err.detail || `Upload failed with status ${res.status}`);
     }
 
-    await res.json();
-    location.reload();
+    if (progressText) progressText.textContent = 'Uploaded! Ingesting & validating video streams...';
+
+    const pollIngest = setInterval(async () => {
+      try {
+        const checkRes = await (window.authFetch || fetch)(`/talks/${talkId}`, { _isPolling: true });
+        if (checkRes.ok) {
+          const talkData = await checkRes.json();
+          if (talkData.status && talkData.status !== 'waiting_for_files') {
+            clearInterval(pollIngest);
+            location.reload();
+          }
+        }
+      } catch (_) {}
+    }, 1000);
   } catch (err) {
     alert(`Video upload failed: ${err.message}`);
     if (progressWrap) progressWrap.style.display = 'none';
+    if (browseBtn) browseBtn.disabled = false;
   }
 };
 
@@ -687,14 +725,17 @@ async function pollStudioJobs() {
   if (!talkId || isNaN(talkId)) return;
 
   try {
-    const key = (window.getApiKey && window.getApiKey()) || '';
-    if (!key) return;
-    const headers = { 'X-API-Key': key };
-    const res = await (window.authFetch || fetch)(`/talks/${talkId}/jobs`, { headers, _isPolling: true });
+    const res = await (window.authFetch || fetch)(`/talks/${talkId}/jobs`, { _isPolling: true });
     if (!res.ok) return;
     const data = await res.json();
     const jobs = Array.isArray(data) ? data : (data.jobs || []);
     renderRecentJobs(jobs);
+
+    const currentStatus = getTalkStatus();
+    if (data.status && data.status !== currentStatus) {
+      location.reload();
+      return;
+    }
 
     const hasRunningJob = jobs.some(j => j.status === 'running');
     const talkStatus = data.status;
@@ -707,8 +748,6 @@ async function pollStudioJobs() {
 }
 
 function startStudioPolling() {
-  const key = (window.getApiKey && window.getApiKey()) || '';
-  if (!key) return;
   if (studioPollInterval) clearInterval(studioPollInterval);
   studioPollInterval = setInterval(pollStudioJobs, 2500);
 }
@@ -744,8 +783,7 @@ document.addEventListener('DOMContentLoaded', () => {
       dropzone.addEventListener(name, (e) => {
         e.preventDefault();
         e.stopPropagation();
-        dropzone.style.borderColor = 'var(--v-primary)';
-        dropzone.style.background = 'var(--v-primary-subtle)';
+        dropzone.classList.add('drag-over');
       });
     });
 
@@ -753,8 +791,7 @@ document.addEventListener('DOMContentLoaded', () => {
       dropzone.addEventListener(name, (e) => {
         e.preventDefault();
         e.stopPropagation();
-        dropzone.style.borderColor = 'var(--v-border)';
-        dropzone.style.background = '';
+        dropzone.classList.remove('drag-over');
       });
     });
 

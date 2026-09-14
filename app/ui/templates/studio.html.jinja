@@ -130,34 +130,47 @@
     </div>
   </div>
 
-  <!-- ── CENTER: Video Player, Big Seeks, Timeline ───────────── -->
+  <!-- ── CENTER: Video Player or Upload Dropzone ─────────────── -->
   <div class="player-panel">
 
-    <!-- Video Viewport -->
-    <div class="player-viewport">
-      <video id="main-video" preload="metadata">
-        Your browser does not support HTML5 video.
-      </video>
-      <div class="player-no-preview" id="no-preview-msg">
+    {% if talk.status == 'waiting_for_files' %}
+    <!-- Upload Dropzone Box (Pending Upload State) -->
+    <div class="upload-pending-container">
+      <div class="upload-dropzone-box" id="no-preview-msg">
         <input type="file" id="video-file-input" accept="video/mp4,video/mkv,video/webm,video/quicktime,video/*">
-        <svg class="upload-icon" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
+        <div class="upload-icon-circle">
+          <svg class="upload-icon" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
         <span class="upload-prompt-title">
           Attach Recording Video
         </span>
         <span class="upload-prompt-subtitle">
-          Drag & drop raw conference video file here, or click to browse (MP4, MKV, MOV, WebM).
+          Drag & drop raw conference video file here, or click to browse.
         </span>
-        <button class="btn btn-primary btn-sm" id="btn-browse-file">
+        <span class="upload-prompt-formats">
+          Supports MP4, MKV, MOV, WebM
+        </span>
+        <button class="btn btn-primary btn-sm" id="btn-browse-file" type="button">
           Browse Video File
         </button>
         <div id="upload-progress-wrap">
           <span class="spinner spinner-sm upload-spinner"></span>
           <span id="upload-progress-text">Uploading & validating video streams...</span>
         </div>
+      </div>
+    </div>
+    {% else %}
+    <!-- Video Viewport -->
+    <div class="player-viewport">
+      <video id="main-video" preload="metadata">
+        Your browser does not support HTML5 video.
+      </video>
+      <div class="player-no-preview" id="no-preview-msg">
+        <span>Video preview not available</span>
       </div>
     </div>
 
@@ -222,12 +235,12 @@
         <div id="tl-playhead"></div>
       </div>
 
-      <div class="timeline-range">
-        <input type="range" id="video-scrubber" min="0" max="1000" value="0">
-      </div>
-
       <div class="timeline-ticks" id="timeline-ticks">
-        <span>0:00</span><span></span><span></span><span></span><span>—</span>
+        <span class="tl-tick">00:00:00</span>
+        <span class="tl-tick">—</span>
+        <span class="tl-tick">—</span>
+        <span class="tl-tick">—</span>
+        <span class="tl-tick">—</span>
       </div>
 
       <!-- In/Out Bounds Setting Controls -->
@@ -259,6 +272,7 @@
         </div>
       </div>
     </div>
+    {% endif %}
 
   </div>
 

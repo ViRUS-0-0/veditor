@@ -767,14 +767,14 @@ td {
 
 /* ── Player Panel & Controls ──────────────────────────────────── */
 .player-panel {
-  background: #090a0f;
+  background: var(--v-bg-canvas);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
 }
 
 .player-viewport {
-  background: #000;
+  background: var(--v-player-bg, #000);
   position: relative;
   width: 100%;
 }
@@ -930,25 +930,6 @@ td {
 }
 .tl-marker.end-marker::after {
   background: var(--v-status-danger-text);
-}
-
-.timeline-range { margin-top: 6px; }
-
-.timeline-range input[type=range] {
-  -webkit-appearance: none;
-  width: 100%;
-  height: 3px;
-  background: var(--v-border);
-  border-radius: 2px;
-  outline: none;
-}
-
-.timeline-range input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: var(--v-primary);
-  cursor: pointer;
 }
 
 .timeline-ticks {
