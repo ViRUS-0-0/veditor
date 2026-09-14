@@ -417,6 +417,85 @@ def test_media_serving(client: TestClient, db_session, temp_storage, tmp_path):
         clip.unlink(missing_ok=True)
 
 
+def test_talk_waveform_endpoint(client: TestClient, db_session, temp_storage, tmp_path):
+    from tests.conftest import generate_clip
+
+    event = models.Event(name=f"Waveform Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    talk = models.Talk(
+        title="Waveform Talk",
+        room="Auditorium",
+        start=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 3, 1, 11, 0, tzinfo=UTC),
+        status="preview",
+        event_id=event.id,
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    # 1. Unauthenticated request -> 401
+    assert client.get(f"/studio/talks/{talk.id}/waveform").status_code == 401
+
+    # 2. Authenticated but media not created yet -> returns empty peaks
+    res_empty = client.get(
+        f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+    )
+    assert res_empty.status_code == 200
+    assert res_empty.json() == {"peaks": []}
+
+    # 3. Create clip with audio and store as preview.mp4
+    clip = generate_clip(
+        1.0, has_audio=True, audio_waveform="tone", output_dir=tmp_path
+    )
+    try:
+        temp_storage.put(f"{talk.id}/preview/preview.mp4", clip)
+
+        # First fetch: computes on the fly and caches
+        res = client.get(
+            f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert "peaks" in data
+        assert len(data["peaks"]) > 0
+        assert all(0.0 <= p <= 1.0 for p in data["peaks"])
+
+        # Second fetch: served from cached json
+        res_cached = client.get(
+            f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+        )
+        assert res_cached.status_code == 200
+        assert res_cached.json() == data
+
+        # Query with explicit category and filename
+        res_explicit = client.get(
+            f"/studio/talks/{talk.id}/waveform?category=preview&filename=preview.mp4",
+            headers={"X-API-Key": api_key},
+        )
+        assert res_explicit.status_code == 200
+        assert res_explicit.json() == data
+
+        # Invalid category -> 404
+        assert (
+            client.get(
+                f"/studio/talks/{talk.id}/waveform?category=invalid&filename=preview.mp4",
+                headers={"X-API-Key": api_key},
+            ).status_code
+            == 404
+        )
+    finally:
+        clip.unlink(missing_ok=True)
+
+
 def test_talk_patch_metadata(client: TestClient, db_session):
     event = models.Event(name=f"Event {uuid.uuid4().hex}")
     db_session.add(event)

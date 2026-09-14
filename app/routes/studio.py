@@ -1,3 +1,4 @@
+import json
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -10,13 +11,14 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.auth import hash_api_key
 from app.config import settings
 from app.db import get_db
+from app.pipeline.waveform import extract_waveform_peaks
 from app.routes.auth import _get_authenticated_user_from_cookie
 from app.routes.talks import _cancel_talk_jobs
 from app.security import decode_sso_token
@@ -483,6 +485,68 @@ def get_talk_media_categorized(
     return FileResponse(
         path,
         media_type="video/mp4",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/talks/{talk_id}/waveform")
+def get_talk_waveform(
+    request: Request,
+    talk_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+    category: str | None = None,
+    filename: str | None = None,
+):
+    _authorize_studio_talk(talk_id, request, db, not_found_detail="Talk not found")
+
+    media_key = None
+    if category and filename:
+        safe_category = Path(category).name
+        if safe_category not in ALLOWED_MEDIA_CATEGORIES:
+            raise HTTPException(status_code=404, detail="Media not found")
+        cand = f"{talk_id}/{safe_category}/{Path(filename).name}"
+        if storage.exists(cand):
+            media_key = cand
+    else:
+        candidates = [f"{talk_id}/{c}/{c}.mp4" for c in ("preview", "cut", "raw")]
+        media_key = next((c for c in candidates if storage.exists(c)), None)
+        if not media_key:
+            raw_keys = storage.list_keys(f"{talk_id}/raw")
+            media_key = raw_keys[0] if raw_keys else None
+
+    if media_key:
+        waveform_key = f"{media_key}.waveform.json"
+        if storage.exists(waveform_key):
+            try:
+                cached_path = storage.get(waveform_key)
+                # storage-boundary-exempt: read cached waveform json
+                raw_bytes = cached_path.read_bytes()
+                return Response(
+                    content=raw_bytes,
+                    media_type="application/json",
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+            except OSError:
+                pass
+        try:
+            media_path = storage.get(media_key)
+            if isinstance(media_path, Path) and media_path.is_file():
+                content = json.dumps(
+                    {"peaks": extract_waveform_peaks(media_path)}
+                ).encode("utf-8")
+                storage.put(waveform_key, content)
+                return Response(
+                    content=content,
+                    media_type="application/json",
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+        except (OSError, ValueError, RuntimeError) as exc:
+            logger.warning("Failed generating waveform for %s: %s", media_key, exc)
+
+    return Response(
+        content=b'{"peaks":[]}',
+        media_type="application/json",
         headers={"Cache-Control": "no-store"},
     )
 

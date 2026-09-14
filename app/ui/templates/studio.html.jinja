@@ -198,6 +198,11 @@
             <option value="2">2×</option>
           </select>
         </div>
+
+        <button class="ctrl-btn mute-btn" id="btn-mute" title="Mute / Unmute (M)" aria-label="Mute or unmute audio">
+          <svg id="icon-volume-on" width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+          <svg id="icon-volume-muted" width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+        </button>
       </div>
     </div>
 
@@ -206,7 +211,7 @@
       <button class="ctrl-btn" id="btn-seek-mega-back" title="Rewind 5 minutes (-5m)">-5m</button>
       <button class="ctrl-btn" id="btn-seek-big-back" title="Rewind 1 minute (-1m)">-1m</button>
       <button class="ctrl-btn" id="btn-skip-back" title="Back 5s (-5s)">-5s</button>
-      <button class="ctrl-btn" id="btn-prev-frame" title="Previous frame (←)">-1f</button>
+      <button class="ctrl-btn" id="btn-prev-frame" title="Rewind 0.5s (-0.5s)">-0.5s</button>
 
       <!-- Play / Pause -->
       <button class="ctrl-btn play-btn" id="btn-play" title="Play / Pause (Space)">
@@ -215,7 +220,7 @@
       </button>
 
       <!-- Fine, Big & Mega Seek Forward -->
-      <button class="ctrl-btn" id="btn-next-frame" title="Next frame (→)">+1f</button>
+      <button class="ctrl-btn" id="btn-next-frame" title="Forward 0.5s (+0.5s)">+0.5s</button>
       <button class="ctrl-btn" id="btn-skip-fwd" title="Forward 5s (+5s)">+5s</button>
       <button class="ctrl-btn" id="btn-seek-big-fwd" title="Forward 1 minute (+1m)">+1m</button>
       <button class="ctrl-btn" id="btn-seek-mega-fwd" title="Forward 5 minutes (+5m)">+5m</button>
@@ -229,8 +234,9 @@
       </div>
 
       <div class="timeline-track" id="timeline-track">
+        <canvas id="tl-waveform" class="tl-waveform" aria-hidden="true"></canvas>
         {% if talk.status in ['pending_bounds', 'needs_work'] %}
-        <div class="tl-block tl-content" id="tl-content">TALK BOUNDS</div>
+        <div class="tl-block tl-content" id="tl-content"></div>
         <div class="tl-marker" id="tl-start-marker" title="Drag Start Point (or press I)"></div>
         <div class="tl-marker end-marker" id="tl-end-marker" title="Drag End Point (or press O)"></div>
         {% endif %}

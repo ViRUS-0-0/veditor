@@ -33,6 +33,7 @@ from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
 from app.pipeline.transcode import transcode
+from app.pipeline.waveform import extract_waveform_peaks
 from app.queue import heavy_queue, light_queue
 from app.states import advance
 from app.storage import cleanup_intermediates, get_storage_backend
@@ -600,6 +601,14 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
             tmp_out = Path(tmpdir) / "preview.mp4"
             generate_preview(cut_path, tmp_out, preset=preset)
             storage.put(preview_key, tmp_out)
+            if tmp_out.is_file():
+                try:
+                    storage.put(
+                        f"{preview_key}.waveform.json",
+                        json.dumps({"peaks": extract_waveform_peaks(tmp_out)}).encode(),
+                    )
+                except (OSError, ValueError, RuntimeError) as exc:
+                    logger.warning("Failed to generate preview waveform: %s", exc)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
