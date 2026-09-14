@@ -198,3 +198,31 @@ def cleanup_intermediates(storage: StorageBackend, talk_id: int) -> None:
                 talk_id,
                 exc,
             )
+
+
+def cleanup_bumpers(
+    storage: StorageBackend,
+    talk_id: int,
+    custom_paths: tuple[str | None, ...] = (),
+) -> None:
+    """Delete bumper intermediate artifacts (intro, outro) for a talk once final video is generated."""
+    for stage in ("intro", "outro"):
+        try:
+            storage.delete(f"{talk_id}/{stage}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to delete %s storage for talk %s: %s",
+                stage,
+                talk_id,
+                exc,
+            )
+    for path_str in custom_paths:
+        if path_str:
+            try:
+                p = Path(path_str)
+                if p.is_file():
+                    p.unlink(missing_ok=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to delete staged bumper file %s: %s", path_str, exc
+                )

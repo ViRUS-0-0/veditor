@@ -12,6 +12,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Request,
     Response,
@@ -36,6 +37,7 @@ from app.db import get_db
 from app.ingest import (
     IngestPathRejectedError,
     InsufficientStorageError,
+    get_bumper_staging_dir,
     stage_custom_clip,
     stage_recording,
 )
@@ -538,6 +540,45 @@ def submit_cut_bounds(
     _dispatch_talk_cut_webhook(talk, user, db)
 
     return schemas.TalkRead.model_validate(talk)
+
+
+@router.post(
+    "/{talk_id}/bumpers/upload",
+    status_code=status.HTTP_200_OK,
+)
+async def upload_bumper_file(
+    talk_id: int,
+    file: Annotated[UploadFile, File()],
+    kind: Annotated[str, Form()] = "intro",
+    user: Annotated[CurrentUser, Depends(require_role("organizer"))] = None,
+    db: Annotated[Session, Depends(get_db)] = None,
+):
+    """Upload a custom bumper video file (intro/outro) directly and return its staged server path."""
+    talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
+    if not talk or (user.is_machine and talk.event_id not in user.event_ids):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+    check_event_access(talk.event_id, user, db)
+
+    if kind not in ("intro", "outro"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bumper kind must be 'intro' or 'outro'",
+        )
+
+    staging_dir = get_bumper_staging_dir()
+    ext = Path(file.filename or "bumper.mp4").suffix or ".mp4"
+    staged_path = (
+        staging_dir / f"bumper_{talk_id}_{kind}_{uuid.uuid4().hex}{ext}"
+    ).resolve()
+
+    # storage-boundary-exempt: bumper staging upload
+    with open(staged_path, "wb") as f_out:  # noqa: ASYNC230
+        while chunk := await file.read(1024 * 1024):
+            f_out.write(chunk)
+
+    return {"path": str(staged_path), "filename": file.filename}
 
 
 @router.post(

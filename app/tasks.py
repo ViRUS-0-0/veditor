@@ -35,7 +35,11 @@ from app.pipeline.publish import publish
 from app.pipeline.transcode import transcode
 from app.queue import heavy_queue, light_queue
 from app.states import advance
-from app.storage import cleanup_intermediates, get_storage_backend
+from app.storage import (
+    cleanup_bumpers,
+    cleanup_intermediates,
+    get_storage_backend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -803,7 +807,10 @@ def job_transcode(
             job.status = "done"
             job.progress_pct = 100.0
             job.updated_at = datetime.now(UTC)
+            custom_paths = (talk.custom_intro_path, talk.custom_outro_path)
             db.commit()
+
+        cleanup_bumpers(storage, talk_id, custom_paths)
 
         light_queue.enqueue(
             job_publish,

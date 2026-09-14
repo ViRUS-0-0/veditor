@@ -622,6 +622,28 @@ def test_transcode_enqueues_publish_on_light(dummy_talk, mock_storage):
     )
 
 
+def test_transcode_cleans_up_bumpers(dummy_talk, mock_storage, tmp_path):
+    dummy_talk.status = "transcoding"
+    custom_bumper = tmp_path / "custom_intro.mp4"
+    custom_bumper.write_bytes(b"dummy")
+    dummy_talk.custom_intro_path = str(custom_bumper)
+    dummy_talk.custom_outro_path = None
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.transcode"),
+        patch("app.tasks.light_queue.enqueue"),
+    ):
+        job_transcode(1, "1/cut/cut_loud.mp4", "1/final/final.mp4")
+
+    assert not custom_bumper.exists()
+    mock_storage.delete.assert_any_call("1/intro")
+    mock_storage.delete.assert_any_call("1/outro")
+
+
 def test_transcode_progress_callback_updates_job_progress(dummy_talk, mock_storage):
     dummy_talk.status = "transcoding"
     jobs = {}

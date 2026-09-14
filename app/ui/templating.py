@@ -26,11 +26,13 @@ _env = jinja2.Environment(
 def format_timecode_filter(seconds: float | None) -> str:
     if seconds is None or seconds < 0:
         return "00:00:00.00"
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ff = round((seconds % 1) * 100)
-    return f"{h:02d}:{m:02d}:{s:02d}.{ff:02d}"
+    total_cs = round(seconds * 100)
+    cs = total_cs % 100
+    total_s = total_cs // 100
+    s = total_s % 60
+    m = (total_s // 60) % 60
+    h = total_s // 3600
+    return f"{h:02d}:{m:02d}:{s:02d}.{cs:02d}"
 
 
 _env.filters["timecode"] = format_timecode_filter

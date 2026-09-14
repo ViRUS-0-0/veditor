@@ -1,3 +1,4 @@
+import tempfile
 from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 
@@ -97,6 +98,18 @@ def stage_recording(
     return key
 
 
+def get_bumper_staging_dir() -> Path:
+    """Return the absolute staging directory for uploaded custom bumper clips."""
+    base = (
+        Path(settings.ingest_roots[0])
+        if settings.ingest_roots
+        else Path(tempfile.gettempdir()) / "veditor_staging"
+    ).resolve() / "bumpers"
+    # storage-boundary-exempt: bumper staging directory
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
 def stage_custom_clip(
     talk_id: int, path_str: str, stage: str, backend: StorageBackend
 ) -> str:
@@ -112,6 +125,10 @@ def stage_custom_clip(
         raise IngestPathRejectedError(f"custom_{stage}_path must be absolute")
 
     roots = [Path(r).resolve() for r in settings.ingest_roots]
+    staging_root = (Path(tempfile.gettempdir()) / "veditor_staging").resolve()
+    if staging_root not in roots:
+        roots.append(staging_root)
+
     resolved_path = None
     try:
         candidate = target_path.resolve(strict=True)
