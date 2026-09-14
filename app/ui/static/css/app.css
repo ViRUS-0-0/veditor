@@ -1201,10 +1201,6 @@ details[open] > summary.user-bubble-btn {
   max-width: 100%;
 }
 
-.user-dropdown-header .badge-role {
-  align-self: flex-start;
-  margin-top: 2px;
-}
 
 .user-dropdown-divider {
   height: 1px;

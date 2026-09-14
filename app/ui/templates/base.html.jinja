@@ -45,6 +45,7 @@
       <div class="topbar-control-group">
         <!-- Dynamic Authentication State -->
         {% if user %}
+          <span class="badge badge-role badge-{{ user.role }}">{{ user.role | capitalize }}</span>
           <details class="user-menu-wrapper" id="user-menu-wrapper">
             <summary class="user-bubble-btn" id="user-menu-btn" title="User Menu">
               <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -60,7 +61,6 @@
                 {% elif user.email %}
                   <span class="user-email" title="{{ user.email }}">{{ user.email }}</span>
                 {% endif %}
-                <span class="badge badge-role badge-{{ user.role }}">{{ user.role | capitalize }}</span>
               </div>
               <div class="user-dropdown-divider"></div>
               <button type="button" class="user-dropdown-item" id="theme-toggle-btn" role="menuitem">
