@@ -767,7 +767,7 @@ td {
 
 /* ── Player Panel & Controls ──────────────────────────────────── */
 .player-panel {
-  background: var(--v-bg-canvas);
+  background: var(--v-bg-subtle);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -866,6 +866,7 @@ td {
   padding: 14px 16px;
   background: var(--v-bg-subtle);
   border-top: 1px solid var(--v-border-subtle);
+  flex: 1;
 }
 
 .timeline-label {

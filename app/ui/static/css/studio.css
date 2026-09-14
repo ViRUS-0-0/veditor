@@ -82,6 +82,15 @@
   display: none;
 }
 
+.player-panel {
+  background: var(--v-bg-subtle);
+}
+
+.timeline-section {
+  flex: 1;
+  background: var(--v-bg-subtle);
+}
+
 /* ── Pending Upload Dropzone Box ─────────────────────────────── */
 .upload-pending-container {
   flex: 1;

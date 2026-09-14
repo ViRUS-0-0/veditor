@@ -427,9 +427,9 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     togglePlay();
   } else if (e.code === 'KeyI') {
-    if (video) setInPoint(video.currentTime);
+    if (video && btnSetIn) setInPoint(video.currentTime);
   } else if (e.code === 'KeyO') {
-    if (video) setOutPoint(video.currentTime);
+    if (video && btnSetOut) setOutPoint(video.currentTime);
   } else if (e.code === 'ArrowLeft') {
     if (video && video.src) seekBy(e.shiftKey ? -60 : -5);
   } else if (e.code === 'ArrowRight') {

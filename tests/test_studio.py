@@ -1246,8 +1246,8 @@ def test_studio_speaker_timeline_omits_bumpers(client: TestClient, db_session):
     assert 'id="tl-intro"' not in res.text
     assert 'id="tl-outro"' not in res.text
 
-    # Live duration badge is present
-    assert 'id="cut-duration-badge"' in res.text
+    # Timeline scrubber is present
+    assert 'id="timeline-track"' in res.text
 
 
 def test_studio_organizer_timeline_omits_bumpers(client: TestClient, db_session):
@@ -1291,8 +1291,8 @@ def test_studio_organizer_timeline_omits_bumpers(client: TestClient, db_session)
     assert 'id="tl-intro"' not in res.text
     assert 'id="tl-outro"' not in res.text
 
-    # Live duration badge is present
-    assert 'id="cut-duration-badge"' in res.text
+    # Timeline scrubber is present
+    assert 'id="timeline-track"' in res.text
 
 
 def test_studio_upload_pending_state_hides_timeline(client: TestClient, db_session):
@@ -1365,3 +1365,34 @@ def test_studio_upload_pending_state_hides_timeline(client: TestClient, db_sessi
     assert 'id="timeline-ticks"' in res_ready.text
     # Does NOT show upload-pending-container
     assert "upload-pending-container" not in res_ready.text
+    # Does NOT show cut bounds controls (only timeline scrub track for video)
+    assert 'id="tl-start-marker"' not in res_ready.text
+    assert 'id="tl-end-marker"' not in res_ready.text
+    assert 'id="tl-content"' not in res_ready.text
+    assert 'id="btn-set-in"' not in res_ready.text
+    assert "timeline-inputs-bar" not in res_ready.text
+
+    # When bounds cutting is needed (pending_bounds or needs_work):
+    bounds_talk = models.Talk(
+        event_id=event.id,
+        title="Bounds Cut Talk",
+        room="Hall 3",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="pending_bounds",
+    )
+    db_session.add(bounds_talk)
+    db_session.commit()
+
+    res_bounds = client.get(f"/studio/talks/{bounds_talk.id}")
+    assert res_bounds.status_code == 200
+    # Shows timeline AND cut bounds markers/inputs
+    assert 'id="timeline-track"' in res_bounds.text
+    assert 'id="tl-start-marker"' in res_bounds.text
+    assert 'id="tl-end-marker"' in res_bounds.text
+    assert 'id="tl-content"' in res_bounds.text
+    assert 'id="btn-set-in"' in res_bounds.text
+    assert 'id="btn-set-out"' in res_bounds.text
+    assert 'id="cut-duration-badge"' in res_bounds.text
+    assert 'id="btn-play-cut"' in res_bounds.text
+    assert "timeline-inputs-bar" in res_bounds.text

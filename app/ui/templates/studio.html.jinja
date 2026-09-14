@@ -229,9 +229,11 @@
       </div>
 
       <div class="timeline-track" id="timeline-track">
+        {% if talk.status in ['pending_bounds', 'needs_work'] %}
         <div class="tl-block tl-content" id="tl-content">TALK BOUNDS</div>
         <div class="tl-marker" id="tl-start-marker" title="Drag Start Point (or press I)"></div>
         <div class="tl-marker end-marker" id="tl-end-marker" title="Drag End Point (or press O)"></div>
+        {% endif %}
         <div id="tl-playhead"></div>
       </div>
 
@@ -243,6 +245,7 @@
         <span class="tl-tick">—</span>
       </div>
 
+      {% if talk.status in ['pending_bounds', 'needs_work'] %}
       <!-- In/Out Bounds Setting Controls -->
       <div class="timeline-inputs-bar">
         <div class="bounds-inputs-group">
@@ -271,6 +274,7 @@
           </button>
         </div>
       </div>
+      {% endif %}
     </div>
     {% endif %}
 
