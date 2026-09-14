@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,12 +9,22 @@ from app import models
 from app.auth import hash_api_key
 from app.db import SessionLocal, get_db
 from app.main import app
-from app.storage import INTERMEDIATE_STAGES, StorageBackend, get_storage_backend
+from app.storage import INTERMEDIATE_STAGES, LocalDiskBackend, get_storage_backend
 
 
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+@pytest.fixture
+def temp_storage(tmp_path):
+    storage = LocalDiskBackend(tmp_path)
+    app.dependency_overrides[get_storage_backend] = lambda: storage
+    try:
+        yield storage
+    finally:
+        app.dependency_overrides.pop(get_storage_backend, None)
 
 
 def test_root_redirect(client: TestClient):
@@ -107,39 +118,78 @@ def db_session():
     finally:
         try:
             db.rollback()
+            errors = []
 
             for obj in reversed(created):
                 try:
                     insp = inspect(obj)
                     if insp and insp.has_identity and insp.identity:
                         obj_id = insp.identity[0]
-                        if isinstance(obj, models.Talk):
+                        if isinstance(obj, models.Job):
+                            db.query(models.Job).filter(models.Job.id == obj_id).delete(
+                                synchronize_session=False
+                            )
+                        elif isinstance(obj, models.Review):
+                            db.query(models.Review).filter(
+                                models.Review.id == obj_id
+                            ).delete(synchronize_session=False)
+                        elif isinstance(obj, models.Talk):
                             db.query(models.Job).filter(
                                 models.Job.talk_id == obj_id
-                            ).delete()
+                            ).delete(synchronize_session=False)
                             db.query(models.Review).filter(
                                 models.Review.talk_id == obj_id
-                            ).delete()
+                            ).delete(synchronize_session=False)
                             db.query(models.Talk).filter(
                                 models.Talk.id == obj_id
-                            ).delete()
+                            ).delete(synchronize_session=False)
                         elif isinstance(obj, models.Client):
                             db.query(models.Client).filter(
                                 models.Client.id == obj_id
-                            ).delete()
+                            ).delete(synchronize_session=False)
                         elif isinstance(obj, models.Event):
+                            talk_ids = [
+                                t[0]
+                                for t in db.query(models.Talk.id)
+                                .filter(models.Talk.event_id == obj_id)
+                                .all()
+                            ]
+                            if talk_ids:
+                                db.query(models.Job).filter(
+                                    models.Job.talk_id.in_(talk_ids)
+                                ).delete(synchronize_session=False)
+                                db.query(models.Review).filter(
+                                    models.Review.talk_id.in_(talk_ids)
+                                ).delete(synchronize_session=False)
+                                db.query(models.Talk).filter(
+                                    models.Talk.id.in_(talk_ids)
+                                ).delete(synchronize_session=False)
                             db.query(models.Event).filter(
                                 models.Event.id == obj_id
-                            ).delete()
+                            ).delete(synchronize_session=False)
                         elif isinstance(obj, models.User):
+                            db.query(models.Review).filter(
+                                models.Review.user_id == obj_id
+                            ).delete(synchronize_session=False)
+                            db.query(models.Event).filter(
+                                models.Event.created_by_user_id == obj_id
+                            ).update(
+                                {"created_by_user_id": None},
+                                synchronize_session=False,
+                            )
                             db.query(models.User).filter(
                                 models.User.id == obj_id
-                            ).delete()
-                except Exception:  # noqa: BLE001, S110
-                    pass
-            db.commit()
-        except Exception:  # noqa: BLE001
+                            ).delete(synchronize_session=False)
+                        db.commit()
+                except Exception as exc:  # noqa: BLE001
+                    db.rollback()
+                    errors.append(exc)
+
+            if errors:
+                raise errors[0]
+        except Exception:
             db.rollback()
+            raise
         finally:
             app.dependency_overrides.pop(get_db, None)
             db.close()
@@ -325,7 +375,7 @@ def test_talk_studio_not_found(client: TestClient, db_session):
     assert response.status_code == 404
 
 
-def test_media_serving(client: TestClient, db_session, tmp_path):
+def test_media_serving(client: TestClient, db_session, temp_storage, tmp_path):
     from tests.conftest import generate_clip
 
     event = models.Event(name=f"Event {uuid.uuid4().hex}")
@@ -352,38 +402,39 @@ def test_media_serving(client: TestClient, db_session, tmp_path):
     db_session.refresh(talk)
 
     clip = generate_clip(0.5, output_dir=tmp_path)
-    storage: StorageBackend = app.dependency_overrides.get(
-        get_storage_backend, get_storage_backend()
-    )
-    storage.put(f"{talk.id}/preview/preview.mp4", clip)
+    try:
+        temp_storage.put(f"{talk.id}/preview/preview.mp4", clip)
 
-    # Unauthenticated returns 401
-    assert client.get(f"/studio/media/{talk.id}/preview.mp4").status_code == 401
+        # Unauthenticated returns 401
+        assert client.get(f"/studio/media/{talk.id}/preview.mp4").status_code == 401
 
-    response = client.get(
-        f"/studio/media/{talk.id}/preview.mp4", headers={"X-API-Key": api_key}
-    )
-    assert response.status_code == 200
-    assert response.headers.get("cache-control") == "no-store"
-    assert "video/mp4" in response.headers.get("content-type", "")
+        response = client.get(
+            f"/studio/media/{talk.id}/preview.mp4", headers={"X-API-Key": api_key}
+        )
+        assert response.status_code == 200
+        assert response.headers.get("cache-control") == "no-store"
+        assert "video/mp4" in response.headers.get("content-type", "")
 
-    # Categorized media route also includes no-store
-    response_cat = client.get(
-        f"/studio/media/{talk.id}/preview/preview.mp4", headers={"X-API-Key": api_key}
-    )
-    assert response_cat.status_code == 200
-    assert response_cat.headers.get("cache-control") == "no-store"
+        # Categorized media route also includes no-store
+        response_cat = client.get(
+            f"/studio/media/{talk.id}/preview/preview.mp4",
+            headers={"X-API-Key": api_key},
+        )
+        assert response_cat.status_code == 200
+        assert response_cat.headers.get("cache-control") == "no-store"
 
-    not_found = client.get(
-        f"/studio/media/{talk.id}/missing.mp4", headers={"X-API-Key": api_key}
-    )
-    assert not_found.status_code == 404
+        not_found = client.get(
+            f"/studio/media/{talk.id}/missing.mp4", headers={"X-API-Key": api_key}
+        )
+        assert not_found.status_code == 404
 
-    # Disallowed category returns 404
-    disallowed = client.get(
-        f"/studio/media/{talk.id}/logs/worker.log", headers={"X-API-Key": api_key}
-    )
-    assert disallowed.status_code == 404
+        # Disallowed category returns 404
+        disallowed = client.get(
+            f"/studio/media/{talk.id}/logs/worker.log", headers={"X-API-Key": api_key}
+        )
+        assert disallowed.status_code == 404
+    finally:
+        clip.unlink(missing_ok=True)
 
 
 def test_talk_patch_metadata(client: TestClient, db_session):
@@ -502,7 +553,7 @@ def test_talk_bulk_delete(client: TestClient, db_session):
     assert res.json()["deleted_count"] == 2
 
 
-def test_talk_upload_recording(client: TestClient, db_session):
+def test_talk_upload_recording(client: TestClient, db_session, temp_storage, tmp_path):
     from unittest.mock import patch
 
     event = models.Event(name=f"Event {uuid.uuid4().hex}")
@@ -530,18 +581,45 @@ def test_talk_upload_recording(client: TestClient, db_session):
 
     from tests.conftest import generate_clip
 
-    clip = generate_clip(0.5)
-    with patch("app.routes.talks.light_queue") as mock_queue, open(clip, "rb") as f_vid:
-        res = client.post(
-            f"/talks/{talk.id}/upload",
-            files={"file": ("recording.mp4", f_vid, "video/mp4")},
-            headers={"X-API-Key": api_key},
-        )
-        assert res.status_code == 202
-        assert res.json()["status"] == "waiting_for_files"
-        mock_queue.enqueue.assert_called_once()
-        enqueued_func = mock_queue.enqueue.call_args[0][0]
-        assert enqueued_func.__name__ == "job_ingest"
+    clip = generate_clip(0.5, output_dir=tmp_path)
+    mock_queue = None
+    try:
+        with (
+            patch("app.routes.talks.light_queue") as mq,
+            open(clip, "rb") as f_vid,
+        ):
+            mock_queue = mq
+            res = client.post(
+                f"/talks/{talk.id}/upload",
+                files={"file": ("recording.mp4", f_vid, "video/mp4")},
+                headers={"X-API-Key": api_key},
+            )
+            assert res.status_code == 202
+            assert res.json()["status"] == "waiting_for_files"
+            mock_queue.enqueue.assert_called_once()
+            call_args = mock_queue.enqueue.call_args
+            enqueued_func = (
+                call_args.args[0]
+                if call_args and call_args.args
+                else (call_args.kwargs.get("func") if call_args else None)
+            )
+            assert enqueued_func is not None
+            assert enqueued_func.__name__ == "job_ingest"
+    finally:
+        clip.unlink(missing_ok=True)
+        if mock_queue and mock_queue.enqueue.called:
+            call = mock_queue.enqueue.call_args
+            staged_path = None
+            if call and call.args and len(call.args) > 2:
+                staged_path = call.args[2]
+            elif call and call.kwargs:
+                staged_path = (
+                    call.kwargs.get("file_path")
+                    or call.kwargs.get("staging_path")
+                    or call.kwargs.get("staged_path")
+                )
+            if staged_path:
+                Path(staged_path).unlink(missing_ok=True)
 
 
 def test_import_schedule_json_list(client: TestClient, db_session):
@@ -1087,6 +1165,71 @@ def test_delete_talk_propagates_storage_error(client: TestClient, db_session):
         assert talk is not None
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)
+
+
+def test_sidebar_declutter_and_buttons(client: TestClient):
+    """Test sidebar declutter: only Events and Talks, no status filters, toggle button present."""
+    response = client.get("/studio")
+    assert response.status_code == 200
+
+    # Fixed topbar and toggle button are present
+    assert 'id="app-topbar"' in response.text
+    assert 'id="sidebar-toggle-btn"' in response.text
+    assert 'id="sidebar-collapse-btn"' in response.text
+    assert 'id="topbar-brand-link"' in response.text
+
+    # Talks link is present
+    assert 'id="nav-talks-link"' in response.text
+    assert "Talks" in response.text
+
+    # Redundant status filter links are absent from sidebar
+    assert 'href="/studio?status_filter=pending_approval"' not in response.text
+    assert 'href="/studio?status_filter=preview"' not in response.text
+    assert 'href="/studio?status_filter=done"' not in response.text
+    assert 'href="/studio?status_filter=broken"' not in response.text
+    assert "REST API Docs" not in response.text
+
+
+def test_studio_mode_body_class(client: TestClient, db_session):
+    """Test that Studio routes (/studio, /studio/events, /studio/talks/{id}) include is-studio-mode body class."""
+    event = models.Event(name=f"Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Studio Mode Talk",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    # Talk studio view
+    res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
+    assert res.status_code == 200
+    assert "is-studio-mode" in res.text
+    assert 'id="sidebar-toggle-btn"' in res.text
+
+    # Talks dashboard view
+    res_dash = client.get("/studio")
+    assert res_dash.status_code == 200
+    assert "is-studio-mode" in res_dash.text
+
+    # Non-studio view should not have is-studio-mode
+    res_login = client.get("/login")
+    assert res_login.status_code == 200
+    assert "is-studio-mode" not in res_login.text
 
 
 def test_talk_studio_offset_aware_start_normalizes_to_utc(

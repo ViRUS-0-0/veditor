@@ -31,25 +31,61 @@ a:hover { color: var(--v-primary-hover); }
   min-height: 100vh;
 }
 
-/* ── Sidebar ──────────────────────────────────────────────────── */
-.sidebar {
-  width: var(--v-sidebar-width);
-  background: var(--v-bg-subtle);
-  border-right: 1px solid var(--v-border-subtle);
-  display: flex;
-  flex-direction: column;
-  position: fixed;
-  top: 0; left: 0; bottom: 0;
-  z-index: 100;
-}
-
-.sidebar-logo {
+/* ── Topbar (Full-Width Fixed Header) ────────────────────────── */
+.topbar {
   height: var(--v-topbar-height);
+  background: var(--v-bg-subtle);
+  border-bottom: 1px solid var(--v-border-subtle);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--v-border-subtle);
+  justify-content: space-between;
+  padding: 0 20px 0 12px;
+  gap: 16px;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  z-index: 200;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sidebar-toggle-btn {
+  padding: 6px 8px;
+  color: var(--v-text-secondary);
+  border-radius: var(--v-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sidebar-toggle-btn:hover {
+  color: var(--v-text-primary);
+  background: var(--v-bg-surface-hover);
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--v-text-primary);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: -0.3px;
+  padding-right: 14px;
+  border-right: 1px solid var(--v-border-subtle);
+  flex-shrink: 0;
+}
+.topbar-brand svg {
+  color: var(--v-primary);
 }
 
 .logo-text {
@@ -59,9 +95,50 @@ a:hover { color: var(--v-primary-hover); }
   color: var(--v-text-primary);
 }
 
+/* ── Sidebar (Underneath Fixed Topbar) ───────────────────────── */
+.sidebar {
+  width: var(--v-sidebar-width);
+  background: var(--v-bg-subtle);
+  border-right: 1px solid var(--v-border-subtle);
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: var(--v-topbar-height);
+  left: 0;
+  bottom: 0;
+  z-index: 100;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.2s ease;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 4px 16px;
+}
+
+.sidebar-header .nav-label {
+  padding: 0;
+}
+
+.sidebar-collapse-btn {
+  padding: 4px 6px;
+  color: var(--v-text-muted);
+  border-radius: var(--v-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sidebar-collapse-btn:hover {
+  color: var(--v-text-primary);
+  background: var(--v-bg-surface-hover);
+}
+
 .sidebar-nav {
   flex: 1;
-  padding: 12px 8px;
+  padding: 8px 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -100,26 +177,41 @@ a:hover { color: var(--v-primary-hover); }
   font-weight: 600;
 }
 
-/* ── Topbar & Content ─────────────────────────────────────────── */
+/* ── Main Content ─────────────────────────────────────────────── */
 .main-content {
+  margin-top: var(--v-topbar-height);
   margin-left: var(--v-sidebar-width);
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--v-topbar-height));
+  transition: margin-left 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.topbar {
-  height: var(--v-topbar-height);
-  background: var(--v-bg-subtle);
-  border-bottom: 1px solid var(--v-border-subtle);
-  display: flex;
-  align-items: center;
-  padding: 0 24px;
-  gap: 12px;
-  position: sticky;
-  top: 0;
-  z-index: 50;
+/* ── Sidebar Collapsed State ─────────────────────────────────── */
+html[data-sidebar="collapsed"] .sidebar {
+  transform: translateX(-100%);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+html[data-sidebar="collapsed"] .main-content {
+  margin-left: 0;
+  width: 100%;
+}
+
+/* ── Video Studio Mode Speaker Clean View ───────────────────── */
+html[data-sidebar="hidden"] .sidebar,
+html[data-sidebar="hidden"] #sidebar-toggle-btn,
+body.is-studio-mode.is-speaker .sidebar,
+body.is-studio-mode.is-speaker #sidebar-toggle-btn {
+  display: none;
+}
+
+html[data-sidebar="hidden"] .main-content,
+body.is-studio-mode.is-speaker .main-content {
+  margin-left: 0;
+  width: 100%;
 }
 
 .breadcrumb {
@@ -1000,6 +1092,15 @@ td {
 @media (max-width: 850px) {
   .studio-shell { grid-template-columns: 1fr; height: auto; }
   .stats-grid   { grid-template-columns: repeat(2, 1fr); }
+  .main-content { margin-left: 0; }
+  .sidebar { box-shadow: 0 0 20px rgba(0, 0, 0, 0.25); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .main-content {
+    transition: none;
+  }
 }
 
 /* ── Base Navigation & Utility Classes ───────────────────────── */
