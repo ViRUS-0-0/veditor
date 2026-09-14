@@ -39,7 +39,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="studio-shell" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}">
+<div class="studio-shell" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}" data-cut-start="{{ talk.cut_start if talk.cut_start is not none else '' }}" data-cut-end="{{ talk.cut_end if talk.cut_end is not none else '' }}">
 
   <!-- ── LEFT: Talk Metadata Panel ───────────────────────────── -->
   <div class="studio-panel">
@@ -110,7 +110,7 @@
               <span class="badge media-asset-badge {% if asset.category == 'intro' or asset.category == 'outro' %}badge-pending{% elif asset.category == 'final' %}badge-done{% elif asset.category == 'raw' %}badge-waiting{% else %}badge-preview{% endif %}">
                 {{ asset.category | upper }}
               </span>
-              <a href="{{ asset.url }}" target="_blank" class="btn btn-ghost btn-sm media-asset-download" title="Download file">
+              <a href="{{ asset.url }}?download=true" download target="_blank" class="btn btn-ghost btn-sm media-asset-download" title="Download file">
                 Download
               </a>
             </div>
@@ -132,6 +132,11 @@
 
   <!-- ── CENTER: Video Player, Big Seeks, Timeline ───────────── -->
   <div class="player-panel">
+    <button id="btn-expand-right-panel" class="btn btn-ghost btn-icon btn-sm expand-panel-tab" title="Restore Review Panel" aria-label="Restore Review Panel" aria-expanded="false" aria-controls="studio-panel-right">
+      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+    </button>
 
     <!-- Video Viewport -->
     <div class="player-viewport">
@@ -260,13 +265,20 @@
   </div>
 
   <!-- ── RIGHT: 4 Milestones & Review Actions ────────────────── -->
-  <div class="studio-panel">
+  <div class="studio-panel" id="studio-panel-right">
     <div class="studio-panel-header">
-      <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-        <polyline points="22 4 12 14.01 9 11.01"/>
-      </svg>
-      <span class="studio-panel-title">Workflow & Review</span>
+      <div class="studio-panel-header-title-wrap">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <span class="studio-panel-title">Workflow & Review</span>
+      </div>
+      <button id="btn-toggle-right-panel" class="btn btn-ghost btn-icon btn-sm" title="Collapse Review Panel" aria-label="Collapse Review Panel" aria-expanded="true" aria-controls="studio-panel-right">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <polyline points="9 18 15 12 9 6"/>
+        </svg>
+      </button>
     </div>
     <div class="studio-panel-body">
 
@@ -276,40 +288,68 @@
           Review Actions
         </div>
 
+        {% if talk.status in ['pending_bounds', 'preview', 'needs_work'] %}
         <div class="review-notes-wrap">
           <label for="review-notes-input" class="review-notes-label">Reviewer Notes</label>
-          <textarea id="review-notes-input" class="input-field" rows="2" placeholder="Optional notes for speaker or reviewer..."></textarea>
+          <textarea id="review-notes-input" class="input-field" rows="2" placeholder="Optional note for organizer"></textarea>
         </div>
+        {% endif %}
+
+        {% if talk.status in ['pending_bounds', 'needs_work'] %}
+        <div class="submission-timestamps-card" id="submission-timestamps-card">
+          <div class="submission-timestamps-header">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+            <span class="submission-timestamps-title">Timestamps to Submit</span>
+          </div>
+          <div class="submission-timestamps-body">
+            <div class="timestamp-range-pill">
+              <div class="timestamp-unit">
+                <span class="timestamp-label">Start (In)</span>
+                <span class="timestamp-val" id="review-in-point">{{ talk.cut_start | timecode }}</span>
+              </div>
+              <span class="timestamp-arrow">→</span>
+              <div class="timestamp-unit">
+                <span class="timestamp-label">End (Out)</span>
+                <span class="timestamp-val" id="review-out-point">{{ talk.cut_end | timecode }}</span>
+              </div>
+            </div>
+            <div class="timestamp-duration-text">
+              <span>Cut Duration:</span>
+              <strong id="review-duration">{% if talk.cut_start is not none and talk.cut_end is not none %}{{ (talk.cut_end - talk.cut_start) | timecode }}{% else %}00:00:00.00{% endif %}</strong>
+            </div>
+          </div>
+        </div>
+        {% endif %}
 
         <div class="action-btns" id="action-btns">
           {% if talk.status == 'waiting_for_files' %}
             <div class="badge badge-waiting badge-status-full">
-              Waiting for video recording upload
+              Status: Awaiting Recording Upload (Drop file in player)
             </div>
-            <button class="btn btn-primary w-full" id="btn-upload-recording">
-              Upload Recording Video
-            </button>
           {% elif talk.status in ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'] %}
             <div class="badge badge-processing badge-status-full">
               <span class="spinner spinner-sm"></span> Processing in background ({{ talk.status | replace('_', ' ') | title }})...
             </div>
           {% elif talk.status == 'pending_approval' %}
             <button class="btn btn-success w-full" id="btn-approve">
-              Approve Schedule Alignment (Gate 1)
+              Approve Raw Video
             </button>
-            <button class="btn btn-danger w-full" id="btn-reject">
-              Reject Talk
+            <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject">
+              Reject Raw Video
             </button>
           {% elif talk.status == 'pending_bounds' %}
             <button class="btn btn-primary w-full" id="btn-approve">
-              Submit Cut Bounds & Generate Preview
+              Submit Timestamps
             </button>
             <button class="btn btn-danger w-full" id="btn-reject">
               Reject / Abort
             </button>
           {% elif talk.status == 'needs_work' %}
             <button class="btn btn-primary w-full" id="btn-approve">
-              Re-cut Bounds & Regenerate Preview
+              Submit Timestamps
             </button>
             <button class="btn btn-danger w-full" id="btn-reject">
               Reject Talk
@@ -325,32 +365,152 @@
               Reject Talk
             </button>
           {% elif talk.status == 'pending_intro_outro' %}
-            <div class="slates-box">
-              <div class="slates-title">Opening & Closing Slates</div>
-              <label class="slates-label">
-                <input type="checkbox" id="check-include-intro" checked>
-                <span>Include Opening Intro Slate</span>
-              </label>
-              <label class="slates-label">
-                <input type="checkbox" id="check-include-outro" checked>
-                <span>Include Closing Outro Slate</span>
-              </label>
-            </div>
-            <button class="btn btn-primary w-full" id="btn-approve">
-              Start Master Assembly & Transcode
-            </button>
-            <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject">
-              Reject / Abort
-            </button>
+            {% if user and user.role in ['organizer', 'admin'] and not is_speaker %}
+              <div class="bumper-studio-card">
+                <div class="bumper-studio-title">EVENT BRANDING & BUMPERS</div>
 
+                <!-- Opening Intro -->
+                <div class="bumper-group">
+                  <div class="bumper-group-header">
+                    <span class="bumper-group-title">Opening Intro</span>
+                    <label class="bumper-toggle-label" for="check-include-intro" title="Enable Opening Intro">
+                      <input type="checkbox" id="check-include-intro" class="toggle-checkbox" {% if talk.include_intro %}checked{% endif %}>
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+
+                  <div class="bumper-nested-options {% if not talk.include_intro %}is-hidden{% endif %}" id="intro-options-wrap">
+                    <div class="bumper-segmented-control">
+                      <label class="bumper-segment {% if talk.intro_source != 'custom' %}is-active{% endif %}">
+                        <input type="radio" name="intro_source" value="generated" class="bumper-radio-input" {% if talk.intro_source != 'custom' %}checked{% endif %}>
+                        <span>Generated Title</span>
+                      </label>
+                      <label class="bumper-segment {% if talk.intro_source == 'custom' %}is-active{% endif %}">
+                        <input type="radio" name="intro_source" value="custom" class="bumper-radio-input" {% if talk.intro_source == 'custom' %}checked{% endif %}>
+                        <span>Custom Video</span>
+                      </label>
+                    </div>
+
+                    <div class="bumper-custom-wrap {% if talk.intro_source == 'custom' %}is-visible{% endif %}" id="intro-custom-wrap">
+                      <div class="bumper-file-group">
+                        <input type="text" id="custom-intro-path" class="input-field input-bumper-path" placeholder="/path/to/custom_intro.mp4" value="{{ talk.custom_intro_path or '' }}">
+                        <label for="custom-intro-file" class="btn btn-ghost btn-sm btn-bumper-browse" title="Choose custom file">
+                          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                          </svg>
+                          <span>Browse</span>
+                        </label>
+                        <input type="file" id="custom-intro-file" class="custom-bumper-file-input" accept="video/mp4,video/*">
+                      </div>
+                      <span class="bumper-path-hint">Server ingest path or choose local file</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Closing Outro -->
+                <div class="bumper-group">
+                  <div class="bumper-group-header">
+                    <span class="bumper-group-title">Closing Outro</span>
+                    <label class="bumper-toggle-label" for="check-include-outro" title="Enable Closing Outro">
+                      <input type="checkbox" id="check-include-outro" class="toggle-checkbox" {% if talk.include_outro %}checked{% endif %}>
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </div>
+
+                  <div class="bumper-nested-options {% if not talk.include_outro %}is-hidden{% endif %}" id="outro-options-wrap">
+                    <div class="bumper-segmented-control">
+                      <label class="bumper-segment {% if talk.outro_source != 'custom' %}is-active{% endif %}">
+                        <input type="radio" name="outro_source" value="generated" class="bumper-radio-input" {% if talk.outro_source != 'custom' %}checked{% endif %}>
+                        <span>Generated Title</span>
+                      </label>
+                      <label class="bumper-segment {% if talk.outro_source == 'custom' %}is-active{% endif %}">
+                        <input type="radio" name="outro_source" value="custom" class="bumper-radio-input" {% if talk.outro_source == 'custom' %}checked{% endif %}>
+                        <span>Custom Video</span>
+                      </label>
+                    </div>
+
+                    <div class="bumper-custom-wrap {% if talk.outro_source == 'custom' %}is-visible{% endif %}" id="outro-custom-wrap">
+                      <div class="bumper-file-group">
+                        <input type="text" id="custom-outro-path" class="input-field input-bumper-path" placeholder="/path/to/custom_outro.mp4" value="{{ talk.custom_outro_path or '' }}">
+                        <label for="custom-outro-file" class="btn btn-ghost btn-sm btn-bumper-browse" title="Choose custom file">
+                          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                          </svg>
+                          <span>Browse</span>
+                        </label>
+                        <input type="file" id="custom-outro-file" class="custom-bumper-file-input" accept="video/mp4,video/*">
+                      </div>
+                      <span class="bumper-path-hint">Server ingest path or choose local file</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <button class="btn btn-primary w-full" id="btn-approve">
+                Start Master Assembly & Transcode
+              </button>
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject">
+                Reject / Abort
+              </button>
+            {% else %}
+              <div class="badge badge-waiting badge-status-full">
+                Awaiting Organizer Intro/Outro Selection
+              </div>
+            {% endif %}
           {% elif talk.status in ['rejected', 'broken'] %}
             <button class="btn btn-primary w-full" id="btn-retry">
               Retry Talk Lifecycle
             </button>
           {% elif talk.status == 'done' %}
             <div class="badge badge-done badge-status-full">
-              Published & Complete
+              <span class="badge-dot"></span> Published & Complete
             </div>
+
+            <div class="published-download-card">
+              <div class="published-download-header">
+                <span class="published-download-title">Production Video</span>
+                <span class="badge badge-done">READY</span>
+              </div>
+              <p class="published-download-desc">Master broadcast transcode is finished and published.</p>
+
+              <a href="{{ final_asset.url if final_asset else ('/studio/media/' ~ talk.id ~ '/final/final.mp4') }}?download=true" download class="btn btn-primary w-full btn-download-master" id="btn-download-master" title="Download Master Video">
+                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span>Download Master Video</span>
+              </a>
+            </div>
+
+            {% if media_assets and media_assets | length > 1 %}
+              <div class="published-other-assets">
+                <div class="published-other-title">All Generated Assets</div>
+                <div class="published-assets-list">
+                  {% for asset in media_assets %}
+                    {% if asset.category != 'final' %}
+                      <div class="published-asset-row">
+                        <span class="badge media-asset-badge {% if asset.category == 'intro' or asset.category == 'outro' %}badge-pending{% elif asset.category == 'raw' %}badge-waiting{% else %}badge-preview{% endif %}">
+                          {{ asset.category | upper }}
+                        </span>
+                        <span class="published-asset-name" title="{{ asset.label }}">{{ asset.label }}</span>
+                        <a href="{{ asset.url }}?download=true" download class="btn btn-ghost btn-xs btn-asset-download" title="Download {{ asset.label }}">
+                          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                          </svg>
+                          <span>Download</span>
+                        </a>
+                      </div>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            {% endif %}
           {% endif %}
         </div>
 
@@ -370,7 +530,8 @@
         </div>
       </div>
 
-      <!-- 4 Lifecycle Milestones -->
+      {# 4 Lifecycle Milestones & Recent Jobs (Admin Only) #}
+      {% if user and user.role == 'admin' and not is_speaker %}
       <div class="milestones-title">
         Pipeline Milestones
       </div>
@@ -398,7 +559,7 @@
 
       <div class="divider"></div>
 
-      <!-- Recent Jobs -->
+      {# Recent Jobs #}
       <div class="recent-jobs-title">
         Recent Jobs
       </div>
@@ -437,6 +598,7 @@
       </div>
       {% else %}
       <div id="jobs-empty">No pipeline jobs logged yet.</div>
+      {% endif %}
       {% endif %}
 
     </div>

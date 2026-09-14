@@ -88,6 +88,14 @@ let inPointSec  = 0;
 let outPointSec = 0;
 let isPlayingCut = false;
 
+const initShellBounds = getStudioShell();
+if (initShellBounds) {
+  const initCutStart = parseFloat(initShellBounds.dataset.cutStart);
+  const initCutEnd = parseFloat(initShellBounds.dataset.cutEnd);
+  if (!isNaN(initCutStart) && initCutStart >= 0) inPointSec = initCutStart;
+  if (!isNaN(initCutEnd) && initCutEnd > inPointSec) outPointSec = initCutEnd;
+}
+
 // ── Timecode Format & Parse ─────────────────────────────────────
 function formatTimecode(t) {
   if (!isFinite(t) || isNaN(t) || t < 0) return '00:00:00.00';
@@ -210,6 +218,16 @@ function updateCutMarkersUI() {
 
   if (inputInPoint)  inputInPoint.value  = formatTimecode(inPointSec);
   if (inputOutPoint) inputOutPoint.value = formatTimecode(outPointSec);
+
+  const reviewIn = document.getElementById('review-in-point');
+  const reviewOut = document.getElementById('review-out-point');
+  const reviewDur = document.getElementById('review-duration');
+  if (reviewIn) reviewIn.textContent = formatTimecode(inPointSec);
+  if (reviewOut) reviewOut.textContent = formatTimecode(outPointSec);
+  if (reviewDur) {
+    const diff = Math.max(0, outPointSec - inPointSec);
+    reviewDur.textContent = formatTimecode(diff);
+  }
 }
 
 function setInPoint(timeSec) {
@@ -347,8 +365,12 @@ if (video) {
   });
   video.addEventListener('loadedmetadata', () => {
     if (scrubber) scrubber.max = 1000;
-    outPointSec = video.duration || 10;
-    inPointSec = 0;
+    const dur = video.duration || 10;
+    const shell = getStudioShell();
+    const rawStart = shell && shell.dataset.cutStart ? parseFloat(shell.dataset.cutStart) : NaN;
+    const rawEnd = shell && shell.dataset.cutEnd ? parseFloat(shell.dataset.cutEnd) : NaN;
+    inPointSec = (!isNaN(rawStart) && rawStart >= 0) ? rawStart : 0;
+    outPointSec = (!isNaN(rawEnd) && rawEnd > inPointSec) ? Math.min(dur, rawEnd) : dur;
     updateTimecode();
     updateTimelineTicks();
     updateCutMarkersUI();
@@ -461,19 +483,27 @@ window.approveTalk = async function(id) {
     } else if (talkStatus === 'pending_bounds' || talkStatus === 'needs_work') {
       const cutStart = formatTimecode(inPointSec);
       const cutEnd = formatTimecode(outPointSec);
-      await postAPI(`/talks/${id}/cut`, { cut_start: cutStart, cut_end: cutEnd });
+      const cutPayload = { cut_start: cutStart, cut_end: cutEnd };
+      if (notes) cutPayload.note = notes;
+      await postAPI(`/talks/${id}/cut`, cutPayload);
     } else if (talkStatus === 'preview') {
       await postAPI(`/talks/${id}/review`, { decision: 'approve', note: notes || 'Approved in review studio' });
     } else if (talkStatus === 'pending_intro_outro') {
-      const includeIntro = document.getElementById('check-include-intro') ? document.getElementById('check-include-intro').checked : true;
-      const includeOutro = document.getElementById('check-include-outro') ? document.getElementById('check-include-outro').checked : true;
+      const includeIntro = document.getElementById('check-include-intro') ? document.getElementById('check-include-intro').checked : false;
+      const includeOutro = document.getElementById('check-include-outro') ? document.getElementById('check-include-outro').checked : false;
+      const introSource = document.querySelector('input[name="intro_source"]:checked')?.value || 'generated';
+      const outroSource = document.querySelector('input[name="outro_source"]:checked')?.value || 'generated';
+      const customIntroPath = document.getElementById('custom-intro-path')?.value?.trim() || null;
+      const customOutroPath = document.getElementById('custom-outro-path')?.value?.trim() || null;
+
       await postAPI(`/talks/${id}/assemble`, {
         include_intro: includeIntro,
         include_outro: includeOutro,
-        intro_source: 'generated',
-        outro_source: 'generated',
+        intro_source: introSource,
+        outro_source: outroSource,
+        custom_intro_path: (includeIntro && introSource === 'custom') ? customIntroPath : null,
+        custom_outro_path: (includeOutro && outroSource === 'custom') ? customOutroPath : null,
       });
-
     } else {
       await postAPI(`/talks/${id}/approve`, { decision: 'approve' });
     }
@@ -600,26 +630,24 @@ function renderRecentJobs(jobs) {
     if (job.id) card.dataset.jobId = String(job.id);
 
     const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;';
+    header.className = 'job-header-flex';
 
     const kindSpan = document.createElement('span');
-    kindSpan.style.cssText = 'font-family:var(--v-font-mono);font-weight:600;';
+    kindSpan.className = 'job-kind-mono';
     kindSpan.textContent = job.kind || '';
 
     const badgeGroup = document.createElement('div');
-    badgeGroup.style.cssText = 'display:flex;align-items:center;gap:5px;';
+    badgeGroup.className = 'job-badges-flex';
 
     if (job.progress_pct !== null && job.progress_pct !== undefined && isRunning) {
       const progressBadge = document.createElement('span');
-      progressBadge.className = 'badge badge-info';
-      progressBadge.style.cssText = 'font-size:0.65rem;padding:1px 5px;';
+      progressBadge.className = 'badge badge-info job-badge-sm';
       progressBadge.textContent = `${Math.round(job.progress_pct)}%`;
       badgeGroup.appendChild(progressBadge);
     }
 
     const statusBadge = document.createElement('span');
-    statusBadge.className = `badge ${badgeClass}`;
-    statusBadge.style.cssText = 'font-size:0.65rem;padding:1px 5px;';
+    statusBadge.className = `badge job-badge-sm ${badgeClass}`;
     if (isRunning) {
       const spinner = document.createElement('span');
       spinner.className = 'spinner spinner-sm';
@@ -675,8 +703,7 @@ async function pollStudioJobs() {
 
   try {
     const key = (window.getApiKey && window.getApiKey()) || '';
-    if (!key) return;
-    const headers = { 'X-API-Key': key };
+    const headers = key ? { 'X-API-Key': key } : {};
     const res = await (window.authFetch || fetch)(`/talks/${talkId}/jobs`, { headers, _isPolling: true });
     if (!res.ok) return;
     const data = await res.json();
@@ -694,10 +721,67 @@ async function pollStudioJobs() {
 }
 
 function startStudioPolling() {
-  const key = (window.getApiKey && window.getApiKey()) || '';
-  if (!key) return;
   if (studioPollInterval) clearInterval(studioPollInterval);
   studioPollInterval = setInterval(pollStudioJobs, 2500);
+}
+
+// ── Collapsible Right Sidebar ────────────────────────────────────
+function initRightPanelCollapse() {
+  const shell = getStudioShell();
+  const btnToggle = document.getElementById('btn-toggle-right-panel');
+  const btnExpand = document.getElementById('btn-expand-right-panel');
+
+  function setCollapsed(collapsed, shiftFocus = false) {
+    if (!shell) return;
+    shell.classList.toggle('right-panel-collapsed', collapsed);
+    if (btnToggle) btnToggle.setAttribute('aria-expanded', String(!collapsed));
+    if (btnExpand) btnExpand.setAttribute('aria-expanded', String(collapsed));
+    if (shiftFocus) (collapsed ? btnExpand : btnToggle)?.focus();
+    try {
+      localStorage.setItem('veditor_right_panel_collapsed', String(collapsed));
+    } catch (_) {}
+  }
+
+  try {
+    const isCollapsed = localStorage.getItem('veditor_right_panel_collapsed') === 'true';
+    if (isCollapsed) setCollapsed(true, false);
+  } catch (_) {}
+
+  if (btnToggle) {
+    btnToggle.addEventListener('click', () => setCollapsed(true, true));
+  }
+  if (btnExpand) {
+    btnExpand.addEventListener('click', () => setCollapsed(false, true));
+  }
+}
+
+// ── Bumper Studio Controls ───────────────────────────────────────
+function initBumperStudio() {
+  ['intro', 'outro'].forEach(type => {
+    const toggle = document.getElementById(`check-include-${type}`);
+    const wrap = document.getElementById(`${type}-options-wrap`);
+    if (toggle && wrap) {
+      toggle.addEventListener('change', () => wrap.classList.toggle('is-hidden', !toggle.checked));
+    }
+
+    const radios = document.querySelectorAll(`input[name="${type}_source"]`);
+    const customWrap = document.getElementById(`${type}-custom-wrap`);
+    const file = document.getElementById(`custom-${type}-file`);
+    const path = document.getElementById(`custom-${type}-path`);
+
+    radios.forEach(r => {
+      r.addEventListener('change', () => {
+        radios.forEach(rad => rad.closest('.bumper-segment')?.classList.toggle('is-active', rad.checked));
+        if (customWrap) customWrap.classList.toggle('is-visible', r.value === 'custom' && r.checked);
+      });
+    });
+
+    if (file && path) {
+      file.addEventListener('change', () => {
+        if (file.files?.[0]) path.value = file.files[0].name;
+      });
+    }
+  });
 }
 
 // ── Initial Setup & Event Listeners ─────────────────────────────
@@ -710,6 +794,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initInitialVideo();
   updateCutMarkersUI();
+  initRightPanelCollapse();
+  initBumperStudio();
   pollStudioJobs();
   startStudioPolling();
 
@@ -764,11 +850,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const actionBtns = document.getElementById('action-btns');
   if (actionBtns) {
     actionBtns.addEventListener('click', (e) => {
-      const uploadBtn = e.target.closest('#btn-upload-recording');
-      if (uploadBtn && videoInput) {
-        videoInput.click();
-        return;
-      }
       const approveBtn = e.target.closest('#btn-approve');
       if (approveBtn) {
         window.approveTalk(getTalkId());

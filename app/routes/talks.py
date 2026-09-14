@@ -516,6 +516,15 @@ def submit_cut_bounds(
     talk.cut_start = cut_start_s
     talk.cut_end = cut_end_s
     advance(talk, "cutting")
+    if payload.note:
+        user_id = user.user_id if (not user.is_machine and not user.is_sso) else None
+        review = models.Review(
+            talk_id=talk.id,
+            decision="cut",
+            note=payload.note,
+            user_id=user_id,
+        )
+        db.add(review)
     db.commit()
     db.refresh(talk)
 
