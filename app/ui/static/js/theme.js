@@ -62,6 +62,93 @@ window.VEditorConfig = window.VEditorConfig || {
   });
 })();
 
+// ── Sidebar Manager ─────────────────────────────────────────────
+(function () {
+  function isStudioPath(path = window.location.pathname) {
+    return path === '/studio' || path.startsWith('/studio/');
+  }
+
+  function isTalkPath(path = window.location.pathname) {
+    return path.includes('/studio/talks/');
+  }
+
+  function checkSpeakerStudioMode() {
+    if (isTalkPath()) {
+      const role = typeof window.getUserRole === 'function'
+        ? window.getUserRole()
+        : (localStorage.getItem('veditor_role') || 'admin');
+      if (role !== 'organizer' && role !== 'admin') {
+        document.documentElement.setAttribute('data-sidebar', 'hidden');
+        if (document.body) document.body.classList.add('is-speaker');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function getInitialSidebarCollapsed() {
+    const saved = localStorage.getItem('veditor_sidebar_state');
+    if (saved === 'collapsed') return true;
+    if (saved === 'expanded') return false;
+    // Default to collapsed in Studio mode or on mobile screens
+    return isStudioPath() || window.innerWidth < 850;
+  }
+
+  function setSidebarCollapsed(collapsed, persist = true) {
+    if (document.documentElement.getAttribute('data-sidebar') === 'hidden') {
+      return;
+    }
+    const state = collapsed ? 'collapsed' : 'expanded';
+    document.documentElement.setAttribute('data-sidebar', state);
+    if (persist) {
+      localStorage.setItem('veditor_sidebar_state', state);
+    }
+
+    const isExpanded = String(!collapsed);
+    const toggleBtn = document.getElementById('sidebar-toggle-btn');
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-expanded', isExpanded);
+    }
+    const collapseBtn = document.getElementById('sidebar-collapse-btn');
+    if (collapseBtn) {
+      collapseBtn.setAttribute('aria-expanded', isExpanded);
+    }
+
+    window.dispatchEvent(new Event('resize'));
+    window.dispatchEvent(new CustomEvent('veditor:sidebar-toggle', { detail: { collapsed } }));
+  }
+
+  window.toggleSidebar = function () {
+    const isCollapsed = document.documentElement.getAttribute('data-sidebar') === 'collapsed';
+    setSidebarCollapsed(!isCollapsed, true);
+  };
+
+  window.setSidebarCollapsed = setSidebarCollapsed;
+
+  // Immediate init before DOM paints to prevent flash
+  if (!checkSpeakerStudioMode()) {
+    const initialCollapse = getInitialSidebarCollapsed();
+    document.documentElement.setAttribute('data-sidebar', initialCollapse ? 'collapsed' : 'expanded');
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    if (!checkSpeakerStudioMode()) {
+      const shouldCollapse = getInitialSidebarCollapsed();
+      setSidebarCollapsed(shouldCollapse, false);
+
+      const toggleBtn = document.getElementById('sidebar-toggle-btn');
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', window.toggleSidebar);
+      }
+
+      const collapseBtn = document.getElementById('sidebar-collapse-btn');
+      if (collapseBtn) {
+        collapseBtn.addEventListener('click', () => setSidebarCollapsed(true));
+      }
+    }
+  });
+})();
+
 // ── Auth & Role Manager ─────────────────────────────────────────
 window.getApiKey = function () {
   return localStorage.getItem('veditor_api_key') || '';
