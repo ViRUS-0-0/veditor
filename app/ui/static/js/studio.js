@@ -126,9 +126,23 @@ window.loadVideoSrc = function(url) {
   video.load();
   video.currentTime = 0;
   video.play().catch(() => {});
+
+  const sourceSelect = document.getElementById('media-source-select');
+  if (sourceSelect && sourceSelect.value !== url) {
+    sourceSelect.value = url;
+  }
+  const downloadBtn = document.getElementById('media-download-btn');
+  if (downloadBtn && url) {
+    downloadBtn.href = url;
+  }
 };
 
 function initInitialVideo() {
+  const sourceSelect = document.getElementById('media-source-select');
+  if (sourceSelect && sourceSelect.value) {
+    window.loadVideoSrc(sourceSelect.value);
+    return;
+  }
   const urls = getPreviewUrls();
   if (Array.isArray(urls) && urls.length > 0) {
     window.loadVideoSrc(urls[0]);
@@ -689,6 +703,20 @@ document.addEventListener('DOMContentLoaded', () => {
   updateCutMarkersUI();
   pollStudioJobs();
   startStudioPolling();
+
+  const sourceSelect = document.getElementById('media-source-select');
+  const downloadBtn = document.getElementById('media-download-btn');
+  if (sourceSelect) {
+    if (downloadBtn && sourceSelect.value) {
+      downloadBtn.href = sourceSelect.value;
+    }
+    sourceSelect.addEventListener('change', () => {
+      const url = sourceSelect.value;
+      if (url) {
+        window.loadVideoSrc(url);
+      }
+    });
+  }
 
   const videoInput = document.getElementById('video-file-input');
   if (videoInput) {

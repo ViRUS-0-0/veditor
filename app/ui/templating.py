@@ -25,6 +25,26 @@ _env = jinja2.Environment(
 _env.globals["UTC"] = UTC
 
 
+def format_duration(seconds: float | None) -> str:
+    if seconds is None or seconds <= 0:
+        return ""
+    total = round(seconds)
+    h = total // 3600
+    m = (total % 3600) // 60
+    s = total % 60
+    parts = []
+    if h > 0:
+        parts.append(f"{h}h")
+    if m > 0:
+        parts.append(f"{m}m")
+    if s > 0:
+        parts.append(f"{s}s")
+    return " ".join(parts) if parts else "0s"
+
+
+_env.filters["format_duration"] = format_duration
+
+
 def auth_context_processor(request: Request) -> dict[str, Any]:
     if hasattr(request, "state") and hasattr(request.state, "user"):
         return {"user": request.state.user}

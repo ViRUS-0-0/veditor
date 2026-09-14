@@ -571,12 +571,9 @@ def studio(
 
     # Build categorized media assets that can be watched in the studio
     asset_defs = [
+        ("final", "final.mp4", "Master Video (Final)"),
         ("preview", "preview.mp4", "Preview Video"),
         ("raw", "raw.mp4", "Raw Recording"),
-        ("intro", "intro.mp4", "Opening Title Slate"),
-        ("outro", "outro.mp4", "Outro Slate"),
-        ("cut", "cut.mp4", "Cut Talk Clip"),
-        ("final", "final.mp4", "Master Video (Final)"),
     ]
     media_assets = []
     seen_urls = set()

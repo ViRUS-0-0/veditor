@@ -199,6 +199,42 @@
   font-size: 0.75rem;
 }
 
+.source-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.source-select-label {
+  font-size: 0.72rem;
+  color: var(--v-text-muted);
+}
+
+#media-source-select {
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  max-width: 155px;
+}
+
+.media-download-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  height: 24px;
+  color: var(--v-text-secondary);
+  border: 1px solid var(--v-border-subtle);
+  border-radius: var(--v-radius-xs);
+  text-decoration: none;
+}
+
+.media-download-btn:hover {
+  color: var(--v-primary);
+  border-color: var(--v-primary);
+  background: var(--v-bg-surface-hover);
+}
+
 #icon-pause {
   display: none;
 }

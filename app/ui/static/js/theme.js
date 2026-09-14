@@ -64,7 +64,15 @@ window.VEditorConfig = window.VEditorConfig || {
       themeBtn.addEventListener('click', window.toggleTheme);
     }
 
-    // ── User Dropdown Menu (native <details> dismiss) ───────────────
+    // ── User Dropdown Menu (native <details> dismiss & a11y sync) ────
+    const userMenu = document.getElementById('user-menu-wrapper');
+    const userMenuBtn = document.getElementById('user-menu-btn');
+    if (userMenu && userMenuBtn) {
+      userMenu.addEventListener('toggle', () => {
+        userMenuBtn.setAttribute('aria-expanded', String(userMenu.open));
+      });
+    }
+
     document.addEventListener('click', (e) => {
       const menu = document.getElementById('user-menu-wrapper');
       if (menu?.open && !menu.contains(e.target)) {
@@ -86,20 +94,10 @@ window.VEditorConfig = window.VEditorConfig || {
     return path === '/studio' || path.startsWith('/studio/');
   }
 
-  function isTalkPath(path = window.location.pathname) {
-    return path.includes('/studio/talks/');
-  }
-
   function checkSpeakerStudioMode() {
-    if (isTalkPath()) {
-      const role = typeof window.getUserRole === 'function'
-        ? window.getUserRole()
-        : (localStorage.getItem('veditor_role') || 'admin');
-      if (role !== 'organizer' && role !== 'admin') {
-        document.documentElement.setAttribute('data-sidebar', 'hidden');
-        if (document.body) document.body.classList.add('is-speaker');
-        return true;
-      }
+    if (document.body && document.body.classList.contains('is-speaker')) {
+      document.documentElement.setAttribute('data-sidebar', 'hidden');
+      return true;
     }
     return false;
   }

@@ -47,8 +47,8 @@
         {% if user %}
           <span class="badge badge-role badge-{{ user.role }}">{{ user.role | capitalize }}</span>
           <details class="user-menu-wrapper" id="user-menu-wrapper">
-            <summary class="user-bubble-btn" id="user-menu-btn" title="User Menu">
-              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <summary class="user-bubble-btn" id="user-menu-btn" title="User menu" aria-label="User menu" aria-expanded="false" aria-controls="user-dropdown-menu">
+              <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                 <circle cx="12" cy="7" r="4"/>
               </svg>
