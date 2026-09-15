@@ -67,24 +67,32 @@ window.VEditorConfig = window.VEditorConfig || {
     // ── User Dropdown Menu (native <details> dismiss & a11y sync) ────
     const userMenu = document.getElementById('user-menu-wrapper');
     const userMenuBtn = document.getElementById('user-menu-btn');
-    if (userMenu && userMenuBtn) {
-      userMenu.addEventListener('toggle', () => {
-        userMenuBtn.setAttribute('aria-expanded', String(userMenu.open));
+    if (userMenu) {
+      const closeUserMenu = () => {
+        if (userMenu.open) {
+          userMenu.removeAttribute('open');
+        }
+      };
+
+      if (userMenuBtn) {
+        userMenu.addEventListener('toggle', () => {
+          userMenuBtn.setAttribute('aria-expanded', String(userMenu.open));
+        });
+      }
+
+      document.addEventListener('click', (event) => {
+        if (userMenu.open && event.target instanceof Node && !userMenu.contains(event.target)) {
+          closeUserMenu();
+        }
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && userMenu.open) {
+          closeUserMenu();
+          event.stopPropagation();
+        }
       });
     }
-
-    document.addEventListener('click', (e) => {
-      const menu = document.getElementById('user-menu-wrapper');
-      if (menu?.open && !menu.contains(e.target)) {
-        menu.removeAttribute('open');
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        document.getElementById('user-menu-wrapper')?.removeAttribute('open');
-      }
-    });
   });
 })();
 
