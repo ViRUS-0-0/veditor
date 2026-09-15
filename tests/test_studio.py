@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -459,22 +460,34 @@ def test_talk_waveform_endpoint(client: TestClient, db_session, temp_storage, tm
     try:
         temp_storage.put(f"{talk.id}/preview/preview.mp4", clip)
 
-        # First fetch: computes on the fly and caches
+        # A cache miss must not decode media on the request thread.
         res = client.get(
             f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
         )
         assert res.status_code == 200
-        data = res.json()
-        assert "peaks" in data
-        assert len(data["peaks"]) > 0
-        assert all(0.0 <= p <= 1.0 for p in data["peaks"])
+        assert res.json() == {"peaks": []}
 
-        # Second fetch: served from cached json
+        # Background preview generation stores the waveform cache for later reads.
+        data = {"peaks": [0.25, 1.0, 0.5]}
+        temp_storage.put(
+            f"{talk.id}/preview/preview.mp4.waveform.json",
+            json.dumps(data).encode("utf-8"),
+        )
         res_cached = client.get(
             f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
         )
         assert res_cached.status_code == 200
         assert res_cached.json() == data
+        assert "peaks" in data
+        assert len(data["peaks"]) > 0
+        assert all(0.0 <= p <= 1.0 for p in data["peaks"])
+
+        # Subsequent fetches are served from cached JSON.
+        res_cached_again = client.get(
+            f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+        )
+        assert res_cached_again.status_code == 200
+        assert res_cached_again.json() == data
 
         # Query with explicit category and filename
         res_explicit = client.get(

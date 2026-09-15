@@ -1,4 +1,3 @@
-import json
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -12,17 +11,19 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.auth import hash_api_key
 from app.config import settings
 from app.db import get_db
-from app.pipeline.waveform import extract_waveform_peaks
+from app.queue import light_queue
 from app.routes.auth import _get_authenticated_user_from_cookie
 from app.routes.talks import _cancel_talk_jobs
 from app.security import decode_sso_token
 from app.storage import StorageBackend, get_storage_backend
+from app.tasks import job_waveform
 from app.ui.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -528,21 +529,13 @@ def get_talk_waveform(
                     headers={"Cache-Control": "public, max-age=3600"},
                 )
             except OSError:
-                pass
+                logger.warning("Failed reading cached waveform for %s", waveform_key)
         try:
-            media_path = storage.get(media_key)
-            if isinstance(media_path, Path) and media_path.is_file():
-                content = json.dumps(
-                    {"peaks": extract_waveform_peaks(media_path)}
-                ).encode("utf-8")
-                storage.put(waveform_key, content)
-                return Response(
-                    content=content,
-                    media_type="application/json",
-                    headers={"Cache-Control": "public, max-age=3600"},
-                )
-        except (OSError, ValueError, RuntimeError) as exc:
-            logger.warning("Failed generating waveform for %s: %s", media_key, exc)
+            light_queue.enqueue(job_waveform, talk_id, media_key)
+        except (OSError, RedisError, RuntimeError) as exc:
+            logger.warning(
+                "Failed to enqueue waveform generation for %s: %s", media_key, exc
+            )
 
     return Response(
         content=b'{"peaks":[]}',
