@@ -121,12 +121,9 @@ def stage_custom_clip(
         raise IngestPathRejectedError("Invalid path")
 
     roots = [Path(r).resolve() for r in settings.ingest_roots]
-    staging_root = (Path(tempfile.gettempdir()) / "veditor_staging").resolve()
     resolved_path = None
     target_path = Path(path_str)
     if target_path.is_absolute():
-        if staging_root not in roots:
-            roots.append(staging_root)
         try:
             candidate = target_path.resolve(strict=True)
             for root in roots:

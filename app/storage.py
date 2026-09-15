@@ -222,7 +222,10 @@ def cleanup_bumpers(
     for path_str in custom_paths:
         if path_str:
             try:
-                p = Path(path_str).resolve()
+                path = Path(path_str)
+                p = (
+                    staging_dir.parent / path if not path.is_absolute() else path
+                ).resolve()
                 if p.is_file() and p.is_relative_to(staging_dir):
                     p.unlink(missing_ok=True)
             except Exception as exc:  # noqa: BLE001
