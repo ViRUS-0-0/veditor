@@ -266,18 +266,11 @@ def get_current_user(
                     source="cookie",
                     event_ids=[],
                 )
-            has_bearer_fallback = (
-                bearer_creds is not None
-                or req_headers.get("Authorization") is not None
-                or req_headers.get("authorization") is not None
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired session token",
+                headers={"WWW-Authenticate": "Bearer"},
             )
-            if not has_bearer_fallback:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid or expired session token",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            # A stale or malformed session cookie should not block a bearer token.
 
     # 4. Machine client cookie fallback (veditor_api_key)
     cookie_api = _normalize_auth_value(cookie_api_key)
