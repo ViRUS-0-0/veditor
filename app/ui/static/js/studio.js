@@ -56,7 +56,6 @@ const video           = document.getElementById('main-video');
 const noPreview       = document.getElementById('no-preview-msg');
 const timecode        = document.getElementById('timecode-display');
 const durationDisplay = document.getElementById('duration-display');
-const scrubber        = document.getElementById('video-scrubber');
 const speedSel        = document.getElementById('speed-select');
 const jumpInput       = document.getElementById('jump-time-input');
 
@@ -72,9 +71,11 @@ const btnSeekMegaBack = document.getElementById('btn-seek-mega-back');
 const btnSeekMegaFwd  = document.getElementById('btn-seek-mega-fwd');
 const btnPrevFrame    = document.getElementById('btn-prev-frame');
 const btnNextFrame    = document.getElementById('btn-next-frame');
+const btnMute         = document.getElementById('btn-mute');
 
 // Timeline elements
 const tlTrack         = document.getElementById('timeline-track');
+const tlWaveform      = document.getElementById('tl-waveform');
 const tlStartMarker   = document.getElementById('tl-start-marker');
 const tlEndMarker     = document.getElementById('tl-end-marker');
 const tlPlayhead      = document.getElementById('tl-playhead');
@@ -87,6 +88,8 @@ const btnPlayCut      = document.getElementById('btn-play-cut');
 let inPointSec  = 0;
 let outPointSec = 0;
 let isPlayingCut = false;
+let currentWaveformPeaks = [];
+let waveformAbortController = null;
 
 const initShellBounds = getStudioShell();
 if (initShellBounds) {
@@ -126,6 +129,118 @@ function parseTimecode(str) {
   return parseFloat(str) || 0;
 }
 
+// ── Audio Waveform Rendering ────────────────────────────────────
+function drawWaveform() {
+  if (!tlWaveform || !tlTrack) return;
+  const rect = tlTrack.getBoundingClientRect();
+  const width = Math.floor(rect.width);
+  const height = Math.floor(rect.height);
+  if (width <= 0 || height <= 0) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  tlWaveform.width = width * dpr;
+  tlWaveform.height = height * dpr;
+
+  const ctx = tlWaveform.getContext('2d');
+  ctx.clearRect(0, 0, tlWaveform.width, tlWaveform.height);
+  if (!currentWaveformPeaks || currentWaveformPeaks.length === 0) return;
+
+  ctx.save();
+  ctx.scale(dpr, dpr);
+
+  const waveColor = getComputedStyle(document.documentElement).getPropertyValue('--v-primary').trim() || '#2563eb';
+  const count = currentWaveformPeaks.length;
+  const numPoints = Math.max(30, Math.floor(width / 4));
+  const bottomPadding = 2;
+  const usableHeight = Math.max(2, height - bottomPadding - 4);
+
+  const points = [];
+  for (let i = 0; i <= numPoints; i++) {
+    const x = (i / numPoints) * width;
+    const pStart = Math.floor((i / numPoints) * count);
+    const pEnd = Math.max(pStart + 1, Math.floor(((i + 1) / numPoints) * count));
+    let peak = 0;
+    for (let j = pStart; j < pEnd; j++) {
+      if (currentWaveformPeaks[j] > peak) peak = currentWaveformPeaks[j];
+    }
+    const scaled = Math.pow(Math.max(0.02, Math.min(1.0, peak)), 0.72);
+    points.push({ x, y: height - bottomPadding - Math.max(2, scaled * usableHeight) });
+  }
+
+  if (points.length >= 2) {
+    const contour = new Path2D();
+    contour.moveTo(points[0].x, points[0].y);
+    for (let i = 0; i < points.length - 1; i++) {
+      contour.quadraticCurveTo(points[i].x, points[i].y, (points[i].x + points[i + 1].x) / 2, (points[i].y + points[i + 1].y) / 2);
+    }
+    contour.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+
+    const fillPath = new Path2D(contour);
+    fillPath.lineTo(width, height - bottomPadding);
+    fillPath.lineTo(0, height - bottomPadding);
+    fillPath.closePath();
+
+    ctx.fillStyle = waveColor;
+    ctx.globalAlpha = 0.28;
+    ctx.fill(fillPath);
+
+    ctx.strokeStyle = waveColor;
+    ctx.lineWidth = 1.75;
+    ctx.globalAlpha = 0.85;
+    ctx.stroke(contour);
+  }
+
+  ctx.restore();
+}
+
+async function loadWaveformForUrl(videoUrl) {
+  const talkId = getTalkId();
+  if (!talkId || !tlWaveform) return;
+
+  if (waveformAbortController) {
+    try { waveformAbortController.abort(); } catch (_) {}
+  }
+  waveformAbortController = new AbortController();
+
+  let endpoint = `/studio/talks/${talkId}/waveform`;
+  if (videoUrl) {
+    const match = String(videoUrl).match(/\/media\/\d+\/(?:([^/?#]+)\/)?([^/?#]+)/);
+    if (match) {
+      const category = match[1] || match[2].replace(/\.mp4$/i, '');
+      endpoint += `?category=${encodeURIComponent(category)}&filename=${encodeURIComponent(match[2])}`;
+    }
+  }
+
+  try {
+    const res = await (window.authFetch || fetch)(endpoint, {
+      signal: waveformAbortController.signal,
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && Array.isArray(data.peaks)) {
+      currentWaveformPeaks = data.peaks;
+      drawWaveform();
+    }
+  } catch (err) {
+    if (err && err.name !== 'AbortError') {
+      console.warn('Could not load waveform:', err);
+    }
+  }
+}
+
+function initWaveformListeners() {
+  if (!tlWaveform || !tlTrack) return;
+  window.addEventListener('resize', drawWaveform);
+  if (window.ResizeObserver) {
+    const ro = new ResizeObserver(() => drawWaveform());
+    ro.observe(tlTrack);
+  }
+  if (window.MutationObserver) {
+    const mo = new MutationObserver(() => drawWaveform());
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+}
+
 // ── Video Loading ───────────────────────────────────────────────
 window.loadVideoSrc = function(url) {
   if (!video) return;
@@ -136,6 +251,7 @@ window.loadVideoSrc = function(url) {
   video.load();
   video.currentTime = 0;
   video.play().catch(() => {});
+  loadWaveformForUrl(url);
 
   // Highlight active row in Generated Media Assets
   document.querySelectorAll('.media-asset-row').forEach(row => {
@@ -165,10 +281,18 @@ function initInitialVideo() {
   const urls = getPreviewUrls();
   if (Array.isArray(urls) && urls.length > 0) {
     window.loadVideoSrc(urls[0]);
+  } else {
+    loadWaveformForUrl(null);
   }
 }
 
 // ── Timecode Sync & Timeline Markers ────────────────────────────
+function formatSelectedDuration(sec) {
+  if (!sec || sec <= 0) return '0s';
+  const t = Math.round(sec), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h ? `${h}h ${m}m ${s}s` : m ? `${m}m ${s}s` : `${s}s`;
+}
+
 function updateTimecode() {
   if (!video) return;
   if (timecode) timecode.textContent = formatTimecode(video.currentTime);
@@ -176,7 +300,6 @@ function updateTimecode() {
 
   if (dur > 0 && isFinite(dur)) {
     const pct = (video.currentTime / dur) * 100;
-    if (scrubber) scrubber.value = Math.round((video.currentTime / dur) * 1000);
     if (tlPlayhead) tlPlayhead.style.left = `${pct}%`;
 
     if (isPlayingCut && video.currentTime >= outPointSec) {
@@ -186,9 +309,13 @@ function updateTimecode() {
   }
 }
 
+function formatTickTime(sec) {
+  return new Date(Math.max(0, Math.round(sec || 0)) * 1000).toISOString().slice(11, 19);
+}
+
 function updateTimelineTicks() {
-  const dur = video.duration || 0;
-  if (!dur || !isFinite(dur)) return;
+  const dur = (video && Number.isFinite(video.duration) && video.duration > 0) ? video.duration : (outPointSec || 0);
+  if (!dur || dur <= 0) return;
   const ticks = document.getElementById('timeline-ticks');
   if (!ticks) return;
   const steps = 5;
@@ -196,15 +323,16 @@ function updateTimelineTicks() {
     ...Array.from({ length: steps }, (_, i) => {
       const t = (dur / (steps - 1)) * i;
       const span = document.createElement('span');
-      span.textContent = formatTimecode(t).slice(0, 5);
+      span.className = 'tl-tick';
+      span.textContent = formatTickTime(t);
       return span;
     })
   );
 }
 
 function updateCutMarkersUI() {
-  const dur = video && video.duration ? video.duration : (outPointSec || 10);
-  if (dur <= 0) return;
+  const dur = video && video.duration ? video.duration : outPointSec;
+  if (!dur || dur <= 0) return;
 
   const inPct  = Math.max(0, Math.min(100, (inPointSec / dur) * 100));
   const outPct = Math.max(0, Math.min(100, (outPointSec / dur) * 100));
@@ -230,6 +358,11 @@ function updateCutMarkersUI() {
     const diff = Math.max(0, outPointSec - inPointSec);
     reviewDur.textContent = formatTimecode(diff);
   }
+  const cutDurationBadge = document.getElementById('cut-duration-badge');
+  if (cutDurationBadge) {
+    const cutDuration = Math.max(0, outPointSec - inPointSec);
+    cutDurationBadge.textContent = `Selected Cut: ${formatSelectedDuration(cutDuration)}`;
+  }
 }
 
 function setInPoint(timeSec) {
@@ -247,47 +380,77 @@ function setOutPoint(timeSec) {
 
 // ── Interactive Timeline Dragging & Seeking ─────────────────────
 if (tlTrack) {
-  tlTrack.addEventListener('click', e => {
-    if (e.target === tlStartMarker || e.target === tlEndMarker) return;
+  let activeTrackPointerId = null;
+
+  function seekTrackFromEvent(e) {
     const rect = tlTrack.getBoundingClientRect();
     const clickX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
     const pct = clickX / rect.width;
     if (video && video.duration && isFinite(video.duration)) {
       video.currentTime = pct * video.duration;
     }
+  }
+
+  tlTrack.addEventListener('pointerdown', e => {
+    if (activeTrackPointerId !== null) return;
+    if (tlStartMarker && (e.target === tlStartMarker || tlStartMarker.contains(e.target))) return;
+    if (tlEndMarker && (e.target === tlEndMarker || tlEndMarker.contains(e.target))) return;
+    activeTrackPointerId = e.pointerId;
+    try { tlTrack.setPointerCapture(activeTrackPointerId); } catch (_) {}
+    seekTrackFromEvent(e);
   });
+
+  tlTrack.addEventListener('pointermove', e => {
+    if (activeTrackPointerId === null || e.pointerId !== activeTrackPointerId) return;
+    seekTrackFromEvent(e);
+  });
+
+  function stopTrackScrub(e) {
+    if (activeTrackPointerId === null || e.pointerId !== activeTrackPointerId) return;
+    try { tlTrack.releasePointerCapture(activeTrackPointerId); } catch (_) {}
+    activeTrackPointerId = null;
+  }
+
+  tlTrack.addEventListener('pointerup', stopTrackScrub);
+  tlTrack.addEventListener('pointercancel', stopTrackScrub);
 }
 
 function setupMarkerDrag(markerEl, isStart) {
   if (!markerEl || !tlTrack) return;
-  markerEl.addEventListener('mousedown', e => {
+  let activePointerId = null;
+
+  markerEl.addEventListener('pointerdown', e => {
+    if (activePointerId !== null) return;
     e.preventDefault();
     e.stopPropagation();
+    activePointerId = e.pointerId;
+    markerEl.setPointerCapture(activePointerId);
 
-    function onMouseMove(moveEvent) {
+    function onPointerMove(ev) {
+      if (ev.pointerId !== activePointerId) return;
       const rect = tlTrack.getBoundingClientRect();
-      const x = Math.max(0, Math.min(rect.width, moveEvent.clientX - rect.left));
+      const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
       const pct = x / rect.width;
       const dur = video && video.duration ? video.duration : (outPointSec || 10);
       const timeAtCursor = pct * dur;
 
-      if (isStart) {
-        setInPoint(timeAtCursor);
-      } else {
-        setOutPoint(timeAtCursor);
-      }
-      if (video && video.duration) {
-        video.currentTime = timeAtCursor;
-      }
+      if (isStart) setInPoint(timeAtCursor);
+      else setOutPoint(timeAtCursor);
+      if (video && video.duration) video.currentTime = timeAtCursor;
     }
 
-    function onMouseUp() {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+    function onPointerUp(ev) {
+      if (ev.pointerId !== activePointerId) return;
+      try { markerEl.releasePointerCapture(activePointerId); } catch (_) {}
+      activePointerId = null;
+      markerEl.removeEventListener('pointermove', onPointerMove);
+      markerEl.removeEventListener('pointerup', onPointerUp);
+      markerEl.removeEventListener('pointercancel', onPointerUp);
     }
 
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    markerEl.addEventListener('pointermove', onPointerMove);
+    markerEl.addEventListener('pointerup', onPointerUp);
+    markerEl.addEventListener('pointercancel', onPointerUp);
   });
 }
 
@@ -391,7 +554,9 @@ if (video) {
     if (durationDisplay) durationDisplay.textContent = `/ ${formatTimecode(video.duration)}`;
     const lbl = document.getElementById('tl-range-label');
     if (lbl) lbl.textContent = formatTimecode(video.duration);
+    drawWaveform();
   });
+  video.addEventListener('durationchange', updateTimelineTicks);
 }
 
 if (btnPlay)         btnPlay.addEventListener('click', togglePlay);
@@ -402,20 +567,27 @@ if (btnSeekBigFwd)   btnSeekBigFwd.addEventListener('click', () => seekBy(60));
 if (btnSeekMegaBack) btnSeekMegaBack.addEventListener('click', () => seekBy(-300));
 if (btnSeekMegaFwd)  btnSeekMegaFwd.addEventListener('click', () => seekBy(300));
 
-if (btnPrevFrame)    btnPrevFrame.addEventListener('click', () => { if(video && video.src) { video.pause(); seekBy(-1/25); } });
-if (btnNextFrame)    btnNextFrame.addEventListener('click', () => { if(video && video.src) { video.pause(); seekBy(1/25); } });
+if (btnPrevFrame)    btnPrevFrame.addEventListener('click', () => { if(video && video.src) { video.pause(); seekBy(-0.5); } });
+if (btnNextFrame)    btnNextFrame.addEventListener('click', () => { if(video && video.src) { video.pause(); seekBy(0.5); } });
+
+function toggleMute() {
+  if (!video) return;
+  video.muted = !video.muted;
+  updateMuteUI();
+}
+
+function updateMuteUI() {
+  if (!btnMute || !video) return;
+  btnMute.classList.toggle('is-muted', video.muted);
+  btnMute.setAttribute('title', video.muted ? 'Unmute (M)' : 'Mute (M)');
+}
+
+if (btnMute) btnMute.addEventListener('click', toggleMute);
+if (video)   video.addEventListener('volumechange', updateMuteUI);
 
 if (speedSel) {
   speedSel.addEventListener('change', () => {
     if (video) video.playbackRate = parseFloat(speedSel.value);
-  });
-}
-
-if (scrubber) {
-  scrubber.addEventListener('input', () => {
-    if (video && video.duration && isFinite(video.duration)) {
-      video.currentTime = (scrubber.value / 1000) * video.duration;
-    }
   });
 }
 
@@ -425,10 +597,12 @@ document.addEventListener('keydown', e => {
   if (e.code === 'Space') {
     e.preventDefault();
     togglePlay();
+  } else if (e.code === 'KeyM') {
+    toggleMute();
   } else if (e.code === 'KeyI') {
-    if (video) setInPoint(video.currentTime);
+    if (video && btnSetIn) setInPoint(video.currentTime);
   } else if (e.code === 'KeyO') {
-    if (video) setOutPoint(video.currentTime);
+    if (video && btnSetOut) setOutPoint(video.currentTime);
   } else if (e.code === 'ArrowLeft') {
     if (video && video.src) seekBy(e.shiftKey ? -60 : -5);
   } else if (e.code === 'ArrowRight') {
@@ -612,8 +786,10 @@ window.handleVideoFileUpload = async function(e, talkId) {
 
   const progressWrap = document.getElementById('upload-progress-wrap');
   const progressText = document.getElementById('upload-progress-text');
+  const browseBtn = document.getElementById('btn-browse-file');
   if (progressWrap) progressWrap.style.display = 'block';
-  if (progressText) progressText.textContent = `Uploading "${file.name}" and validating streams...`;
+  if (progressText) progressText.textContent = `Uploading "${file.name}"...`;
+  if (browseBtn) browseBtn.disabled = true;
 
   try {
     const fd = new FormData();
@@ -629,11 +805,24 @@ window.handleVideoFileUpload = async function(e, talkId) {
       throw new Error(err.detail || `Upload failed with status ${res.status}`);
     }
 
-    await res.json();
-    location.reload();
+    if (progressText) progressText.textContent = 'Uploaded! Ingesting & validating video streams...';
+
+    const pollIngest = setInterval(async () => {
+      try {
+        const checkRes = await (window.authFetch || fetch)(`/talks/${talkId}`, { _isPolling: true });
+        if (checkRes.ok) {
+          const talkData = await checkRes.json();
+          if (talkData.status && talkData.status !== 'waiting_for_files') {
+            clearInterval(pollIngest);
+            location.reload();
+          }
+        }
+      } catch (_) {}
+    }, 1000);
   } catch (err) {
     alert(`Video upload failed: ${err.message}`);
     if (progressWrap) progressWrap.style.display = 'none';
+    if (browseBtn) browseBtn.disabled = false;
   }
 };
 
@@ -770,6 +959,39 @@ function initBumperStudio() {
   });
 }
 
+let studioPollInterval = null;
+async function pollStudioJobs() {
+  const talkId = getTalkId();
+  if (!talkId || isNaN(talkId)) return;
+
+  try {
+    const res = await (window.authFetch || fetch)(`/talks/${talkId}/jobs`, { _isPolling: true });
+    if (!res.ok) return;
+    const data = await res.json();
+    const jobs = Array.isArray(data) ? data : (data.jobs || []);
+    renderRecentJobs(jobs);
+
+    const currentStatus = getTalkStatus();
+    if (data.status && data.status !== currentStatus) {
+      location.reload();
+      return;
+    }
+
+    const hasRunningJob = jobs.some(j => j.status === 'running');
+    const talkStatus = data.status;
+    const isTerminal = ['done', 'failed', 'rejected', 'broken'].includes(talkStatus);
+    if (!hasRunningJob && isTerminal && studioPollInterval) {
+      clearInterval(studioPollInterval);
+      studioPollInterval = null;
+    }
+  } catch { /* skip */ }
+}
+
+function startStudioPolling() {
+  if (studioPollInterval) clearInterval(studioPollInterval);
+  studioPollInterval = setInterval(pollStudioJobs, 2500);
+}
+
 // ── Initial Setup & Event Listeners ─────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   // Sync progress bars width from data-progress attribute
@@ -779,9 +1001,12 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   initInitialVideo();
+  initWaveformListeners();
   updateCutMarkersUI();
   initRightPanelCollapse();
   initBumperStudio();
+  pollStudioJobs();
+  startStudioPolling();
 
   const videoInput = document.getElementById('video-file-input');
   if (videoInput) {
@@ -801,8 +1026,7 @@ document.addEventListener('DOMContentLoaded', () => {
       dropzone.addEventListener(name, (e) => {
         e.preventDefault();
         e.stopPropagation();
-        dropzone.style.borderColor = 'var(--v-primary)';
-        dropzone.style.background = 'var(--v-primary-subtle)';
+        dropzone.classList.add('drag-over');
       });
     });
 
@@ -810,8 +1034,7 @@ document.addEventListener('DOMContentLoaded', () => {
       dropzone.addEventListener(name, (e) => {
         e.preventDefault();
         e.stopPropagation();
-        dropzone.style.borderColor = 'var(--v-border)';
-        dropzone.style.background = '';
+        dropzone.classList.remove('drag-over');
       });
     });
 
@@ -886,4 +1109,3 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 3000);
   }
 });
-

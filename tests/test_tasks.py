@@ -161,7 +161,7 @@ def test_job_ingest_success(dummy_talk, mock_storage, tmp_path):
     job = next(iter(jobs.values()))
     assert job.status == "done"
     assert job.kind == "ingest"
-    mock_storage.put.assert_called_once()
+    assert mock_storage.put.call_count == 2
     mock_enqueue.assert_called_once_with(
         job_detect,
         dummy_talk.id,

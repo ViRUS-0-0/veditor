@@ -130,7 +130,7 @@
     </div>
   </div>
 
-  <!-- ── CENTER: Video Player, Big Seeks, Timeline ───────────── -->
+  <!-- ── CENTER: Video Player or Upload Dropzone ─────────────── -->
   <div class="player-panel">
     <button id="btn-expand-right-panel" class="btn btn-ghost btn-icon btn-sm expand-panel-tab" title="Restore Review Panel" aria-label="Restore Review Panel" aria-expanded="false" aria-controls="studio-panel-right">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
@@ -138,31 +138,44 @@
       </svg>
     </button>
 
-    <!-- Video Viewport -->
-    <div class="player-viewport">
-      <video id="main-video" preload="metadata">
-        Your browser does not support HTML5 video.
-      </video>
-      <div class="player-no-preview" id="no-preview-msg">
+    {% if talk.status == 'waiting_for_files' %}
+    <!-- Upload Dropzone Box (Pending Upload State) -->
+    <div class="upload-pending-container">
+      <div class="upload-dropzone-box" id="no-preview-msg">
         <input type="file" id="video-file-input" accept="video/mp4,video/mkv,video/webm,video/quicktime,video/*">
-        <svg class="upload-icon" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
+        <div class="upload-icon-circle">
+          <svg class="upload-icon" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
         <span class="upload-prompt-title">
           Attach Recording Video
         </span>
         <span class="upload-prompt-subtitle">
-          Drag & drop raw conference video file here, or click to browse (MP4, MKV, MOV, WebM).
+          Drag & drop raw conference video file here, or click to browse.
         </span>
-        <button class="btn btn-primary btn-sm" id="btn-browse-file">
+        <span class="upload-prompt-formats">
+          Supports MP4, MKV, MOV, WebM
+        </span>
+        <button class="btn btn-primary btn-sm" id="btn-browse-file" type="button">
           Browse Video File
         </button>
         <div id="upload-progress-wrap">
           <span class="spinner spinner-sm upload-spinner"></span>
           <span id="upload-progress-text">Uploading & validating video streams...</span>
         </div>
+      </div>
+    </div>
+    {% else %}
+    <!-- Video Viewport -->
+    <div class="player-viewport">
+      <video id="main-video" preload="metadata">
+        Your browser does not support HTML5 video.
+      </video>
+      <div class="player-no-preview" id="no-preview-msg">
+        <span>Video preview not available</span>
       </div>
     </div>
 
@@ -190,6 +203,11 @@
             <option value="2">2×</option>
           </select>
         </div>
+
+        <button class="ctrl-btn mute-btn" id="btn-mute" title="Mute / Unmute (M)" aria-label="Mute or unmute audio">
+          <svg id="icon-volume-on" width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+          <svg id="icon-volume-muted" width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+        </button>
       </div>
     </div>
 
@@ -198,7 +216,7 @@
       <button class="ctrl-btn" id="btn-seek-mega-back" title="Rewind 5 minutes (-5m)">-5m</button>
       <button class="ctrl-btn" id="btn-seek-big-back" title="Rewind 1 minute (-1m)">-1m</button>
       <button class="ctrl-btn" id="btn-skip-back" title="Back 5s (-5s)">-5s</button>
-      <button class="ctrl-btn" id="btn-prev-frame" title="Previous frame (←)">-1f</button>
+      <button class="ctrl-btn" id="btn-prev-frame" title="Rewind 0.5s (-0.5s)">-0.5s</button>
 
       <!-- Play / Pause -->
       <button class="ctrl-btn play-btn" id="btn-play" title="Play / Pause (Space)">
@@ -207,60 +225,69 @@
       </button>
 
       <!-- Fine, Big & Mega Seek Forward -->
-      <button class="ctrl-btn" id="btn-next-frame" title="Next frame (→)">+1f</button>
+      <button class="ctrl-btn" id="btn-next-frame" title="Forward 0.5s (+0.5s)">+0.5s</button>
       <button class="ctrl-btn" id="btn-skip-fwd" title="Forward 5s (+5s)">+5s</button>
       <button class="ctrl-btn" id="btn-seek-big-fwd" title="Forward 1 minute (+1m)">+1m</button>
       <button class="ctrl-btn" id="btn-seek-mega-fwd" title="Forward 5 minutes (+5m)">+5m</button>
     </div>
 
-    <!-- Timeline Scrubber & Cut Bounds -->
+    <!-- Timeline & Cut Bounds -->
     <div class="timeline-section">
       <div class="timeline-label">
-        <span>Timeline Scrubber</span>
+        <span>Timeline</span>
         <span id="tl-range-label"></span>
       </div>
 
       <div class="timeline-track" id="timeline-track">
-        <div class="tl-block tl-intro" id="tl-intro">INTRO</div>
-        <div class="tl-block tl-content" id="tl-content">TALK BOUNDS</div>
-        <div class="tl-block tl-outro" id="tl-outro">OUTRO</div>
+        <canvas id="tl-waveform" class="tl-waveform" aria-hidden="true"></canvas>
+        {% if talk.status in ['pending_bounds', 'needs_work'] %}
+        <div class="tl-block tl-content" id="tl-content"></div>
         <div class="tl-marker" id="tl-start-marker" title="Drag Start Point (or press I)"></div>
         <div class="tl-marker end-marker" id="tl-end-marker" title="Drag End Point (or press O)"></div>
+        {% endif %}
         <div id="tl-playhead"></div>
       </div>
 
-      <div class="timeline-range">
-        <input type="range" id="video-scrubber" min="0" max="1000" value="0">
-      </div>
-
       <div class="timeline-ticks" id="timeline-ticks">
-        <span>0:00</span><span></span><span></span><span></span><span>—</span>
+        <span class="tl-tick">00:00:00</span>
+        <span class="tl-tick">—</span>
+        <span class="tl-tick">—</span>
+        <span class="tl-tick">—</span>
+        <span class="tl-tick">—</span>
       </div>
 
+      {% if talk.status in ['pending_bounds', 'needs_work'] %}
       <!-- In/Out Bounds Setting Controls -->
       <div class="timeline-inputs-bar">
         <div class="bounds-inputs-group">
-          <button class="btn btn-ghost btn-sm" id="btn-set-in" title="Set In-Point (I)">
-            Set In (I)
-          </button>
-          <input type="text" id="input-in-point" value="00:00:00.00" class="input-field bounds-time-input">
+          <div class="bounds-input-pair">
+            <button class="btn btn-success btn-sm" id="btn-set-in" title="Set In-Point (I)">
+              Set In (I)
+            </button>
+            <input type="text" id="input-in-point" value="00:00:00.00" class="input-field bounds-time-input">
+          </div>
 
           <span class="bounds-to-label">to</span>
 
-          <input type="text" id="input-out-point" value="00:00:00.00" class="input-field bounds-time-input">
-          <button class="btn btn-ghost btn-sm" id="btn-set-out" title="Set Out-Point (O)">
-            Set Out (O)
-          </button>
+          <div class="bounds-input-pair">
+            <input type="text" id="input-out-point" value="00:00:00.00" class="input-field bounds-time-input">
+            <button class="btn btn-danger btn-sm" id="btn-set-out" title="Set Out-Point (O)">
+              Set Out (O)
+            </button>
+          </div>
         </div>
 
         <div class="bounds-action-btns">
+          <span class="badge badge-info bounds-duration-badge" id="cut-duration-badge">Selected Cut: 0s</span>
           <button class="btn btn-ghost btn-sm" id="btn-play-cut" title="Play trimmed range">
             <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21"/></svg>
             Play Cut Range
           </button>
         </div>
       </div>
+      {% endif %}
     </div>
+    {% endif %}
 
   </div>
 
