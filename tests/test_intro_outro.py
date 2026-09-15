@@ -12,6 +12,7 @@ from app import models
 from app.auth import get_client
 from app.config import Settings, settings
 from app.db import get_db
+from app.ingest import get_bumper_staging_dir
 from app.main import app
 from app.storage import get_storage_backend
 from app.tasks import (
@@ -923,9 +924,10 @@ def test_upload_bumper_file_success(mock_db, auth_client, pending_talk):
     assert response.status_code == 200
     data = response.json()
     assert data["filename"] == "test_intro.mp4"
-    assert "bumper_1_intro_" in data["path"]
-    assert Path(data["path"]).is_file()
-    Path(data["path"]).unlink(missing_ok=True)
+    assert data["path"].startswith("bumpers/bumper_1_intro_")
+    staged_file = get_bumper_staging_dir() / Path(data["path"]).name
+    assert staged_file.is_file()
+    staged_file.unlink(missing_ok=True)
 
 
 def test_upload_bumper_file_exceeds_max_size(

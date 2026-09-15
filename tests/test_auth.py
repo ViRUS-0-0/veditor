@@ -291,6 +291,27 @@ def test_get_current_user_precedence_session_over_cookie_api_key():
     assert user.user_id == 2
 
 
+def test_get_current_user_ignores_stale_cookie_api_key_for_bearer_token():
+    token = create_access_token(user_id=2, email="u@example.com", role="user")
+    mock_user = User(id=2, email="u@example.com", role="user", is_active=True)
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.side_effect = [
+        None,
+        mock_user,
+    ]
+    mock_creds = MagicMock()
+    mock_creds.credentials = token
+
+    user = get_current_user(
+        cookie_api_key="stale-or-invalid-key",
+        bearer_creds=mock_creds,
+        db=mock_db,
+    )
+
+    assert user.source == "jwt"
+    assert user.user_id == 2
+
+
 # ---------------------------------------------------------------------------
 # Role Hierarchy Tests
 # ---------------------------------------------------------------------------

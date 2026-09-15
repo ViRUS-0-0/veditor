@@ -553,7 +553,7 @@ async def upload_bumper_file(
     user: Annotated[CurrentUser, Depends(require_role("organizer"))] = None,
     db: Annotated[Session, Depends(get_db)] = None,
 ):
-    """Upload a custom bumper video file (intro/outro) directly and return its staged server path."""
+    """Upload a custom bumper and return an opaque key understood by assembly."""
     talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
     if not talk or (user.is_machine and talk.event_id not in user.event_ids):
         raise HTTPException(
@@ -591,7 +591,10 @@ async def upload_bumper_file(
         staged_path.unlink(missing_ok=True)
         raise
 
-    return {"path": str(staged_path), "filename": file.filename}
+    return {
+        "path": f"bumpers/{staged_path.name}",
+        "filename": file.filename,
+    }
 
 
 @router.post(

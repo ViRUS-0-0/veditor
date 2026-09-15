@@ -151,16 +151,11 @@ window.VEditorConfig = window.VEditorConfig || {
 
 // ── Auth & Role Manager ─────────────────────────────────────────
 window.getApiKey = function () {
-  const local = localStorage.getItem('veditor_api_key');
-  if (local) return local;
-  const match = document.cookie.match(/(?:^|;\s*)veditor_api_key=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : '';
+  return localStorage.getItem('veditor_api_key') || '';
 };
 
 window.setApiKey = function (key) {
   localStorage.setItem('veditor_api_key', key);
-  const secure = location.protocol === 'https:' ? '; Secure' : '';
-  document.cookie = "veditor_api_key=" + encodeURIComponent(key) + "; path=/; max-age=31536000; SameSite=Lax" + secure;
 };
 
 window.getUserRole = function () {
