@@ -466,14 +466,32 @@ body.is-studio-mode.is-speaker .main-content {
   color: var(--v-status-success-text);
   border-color: var(--v-status-success-border);
 }
-.btn-success:hover { background: var(--v-status-success-border); color: #fff; }
+.btn-success:hover {
+  background: var(--v-status-success-text);
+  color: #fff;
+  border-color: var(--v-status-success-text);
+}
 
 .btn-danger {
   background: var(--v-status-danger-bg);
   color: var(--v-status-danger-text);
   border-color: var(--v-status-danger-border);
 }
-.btn-danger:hover { background: var(--v-status-danger-border); color: #fff; }
+.btn-danger:hover {
+  background: var(--v-status-danger-text);
+  color: #fff;
+  border-color: var(--v-status-danger-text);
+}
+
+[data-theme="dark"] .btn-success:hover {
+  background: var(--v-status-success-border);
+  border-color: var(--v-status-success-border);
+}
+
+[data-theme="dark"] .btn-danger:hover {
+  background: var(--v-status-danger-border);
+  border-color: var(--v-status-danger-border);
+}
 
 .btn-ghost {
   background: var(--v-bg-surface);
@@ -749,14 +767,14 @@ td {
 
 /* ── Player Panel & Controls ──────────────────────────────────── */
 .player-panel {
-  background: #090a0f;
+  background: var(--v-bg-subtle);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
 }
 
 .player-viewport {
-  background: #000;
+  background: var(--v-player-bg, #000);
   position: relative;
   width: 100%;
 }
@@ -848,6 +866,7 @@ td {
   padding: 14px 16px;
   background: var(--v-bg-subtle);
   border-top: 1px solid var(--v-border-subtle);
+  flex: 1;
 }
 
 .timeline-label {
@@ -912,25 +931,6 @@ td {
 }
 .tl-marker.end-marker::after {
   background: var(--v-status-danger-text);
-}
-
-.timeline-range { margin-top: 6px; }
-
-.timeline-range input[type=range] {
-  -webkit-appearance: none;
-  width: 100%;
-  height: 3px;
-  background: var(--v-border);
-  border-radius: 2px;
-  outline: none;
-}
-
-.timeline-range input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: var(--v-primary);
-  cursor: pointer;
 }
 
 .timeline-ticks {

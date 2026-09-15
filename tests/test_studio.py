@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -433,6 +434,97 @@ def test_media_serving(client: TestClient, db_session, temp_storage, tmp_path):
             f"/studio/media/{talk.id}/logs/worker.log", headers={"X-API-Key": api_key}
         )
         assert disallowed.status_code == 404
+    finally:
+        clip.unlink(missing_ok=True)
+
+
+def test_talk_waveform_endpoint(client: TestClient, db_session, temp_storage, tmp_path):
+    from tests.conftest import generate_clip
+
+    event = models.Event(name=f"Waveform Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    talk = models.Talk(
+        title="Waveform Talk",
+        room="Auditorium",
+        start=datetime(2026, 3, 1, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 3, 1, 11, 0, tzinfo=UTC),
+        status="preview",
+        event_id=event.id,
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    # 1. Unauthenticated request -> 401
+    assert client.get(f"/studio/talks/{talk.id}/waveform").status_code == 401
+
+    # 2. Authenticated but media not created yet -> returns empty peaks
+    res_empty = client.get(
+        f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+    )
+    assert res_empty.status_code == 200
+    assert res_empty.json() == {"peaks": []}
+
+    # 3. Create clip with audio and store as preview.mp4
+    clip = generate_clip(
+        1.0, has_audio=True, audio_waveform="tone", output_dir=tmp_path
+    )
+    try:
+        temp_storage.put(f"{talk.id}/preview/preview.mp4", clip)
+
+        # A cache miss must not decode media on the request thread.
+        res = client.get(
+            f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+        )
+        assert res.status_code == 200
+        assert res.json() == {"peaks": []}
+
+        # Background preview generation stores the waveform cache for later reads.
+        data = {"peaks": [0.25, 1.0, 0.5]}
+        temp_storage.put(
+            f"{talk.id}/preview/preview.mp4.waveform.json",
+            json.dumps(data).encode("utf-8"),
+        )
+        res_cached = client.get(
+            f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+        )
+        assert res_cached.status_code == 200
+        assert res_cached.json() == data
+        assert "peaks" in data
+        assert len(data["peaks"]) > 0
+        assert all(0.0 <= p <= 1.0 for p in data["peaks"])
+
+        # Subsequent fetches are served from cached JSON.
+        res_cached_again = client.get(
+            f"/studio/talks/{talk.id}/waveform", headers={"X-API-Key": api_key}
+        )
+        assert res_cached_again.status_code == 200
+        assert res_cached_again.json() == data
+
+        # Query with explicit category and filename
+        res_explicit = client.get(
+            f"/studio/talks/{talk.id}/waveform?category=preview&filename=preview.mp4",
+            headers={"X-API-Key": api_key},
+        )
+        assert res_explicit.status_code == 200
+        assert res_explicit.json() == data
+
+        # Invalid category -> 404
+        assert (
+            client.get(
+                f"/studio/talks/{talk.id}/waveform?category=invalid&filename=preview.mp4",
+                headers={"X-API-Key": api_key},
+            ).status_code
+            == 404
+        )
     finally:
         clip.unlink(missing_ok=True)
 
@@ -1230,6 +1322,192 @@ def test_studio_mode_body_class(client: TestClient, db_session):
     res_login = client.get("/login")
     assert res_login.status_code == 200
     assert "is-studio-mode" not in res_login.text
+
+
+def test_studio_speaker_timeline_omits_bumpers(client: TestClient, db_session):
+    """When viewed with a speaker token, studio scrubber omits INTRO/OUTRO and enables speaker mode."""
+    from app.security import create_sso_token
+
+    event = models.Event(name=f"Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Speaker Talk",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=45),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    speaker_token = create_sso_token(
+        scope_type="talk", scope_id=talk.id, role="speaker"
+    )
+    client.cookies.set("veditor_session", speaker_token)
+
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+
+    # Speaker must NOT see INTRO or OUTRO bumper blocks
+    assert 'id="tl-intro"' not in res.text
+    assert 'id="tl-outro"' not in res.text
+
+    # Timeline scrubber is present
+    assert 'id="timeline-track"' in res.text
+
+
+def test_studio_organizer_timeline_omits_bumpers(client: TestClient, db_session):
+    """When viewed by an organizer, studio scrubber also omits INTRO and OUTRO bumper blocks from timeline."""
+    from app.security import create_session_token
+
+    org = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    db_session.add(org)
+    db_session.commit()
+    db_session.refresh(org)
+
+    event = models.Event(name=f"Event {uuid.uuid4().hex}", created_by_user_id=org.id)
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Organizer Talk",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=45),
+        status="preview",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    token = create_session_token(org.id, org.role)
+    client.cookies.set("veditor_session", token)
+
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+
+    # INTRO and OUTRO bumper blocks are NOT on the timeline
+    assert 'id="tl-intro"' not in res.text
+    assert 'id="tl-outro"' not in res.text
+
+    # Timeline scrubber is present
+    assert 'id="timeline-track"' in res.text
+
+
+def test_studio_upload_pending_state_hides_timeline(client: TestClient, db_session):
+    from app.security import create_session_token
+
+    org = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    db_session.add(org)
+    db_session.commit()
+    db_session.refresh(org)
+
+    event = models.Event(name=f"Event {uuid.uuid4().hex}", created_by_user_id=org.id)
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    # 1. Talk in waiting_for_files state (upload pending)
+    pending_talk = models.Talk(
+        event_id=event.id,
+        title="Pending Upload Talk",
+        room="Hall 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+    )
+    # 2. Talk in preview state (video available)
+    ready_talk = models.Talk(
+        event_id=event.id,
+        title="Ready Preview Talk",
+        room="Hall 2",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(pending_talk)
+    db_session.add(ready_talk)
+    db_session.commit()
+
+    token = create_session_token(org.id, org.role)
+    client.cookies.set("veditor_session", token)
+
+    # When upload is pending:
+    res_pending = client.get(f"/studio/talks/{pending_talk.id}")
+    assert res_pending.status_code == 200
+    # Shows the upload dropzone box and browse button
+    assert "upload-dropzone-box" in res_pending.text
+    assert "Attach Recording Video" in res_pending.text
+    assert 'id="btn-browse-file"' in res_pending.text
+    assert 'id="video-file-input"' in res_pending.text
+    # Hides timeline track, controls, and timecode bar
+    assert 'id="timeline-track"' not in res_pending.text
+    assert "timeline-section" not in res_pending.text
+    assert "player-controls" not in res_pending.text
+    assert "timecode-bar" not in res_pending.text
+    assert 'id="main-video"' not in res_pending.text
+
+    # When upload is complete / preview ready:
+    res_ready = client.get(f"/studio/talks/{ready_talk.id}")
+    assert res_ready.status_code == 200
+    # Shows video player, timecode bar, player controls, and timeline track
+    assert 'id="main-video"' in res_ready.text
+    assert "timecode-bar" in res_ready.text
+    assert "player-controls" in res_ready.text
+    assert "timeline-section" in res_ready.text
+    assert 'id="timeline-track"' in res_ready.text
+    assert 'id="timeline-ticks"' in res_ready.text
+    # Does NOT show upload-pending-container
+    assert "upload-pending-container" not in res_ready.text
+    # Does NOT show cut bounds controls (only timeline scrub track for video)
+    assert 'id="tl-start-marker"' not in res_ready.text
+    assert 'id="tl-end-marker"' not in res_ready.text
+    assert 'id="tl-content"' not in res_ready.text
+    assert 'id="btn-set-in"' not in res_ready.text
+    assert "timeline-inputs-bar" not in res_ready.text
+
+    # When bounds cutting is needed (pending_bounds or needs_work):
+    bounds_talk = models.Talk(
+        event_id=event.id,
+        title="Bounds Cut Talk",
+        room="Hall 3",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="pending_bounds",
+    )
+    db_session.add(bounds_talk)
+    db_session.commit()
+
+    res_bounds = client.get(f"/studio/talks/{bounds_talk.id}")
+    assert res_bounds.status_code == 200
+    # Shows timeline AND cut bounds markers/inputs
+    assert 'id="timeline-track"' in res_bounds.text
+    assert 'id="tl-start-marker"' in res_bounds.text
+    assert 'id="tl-end-marker"' in res_bounds.text
+    assert 'id="tl-content"' in res_bounds.text
+    assert 'id="btn-set-in"' in res_bounds.text
+    assert 'id="btn-set-out"' in res_bounds.text
+    assert 'id="cut-duration-badge"' in res_bounds.text
+    assert 'id="btn-play-cut"' in res_bounds.text
+    assert "timeline-inputs-bar" in res_bounds.text
 
 
 def test_talk_studio_offset_aware_start_normalizes_to_utc(

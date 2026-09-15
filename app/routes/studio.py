@@ -10,17 +10,20 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from redis.exceptions import RedisError
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
 from app.auth import hash_api_key
 from app.config import settings
 from app.db import get_db
+from app.queue import light_queue
 from app.routes.auth import _get_authenticated_user_from_cookie
 from app.routes.talks import _cancel_talk_jobs
 from app.security import decode_sso_token
 from app.storage import StorageBackend, get_storage_backend
+from app.tasks import job_waveform
 from app.ui.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -492,6 +495,60 @@ def get_talk_media_categorized(
     return FileResponse(
         path,
         media_type="video/mp4",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/talks/{talk_id}/waveform")
+def get_talk_waveform(
+    request: Request,
+    talk_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+    category: str | None = None,
+    filename: str | None = None,
+):
+    _authorize_studio_talk(talk_id, request, db, not_found_detail="Talk not found")
+
+    media_key = None
+    if category and filename:
+        safe_category = Path(category).name
+        if safe_category not in ALLOWED_MEDIA_CATEGORIES:
+            raise HTTPException(status_code=404, detail="Media not found")
+        cand = f"{talk_id}/{safe_category}/{Path(filename).name}"
+        if storage.exists(cand):
+            media_key = cand
+    else:
+        candidates = [f"{talk_id}/{c}/{c}.mp4" for c in ("preview", "cut", "raw")]
+        media_key = next((c for c in candidates if storage.exists(c)), None)
+        if not media_key:
+            raw_keys = storage.list_keys(f"{talk_id}/raw")
+            media_key = raw_keys[0] if raw_keys else None
+
+    if media_key:
+        waveform_key = f"{media_key}.waveform.json"
+        if storage.exists(waveform_key):
+            try:
+                cached_path = storage.get(waveform_key)
+                # storage-boundary-exempt: read cached waveform json
+                raw_bytes = cached_path.read_bytes()
+                return Response(
+                    content=raw_bytes,
+                    media_type="application/json",
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+            except OSError:
+                logger.warning("Failed reading cached waveform for %s", waveform_key)
+        try:
+            light_queue.enqueue(job_waveform, talk_id, media_key)
+        except (OSError, RedisError, RuntimeError) as exc:
+            logger.warning(
+                "Failed to enqueue waveform generation for %s: %s", media_key, exc
+            )
+
+    return Response(
+        content=b'{"peaks":[]}',
+        media_type="application/json",
         headers={"Cache-Control": "no-store"},
     )
 

@@ -33,6 +33,7 @@ from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
 from app.pipeline.transcode import transcode
+from app.pipeline.waveform import extract_waveform_peaks
 from app.queue import heavy_queue, light_queue
 from app.states import advance
 from app.storage import cleanup_intermediates, get_storage_backend
@@ -52,6 +53,17 @@ STAGE_CONFIG: dict[str, dict[str, str | int]] = {
     "transcode": {"queue": "heavy", "job_timeout": 14400},
     "publish": {"queue": "light", "job_timeout": 300},
 }
+
+
+def _cache_waveform(storage, media_key: str, media_path: Path) -> None:
+    """Generate waveform data before a newly created media asset is exposed."""
+    try:
+        storage.put(
+            f"{media_key}.waveform.json",
+            json.dumps({"peaks": extract_waveform_peaks(media_path)}).encode("utf-8"),
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.warning("Failed to generate waveform for %s: %s", media_key, exc)
 
 
 def _handle_failure(talk_id: int, job_id: int | None, exc: Exception, storage) -> None:
@@ -131,6 +143,7 @@ def job_ingest(talk_id: int, staged_path: str, raw_key: str | None = None) -> No
 
         # Persist to destination storage backend
         storage.put(raw_key, staged)
+        _cache_waveform(storage, raw_key, staged)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -261,6 +274,7 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
             tmp_out = Path(tmpdir) / "cut.mp4"
             cut(raw_path, tmp_out, start_seconds, end_seconds)
             storage.put(cut_key, tmp_out)
+            _cache_waveform(storage, cut_key, tmp_out)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -537,6 +551,7 @@ def job_concat(
             output_path=concat_key,
             backend=storage,
         )
+        _cache_waveform(storage, concat_key, storage.get(concat_key))
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -600,6 +615,7 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
             tmp_out = Path(tmpdir) / "preview.mp4"
             generate_preview(cut_path, tmp_out, preset=preset)
             storage.put(preview_key, tmp_out)
+            _cache_waveform(storage, preview_key, tmp_out)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -622,6 +638,16 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
     except Exception as exc:
         _handle_failure(talk_id, job_id, exc, storage)
         raise
+
+
+def job_waveform(talk_id: int, media_key: str) -> None:
+    """Generate and cache waveform peaks without blocking a studio request."""
+    storage = get_storage_backend()
+    waveform_key = f"{media_key}.waveform.json"
+    if storage.exists(waveform_key):
+        return
+
+    _cache_waveform(storage, media_key, storage.get(media_key))
 
 
 def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> None:
@@ -700,6 +726,7 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
                 else:
                     raise
             storage.put(loud_key, tmp_out)
+            _cache_waveform(storage, loud_key, tmp_out)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -784,6 +811,7 @@ def job_transcode(
             tmp_out = Path(tmpdir) / "final.mp4"
             transcode(loud_path, tmp_out, on_progress=_on_progress)
             storage.put(final_key, tmp_out)
+            _cache_waveform(storage, final_key, tmp_out)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
