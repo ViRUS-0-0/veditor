@@ -59,9 +59,16 @@ def admin_dashboard(
     except Exception:  # noqa: BLE001, S110
         pass
 
-    free_bytes = storage.free_bytes()
-    total_bytes = storage.total_bytes()
-    used_bytes = total_bytes - free_bytes
+    storage_status = "Available"
+    free_bytes = 0
+    total_bytes = 0
+    used_bytes = 0
+    try:
+        free_bytes = storage.free_bytes()
+        total_bytes = storage.total_bytes()
+        used_bytes = total_bytes - free_bytes
+    except OSError:
+        storage_status = "Unavailable"
 
     return templates.TemplateResponse(
         request,
@@ -71,6 +78,7 @@ def admin_dashboard(
             "redis_status": redis_status,
             "light_workers": light_workers,
             "heavy_workers": heavy_workers,
+            "storage_status": storage_status,
             "free_bytes": free_bytes,
             "total_bytes": total_bytes,
             "used_bytes": used_bytes,
