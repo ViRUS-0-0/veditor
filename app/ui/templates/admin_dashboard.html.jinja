@@ -1,0 +1,44 @@
+{% extends "admin_base.html.jinja" %}
+{% block title %}Admin Dashboard{% endblock %}
+
+{% block breadcrumb %}
+  <span class="current">Overview</span>
+{% endblock %}
+
+{% block content %}
+<div class="page-body">
+  <div class="stats-grid">
+    <div class="stat-card">
+      <span class="stat-label">PostgreSQL</span>
+      <span class="stat-value {% if db_status == 'Healthy' %}green{% else %}red{% endif %}">
+        {{ db_status }}
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Redis</span>
+      <span class="stat-value {% if redis_status == 'Healthy' %}green{% else %}red{% endif %}">
+        {{ redis_status }}
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">RQ Light</span>
+      <span class="stat-value blue">
+        {{ light_workers }}
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">RQ Heavy</span>
+      <span class="stat-value blue">
+        {{ heavy_workers }}
+      </span>
+    </div>
+    <div class="stat-card">
+      <span class="stat-label">Disk Free</span>
+      <span class="stat-value {% if (free_bytes / total_bytes) < 0.1 %}red{% elif (free_bytes / total_bytes) < 0.2 %}amber{% else %}green{% endif %}">
+        {% set free_gb = (free_bytes / 1073741824) | round(1) %}
+        {{ free_gb }} GB
+      </span>
+    </div>
+  </div>
+</div>
+{% endblock %}
