@@ -391,6 +391,10 @@ body.is-studio-mode.is-speaker .main-content {
 .stat-value.green { color: var(--v-status-success-text); }
 .stat-value.red   { color: var(--v-status-danger-text); }
 
+.stat-value-sm {
+  font-size: 1.25rem;
+}
+
 /* ── Filter Bar & Inputs ──────────────────────────────────────── */
 .filter-bar {
   display: flex;

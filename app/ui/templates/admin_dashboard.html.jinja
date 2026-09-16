@@ -33,10 +33,11 @@
       </span>
     </div>
     <div class="stat-card">
-      <span class="stat-label">Disk Free</span>
-      <span class="stat-value {% if (free_bytes / total_bytes) < 0.1 %}red{% elif (free_bytes / total_bytes) < 0.2 %}amber{% else %}green{% endif %}">
-        {% set free_gb = (free_bytes / 1073741824) | round(1) %}
-        {{ free_gb }} GB
+      <span class="stat-label">Disk Storage</span>
+      <span class="stat-value stat-value-sm {% if (free_bytes / total_bytes) < 0.1 %}red{% elif (free_bytes / total_bytes) < 0.2 %}amber{% else %}green{% endif %}">
+        {% set used_gb = (used_bytes / 1073741824) | round(1) %}
+        {% set total_gb = (total_bytes / 1073741824) | round(1) %}
+        {{ used_gb }} / {{ total_gb }} GB
       </span>
     </div>
   </div>
