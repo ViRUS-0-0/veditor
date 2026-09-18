@@ -20,7 +20,7 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.config import PREVIEW_PRESETS, settings
+from app.config import PREVIEW_PRESETS, get_setting, settings
 from app.db import SessionLocal
 from app.ingest import validate_media_file
 from app.models import Job, Talk
@@ -32,11 +32,23 @@ from app.pipeline.loudness import normalize
 from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
-from app.pipeline.transcode import transcode
+from app.pipeline.transcode import (
+    PRESET_4K_MASTER,
+    PRESET_720P,
+    PRESET_1080P_DEFAULT,
+    transcode,
+)
 from app.pipeline.waveform import extract_waveform_peaks
 from app.queue import heavy_queue, light_queue
 from app.states import advance
 from app.storage import cleanup_intermediates, get_storage_backend
+
+TRANSCODE_PRESETS = {
+    "1080p_default": PRESET_1080P_DEFAULT,
+    "720p": PRESET_720P,
+    "4k_master": PRESET_4K_MASTER,
+}
+
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +221,21 @@ def job_detect(talk_id: int, raw_key: str) -> None:
             job_id = job.id
             scheduled_start = talk.start
             scheduled_end = talk.end
+            tolerance_seconds = float(
+                get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
+            )
 
+        detect_kwargs = (
+            {"tolerance_seconds": tolerance_seconds}
+            if tolerance_seconds != 300.0
+            else {}
+        )
         raw_path = storage.get(raw_key)
         result = detect(
             raw_path,
             scheduled_start=scheduled_start,
             scheduled_end=scheduled_end,
+            **detect_kwargs,
         )
         if not result.passed:
             raise ValueError(f"Detection failed: {result.reason}")
@@ -604,10 +625,14 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
             db.commit()
             db.refresh(job)
             job_id = job.id
+            preset_name = str(
+                get_setting("default_preview_preset", "small_video", db=db)
+            )
 
         cut_path = storage.get(cut_key)
         preset = (
-            settings.preview_presets.get("small_video")
+            settings.preview_presets.get(preset_name)
+            or PREVIEW_PRESETS.get(preset_name)
             or PREVIEW_PRESETS["small_video"]
         )
 
@@ -682,13 +707,15 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
             db.commit()
             db.refresh(job)
             job_id = job.id
+            target_lufs = float(get_setting("loudness_target_lufs", -16.0, db=db))
 
+        loud_kwargs = {"target_lufs": target_lufs} if target_lufs != -16.0 else {}
         cut_path = storage.get(cut_key)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "loudness.mp4"
             try:
-                normalize(cut_path, tmp_out)
+                normalize(cut_path, tmp_out, **loud_kwargs)
             except ValueError as val_err:
                 if "No audio stream found" in str(val_err):
                     logger.warning(
@@ -786,8 +813,12 @@ def job_transcode(
             db.commit()
             db.refresh(job)
             job_id = job.id
+            preset_name = str(
+                get_setting("default_transcode_preset", "1080p_default", db=db)
+            )
 
         loud_path = storage.get(loud_key)
+        transcode_preset = TRANSCODE_PRESETS.get(preset_name, PRESET_1080P_DEFAULT)
         last_update_time = [0.0]
 
         def _on_progress(pct: float) -> None:
@@ -807,9 +838,17 @@ def job_transcode(
                         progress_err,
                     )
 
+        transcode_kwargs = (
+            {"preset": transcode_preset} if preset_name != "1080p_default" else {}
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "final.mp4"
-            transcode(loud_path, tmp_out, on_progress=_on_progress)
+            transcode(
+                loud_path,
+                tmp_out,
+                on_progress=_on_progress,
+                **transcode_kwargs,
+            )
             storage.put(final_key, tmp_out)
             _cache_waveform(storage, final_key, tmp_out)
 

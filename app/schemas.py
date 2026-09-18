@@ -382,3 +382,31 @@ class ScheduleImportResponse(BaseModel):
     event_id: int
     event_name: str
     imported_count: int
+
+
+class SystemSettingOption(BaseModel):
+    value: str
+    label: str
+
+
+class SystemSettingRead(BaseModel):
+    key: str
+    title: str | None = None
+    value: str
+    description: str | None = None
+    updated_at: datetime | None = None
+    is_overridden: bool = False
+    default_value: str | None = None
+    options: list[SystemSettingOption] = []
+    input_type: str = "select"
+    min_value: float | None = None
+    max_value: float | None = None
+    step: float | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SystemSettingUpdate(BaseModel):
+    key: str = Field(..., min_length=1, max_length=255)
+    value: str
+    description: str | None = None

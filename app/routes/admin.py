@@ -1,7 +1,10 @@
+import json
+import math
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from rq import Worker
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -12,6 +15,12 @@ from app.auth import (
     get_current_user,
     lock_active_admins,
     require_admin,
+)
+from app.config import (
+    EXCLUDED_SETTING_KEYS,
+    PREVIEW_PRESETS,
+    SYSTEM_SETTING_DEFINITIONS,
+    settings,
 )
 from app.db import get_db
 from app.queue import redis_conn
@@ -70,6 +79,7 @@ def admin_dashboard(
     except OSError:
         storage_status = "Unavailable"
 
+    settings_list = _get_all_settings_data(db)
     return templates.TemplateResponse(
         request,
         "admin_dashboard.html.jinja",
@@ -82,6 +92,7 @@ def admin_dashboard(
             "free_bytes": free_bytes,
             "total_bytes": total_bytes,
             "used_bytes": used_bytes,
+            "settings": settings_list,
         },
     )
 
@@ -161,3 +172,291 @@ def deactivate_user(
     db.commit()
     db.refresh(target)
     return target
+
+
+def _validate_system_setting(key: str, value: str) -> None:
+    normalized_key = key.strip().lower()
+    if normalized_key in EXCLUDED_SETTING_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Setting '{key}' is a protected credential or infrastructure parameter and cannot be modified dynamically.",
+        )
+    if key not in SYSTEM_SETTING_DEFINITIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Setting '{key}' is not a recognized platform setting.",
+        )
+    if key == "detect_duration_tolerance_seconds":
+        try:
+            val = float(value)
+            if not math.isfinite(val) or val < 0:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="detect_duration_tolerance_seconds must be a finite non-negative number",
+            )
+    elif key == "loudness_target_lufs":
+        try:
+            val = float(value)
+            if not math.isfinite(val) or val < -70.0 or val > 0.0:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="loudness_target_lufs must be a finite float between -70.0 and 0.0",
+            )
+    elif key == "default_preview_preset":
+        valid_presets = set(settings.preview_presets.keys()) | set(
+            PREVIEW_PRESETS.keys()
+        )
+        if value not in valid_presets:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"default_preview_preset must be one of: {sorted(valid_presets)}",
+            )
+    elif key == "default_transcode_preset":
+        valid_transcodes = ("1080p_default", "720p", "4k_master")
+        if value not in valid_transcodes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"default_transcode_preset must be one of: {list(valid_transcodes)}",
+            )
+
+
+def _get_all_settings_data(db: Session) -> list[schemas.SystemSettingRead]:
+    db_rows = {s.key: s for s in db.query(models.SystemSetting).all()}
+    results: list[schemas.SystemSettingRead] = []
+
+    for def_key, defn in SYSTEM_SETTING_DEFINITIONS.items():
+        row = db_rows.get(def_key)
+        current_value = row.value if row else str(defn.default_value)
+        is_overridden = False
+        if row is not None:
+            if defn.value_type in (int, float):
+                try:
+                    is_overridden = float(row.value) != float(defn.default_value)
+                except ValueError, TypeError:
+                    is_overridden = True
+            else:
+                is_overridden = row.value != str(defn.default_value)
+
+        options = [
+            schemas.SystemSettingOption(value=opt_val, label=opt_lbl)
+            for opt_val, opt_lbl in defn.options
+        ]
+        results.append(
+            schemas.SystemSettingRead(
+                key=def_key,
+                title=defn.title,
+                value=current_value,
+                description=defn.description,
+                updated_at=row.updated_at if row else None,
+                is_overridden=is_overridden,
+                default_value=str(defn.default_value),
+                options=options,
+                input_type=defn.input_type,
+                min_value=defn.min_value,
+                max_value=defn.max_value,
+                step=defn.step,
+            )
+        )
+
+    return results
+
+
+@router.get("/settings", response_class=HTMLResponse)
+def get_settings_page(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    status_msg: str | None = Query(None, alias="status"),
+    error_msg: str | None = Query(None, alias="error"),
+):
+    settings_list = _get_all_settings_data(db)
+    return templates.TemplateResponse(
+        request,
+        "admin_settings.html.jinja",
+        {
+            "settings": settings_list,
+            "status_msg": status_msg,
+            "error_msg": error_msg,
+        },
+    )
+
+
+@router.get("/api/settings", response_model=list[schemas.SystemSettingRead])
+def list_api_settings(db: Annotated[Session, Depends(get_db)]):
+    return _get_all_settings_data(db)
+
+
+def _upsert_setting(
+    db: Session, key: str, value: str, description: str | None = None
+) -> models.SystemSetting:
+    key = key.strip()
+    value = value.strip()
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Setting key cannot be empty",
+        )
+    if len(key) > 255:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Setting key cannot exceed 255 characters",
+        )
+    _validate_system_setting(key, value)
+
+    setting = db.get(models.SystemSetting, key)
+    desc = (description.strip() if description else None) or (
+        SYSTEM_SETTING_DEFINITIONS[key].description
+        if key in SYSTEM_SETTING_DEFINITIONS
+        else None
+    )
+    if not setting:
+        setting = models.SystemSetting(
+            key=key, value=value, description=desc, updated_at=datetime.now(UTC)
+        )
+        db.add(setting)
+    else:
+        setting.value = value
+        if description:
+            setting.description = desc
+        setting.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(setting)
+    return setting
+
+
+@router.post("/settings")
+async def update_setting(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+):
+    content_type = request.headers.get("content-type", "")
+
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except ValueError, json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON payload",
+            )
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="JSON payload must be an object",
+            )
+
+        setting = _upsert_setting(
+            db,
+            str(payload.get("key") or ""),
+            str(payload.get("value") or ""),
+            payload.get("description"),
+        )
+        defn = SYSTEM_SETTING_DEFINITIONS.get(setting.key)
+        options = (
+            [schemas.SystemSettingOption(value=v, label=lbl) for v, lbl in defn.options]
+            if defn
+            else []
+        )
+        return schemas.SystemSettingRead(
+            key=setting.key,
+            title=defn.title if defn else None,
+            value=setting.value,
+            description=setting.description,
+            updated_at=setting.updated_at,
+            is_overridden=True,
+            default_value=str(defn.default_value) if defn else None,
+            options=options,
+            input_type=defn.input_type if defn else "select",
+            min_value=defn.min_value if defn else None,
+            max_value=defn.max_value if defn else None,
+            step=defn.step if defn else None,
+        )
+
+    # Form submission
+    form = await request.form()
+
+    # Bulk reset to defaults
+    if form.get("action") == "reset_all":
+        db.query(models.SystemSetting).filter(
+            models.SystemSetting.key.in_(SYSTEM_SETTING_DEFINITIONS.keys())
+        ).delete(synchronize_session=False)
+        db.commit()
+        return RedirectResponse(
+            url="/admin/settings?status=reset",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    # Single-key form submission
+    if "key" in form:
+        _upsert_setting(
+            db,
+            str(form.get("key") or ""),
+            str(form.get("value") or ""),
+            form.get("description"),
+        )
+        return RedirectResponse(
+            url="/admin/settings?status=saved",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    # Common save button: saves all 4 selectable settings at once
+    for def_key, defn in SYSTEM_SETTING_DEFINITIONS.items():
+        if def_key in form:
+            val = str(form.get(def_key)).strip()
+            _validate_system_setting(def_key, val)
+            setting = db.get(models.SystemSetting, def_key)
+
+            is_default = False
+            if defn.value_type in (int, float):
+                try:
+                    is_default = float(val) == float(defn.default_value)
+                except ValueError, TypeError:
+                    is_default = False
+            else:
+                is_default = val == str(defn.default_value)
+
+            if is_default:
+                if setting:
+                    db.delete(setting)
+            else:
+                if not setting:
+                    setting = models.SystemSetting(
+                        key=def_key,
+                        value=val,
+                        description=defn.description,
+                        updated_at=datetime.now(UTC),
+                    )
+                    db.add(setting)
+                else:
+                    setting.value = val
+                    setting.updated_at = datetime.now(UTC)
+
+    db.commit()
+    return RedirectResponse(
+        url="/admin/settings?status=saved",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/settings/{key}/reset")
+async def reset_setting(
+    key: str,
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+):
+    setting = db.get(models.SystemSetting, key)
+    if setting:
+        db.delete(setting)
+        db.commit()
+
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        return {"status": "ok", "key": key}
+
+    return RedirectResponse(
+        url="/admin/settings?status=reset",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
