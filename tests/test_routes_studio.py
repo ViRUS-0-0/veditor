@@ -427,6 +427,11 @@ def test_admin_viewing_other_organizer_talk_renders_view_only_mode(
     assert 'data-is-other-organizer="true"' in html
     assert "studio-shell is-view-only" in html
     assert "admin-view-only-banner" in html
+    assert 'id="banner-mode-text"' in html
+    assert (
+        f"Viewing another organizer's talk ({event.name}). Editing and pipeline actions are locked."
+        in html
+    )
     assert "Enable Edit Mode" in html
     assert "admin-confirm-edit-modal" in html
     assert "btn-modal-confirm" in html
@@ -487,6 +492,15 @@ def test_admin_viewing_own_talk_renders_editable_mode(client: TestClient, db_ses
     assert "admin-view-only-banner" not in html
     assert "admin-confirm-edit-modal" not in html
     assert '<a href="/studio" class="breadcrumb-back">&larr; Talks</a>' in html
+
+    # When accessed with an /admin referer header, back link still points to /studio without ?from=admin
+    res_referer = client.get(
+        f"/studio/talks/{talk.id}", headers={"referer": f"/admin/events/{event.id}"}
+    )
+    assert res_referer.status_code == 200
+    assert (
+        '<a href="/studio" class="breadcrumb-back">&larr; Talks</a>' in res_referer.text
+    )
 
     # When accessed from admin area (?from=admin), back link points to admin talk page
     res_admin = client.get(f"/studio/talks/{talk.id}?from=admin")

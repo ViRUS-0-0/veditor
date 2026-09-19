@@ -803,7 +803,16 @@ function initAdminViewOnlyMode() {
         desc.textContent =
           'Edit mode enabled. You can now modify cut bounds, upload recordings, and execute pipeline actions.';
       } else if (desc.dataset.defaultText) {
-        desc.innerHTML = desc.dataset.defaultText;
+        const eventName = desc.dataset.eventName;
+        if (eventName) {
+          desc.textContent = "Viewing another organizer's talk (";
+          const strong = document.createElement('strong');
+          strong.textContent = eventName;
+          desc.appendChild(strong);
+          desc.appendChild(document.createTextNode('). Editing and pipeline actions are locked.'));
+        } else {
+          desc.textContent = desc.dataset.defaultText;
+        }
       }
     }
     if (toggleBtn) {
@@ -812,10 +821,34 @@ function initAdminViewOnlyMode() {
         ? '<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> <span>Lock (View Only)</span>'
         : '<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> <span>Enable Edit Mode</span>';
     }
-    document.querySelectorAll('.player-panel input, .player-panel button, .sidebar input, .sidebar button, .sidebar textarea').forEach(el => {
-      if (!el.closest('#admin-view-only-banner') && !el.closest('#admin-confirm-edit-modal')) {
-        el.disabled = !unlocked;
-        if (el.tagName === 'TEXTAREA' || el.type === 'text') el.readOnly = !unlocked;
+    const editControlsSelector =
+      '[data-edit-control], .upload-pending-container input, .upload-pending-container button, .timeline-inputs-bar input, .timeline-inputs-bar button, .review-box input, .review-box button, .review-box textarea, .studio-panel input, .studio-panel button, .studio-panel textarea';
+    shell.querySelectorAll(editControlsSelector).forEach(el => {
+      if (el.closest('#admin-view-only-banner') || el.closest('#admin-confirm-edit-modal')) {
+        return;
+      }
+      if (unlocked) {
+        if (el.dataset.viewLocked === 'true') {
+          el.disabled = el.dataset.operationalDisabled === 'true';
+          if (el.tagName === 'TEXTAREA' || el.type === 'text') {
+            el.readOnly = el.dataset.operationalReadOnly === 'true';
+            delete el.dataset.operationalReadOnly;
+          }
+          delete el.dataset.operationalDisabled;
+          delete el.dataset.viewLocked;
+        }
+      } else {
+        if (el.dataset.viewLocked !== 'true') {
+          el.dataset.viewLocked = 'true';
+          el.dataset.operationalDisabled = el.disabled ? 'true' : 'false';
+          if (el.tagName === 'TEXTAREA' || el.type === 'text') {
+            el.dataset.operationalReadOnly = el.readOnly ? 'true' : 'false';
+          }
+        }
+        el.disabled = true;
+        if (el.tagName === 'TEXTAREA' || el.type === 'text') {
+          el.readOnly = true;
+        }
       }
     });
   }

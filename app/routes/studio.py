@@ -716,11 +716,7 @@ def studio(
     is_from_admin = bool(
         user
         and user.role == "admin"
-        and (
-            request.query_params.get("from") == "admin"
-            or is_other_organizer_talk
-            or "/admin" in (request.headers.get("referer") or "")
-        )
+        and (request.query_params.get("from") == "admin" or is_other_organizer_talk)
     )
 
     back_url = (

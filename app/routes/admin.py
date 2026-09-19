@@ -209,6 +209,11 @@ def admin_events(
     }
 
     total_pages = max(1, (total_events + limit - 1) // limit) if total_events > 0 else 1
+    if page > total_pages:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Page not found",
+        )
     offset = (page - 1) * limit
 
     rows = (

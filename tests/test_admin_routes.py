@@ -850,6 +850,10 @@ def test_admin_events_pagination(client: TestClient, db_session):
     assert "&larr; Previous" in html2
     assert "page=1&limit=2" in html2
 
+    # Page exceeding total_pages returns 404
+    res_page_overflow = client.get("/admin/events?page=999&limit=2")
+    assert res_page_overflow.status_code == 404
+
     # Query parameter validation
     res_bad_page = client.get("/admin/events?page=0")
     assert res_bad_page.status_code == 422
