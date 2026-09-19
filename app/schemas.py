@@ -285,6 +285,7 @@ def _parse_hhmmss(value: str) -> Decimal:
 class CutBoundsRequest(BaseModel):
     cut_start: str  # "HH:MM:SS"
     cut_end: str  # "HH:MM:SS"
+    note: str | None = None
 
     @model_validator(mode="after")
     def parse_and_validate(self):

@@ -56,8 +56,7 @@ if (shellInit) {
     }
   }
 }
-const savedCutStart = shellInit?.dataset.cutStart;
-const savedCutEnd = shellInit?.dataset.cutEnd;
+
 const video           = document.getElementById('main-video');
 const noPreview       = document.getElementById('no-preview-msg');
 const timecode        = document.getElementById('timecode-display');
@@ -98,15 +97,25 @@ let isPlayingCut = false;
 let currentWaveformPeaks = [];
 let waveformAbortController = null;
 
+const initShellBounds = getStudioShell();
+if (initShellBounds) {
+  const initCutStart = parseFloat(initShellBounds.dataset.cutStart);
+  const initCutEnd = parseFloat(initShellBounds.dataset.cutEnd);
+  if (!isNaN(initCutStart) && initCutStart >= 0) inPointSec = initCutStart;
+  if (!isNaN(initCutEnd) && initCutEnd > inPointSec) outPointSec = initCutEnd;
+}
+
 // ── Timecode Format & Parse ─────────────────────────────────────
 function formatTimecode(t) {
   if (!isFinite(t) || isNaN(t) || t < 0) return '00:00:00.00';
-  const h  = Math.floor(t / 3600);
-  const m  = Math.floor((t % 3600) / 60);
-  const s  = Math.floor(t % 60);
-  const ff = Math.floor((t % 1) * 100);
+  const totalCs = Math.round(t * 100);
+  const cs = totalCs % 100;
+  const totalS = Math.floor(totalCs / 100);
+  const s = totalS % 60;
+  const m = Math.floor(totalS / 60) % 60;
+  const h = Math.floor(totalS / 3600);
   return [h, m, s].map(v => String(v).padStart(2, '0')).join(':') +
-    '.' + String(ff).padStart(2, '0');
+    '.' + String(cs).padStart(2, '0');
 }
 
 function parseTimecode(str) {
@@ -338,6 +347,15 @@ function updateCutMarkersUI() {
   if (inputInPoint)  inputInPoint.value  = formatTimecode(inPointSec);
   if (inputOutPoint) inputOutPoint.value = formatTimecode(outPointSec);
 
+  const reviewIn = document.getElementById('review-in-point');
+  const reviewOut = document.getElementById('review-out-point');
+  const reviewDur = document.getElementById('review-duration');
+  if (reviewIn) reviewIn.textContent = formatTimecode(inPointSec);
+  if (reviewOut) reviewOut.textContent = formatTimecode(outPointSec);
+  if (reviewDur) {
+    const diff = Math.max(0, outPointSec - inPointSec);
+    reviewDur.textContent = formatTimecode(diff);
+  }
   const cutDurationBadge = document.getElementById('cut-duration-badge');
   if (cutDurationBadge) {
     const cutDuration = Math.max(0, outPointSec - inPointSec);
@@ -513,12 +531,26 @@ if (video) {
     if (iconPause) iconPause.style.display = 'none';
     isPlayingCut = false;
   });
-
   function initializeVideoMetadata() {
+    if (scrubber) scrubber.max = 1000;
     const duration = video.duration || 10;
     if (!boundsEdited) {
-      inPointSec = savedCutStart !== '' ? Number(savedCutStart) : 0;
-      outPointSec = savedCutEnd !== '' ? Number(savedCutEnd) : duration;
+      const shell = getStudioShell() || shellInit;
+      const activeRow = document.querySelector(`.media-asset-row[data-asset-url="${video.src}"]`);
+      const isRaw = (video.src && video.src.includes('/raw/')) || activeRow?.dataset.assetCategory === 'raw';
+
+      if (isRaw) {
+        const rawStart = shell && shell.dataset.cutStart !== undefined && shell.dataset.cutStart !== '' ? parseFloat(shell.dataset.cutStart) : NaN;
+        const rawEnd = shell && shell.dataset.cutEnd !== undefined && shell.dataset.cutEnd !== '' ? parseFloat(shell.dataset.cutEnd) : NaN;
+        inPointSec = (!isNaN(rawStart) && rawStart >= 0) ? rawStart : 0;
+        outPointSec = (!isNaN(rawEnd) && rawEnd > inPointSec) ? rawEnd : duration;
+      } else {
+        inPointSec = 0;
+        outPointSec = duration;
+      }
+
+      inPointSec = Math.max(0, Math.min(inPointSec, duration > 0.1 ? duration - 0.1 : 0));
+      outPointSec = Math.min(duration, Math.max(outPointSec, inPointSec + 0.1));
     }
     updateTimecode();
     updateTimelineTicks();
@@ -648,21 +680,52 @@ window.approveTalk = async function(id) {
     if (talkStatus === 'pending_approval') {
       await postAPI(`/talks/${id}/approve`, { decision: 'approve' });
     } else if (talkStatus === 'pending_bounds' || talkStatus === 'needs_work') {
-      const cutStart = formatTimecode(inPointSec);
-      const cutEnd = formatTimecode(outPointSec);
-      await postAPI(`/talks/${id}/cut`, { cut_start: cutStart, cut_end: cutEnd });
+      const dur = video && Number.isFinite(video.duration) && video.duration > 0 ? video.duration : (outPointSec || 10);
+      const clampedIn = Math.max(0, Math.min(inPointSec, dur > 0.1 ? dur - 0.1 : 0));
+      const clampedOut = Math.min(dur, Math.max(outPointSec, clampedIn + 0.1));
+      const cutStart = formatTimecode(clampedIn);
+      const cutEnd = formatTimecode(clampedOut);
+      const cutPayload = { cut_start: cutStart, cut_end: cutEnd };
+      if (notes) cutPayload.note = notes;
+      await postAPI(`/talks/${id}/cut`, cutPayload);
     } else if (talkStatus === 'preview') {
       await postAPI(`/talks/${id}/review`, { decision: 'approve', note: notes || 'Approved in review studio' });
     } else if (talkStatus === 'pending_intro_outro') {
-      const includeIntro = document.getElementById('check-include-intro') ? document.getElementById('check-include-intro').checked : true;
-      const includeOutro = document.getElementById('check-include-outro') ? document.getElementById('check-include-outro').checked : true;
+      const includeIntro = document.getElementById('check-include-intro') ? document.getElementById('check-include-intro').checked : false;
+      const includeOutro = document.getElementById('check-include-outro') ? document.getElementById('check-include-outro').checked : false;
+      const introSource = document.querySelector('input[name="intro_source"]:checked')?.value || 'generated';
+      const outroSource = document.querySelector('input[name="outro_source"]:checked')?.value || 'generated';
+      let customIntroPath = document.getElementById('custom-intro-path')?.value?.trim() || null;
+      let customOutroPath = document.getElementById('custom-outro-path')?.value?.trim() || null;
+
+      async function uploadCustomBumper(type, pathVal) {
+        const fileInput = document.getElementById(`custom-${type}-file`);
+        if (!fileInput?.files?.[0] || (pathVal && pathVal.startsWith('/'))) return pathVal;
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        fd.append('kind', type);
+        const res = await (window.authFetch || fetch)(`/talks/${id}/bumpers/upload`, {
+          method: 'POST',
+          body: fd,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Failed to upload custom ${type} bumper`);
+        }
+        return (await res.json()).path;
+      }
+
+      if (includeIntro && introSource === 'custom') customIntroPath = await uploadCustomBumper('intro', customIntroPath);
+      if (includeOutro && outroSource === 'custom') customOutroPath = await uploadCustomBumper('outro', customOutroPath);
+
       await postAPI(`/talks/${id}/assemble`, {
         include_intro: includeIntro,
         include_outro: includeOutro,
-        intro_source: 'generated',
-        outro_source: 'generated',
+        intro_source: introSource,
+        outro_source: outroSource,
+        custom_intro_path: (includeIntro && introSource === 'custom') ? customIntroPath : null,
+        custom_outro_path: (includeOutro && outroSource === 'custom') ? customOutroPath : null,
       });
-
     } else {
       await postAPI(`/talks/${id}/approve`, { decision: 'approve' });
     }
@@ -888,6 +951,7 @@ function initAdminViewOnlyMode() {
 function renderRecentJobs(jobs) {
   const container = document.getElementById('jobs-container');
   const empty = document.getElementById('jobs-empty');
+  if (!container && !empty) return;
   if (!jobs || jobs.length === 0) {
     if (container) {
       container.textContent = '';
@@ -982,6 +1046,137 @@ function renderRecentJobs(jobs) {
   });
 }
 
+// ── Collapsible Right Sidebar ────────────────────────────────────
+function initRightPanelCollapse() {
+  const shell = getStudioShell();
+  const btnToggle = document.getElementById('btn-toggle-right-panel');
+  const btnExpand = document.getElementById('btn-expand-right-panel');
+
+  function setCollapsed(collapsed, shiftFocus = false) {
+    if (!shell) return;
+    shell.classList.toggle('right-panel-collapsed', collapsed);
+    if (btnToggle) btnToggle.setAttribute('aria-expanded', String(!collapsed));
+    if (btnExpand) btnExpand.setAttribute('aria-expanded', String(!collapsed));
+    if (shiftFocus) (collapsed ? btnExpand : btnToggle)?.focus();
+    try {
+      localStorage.setItem('veditor_right_panel_collapsed', String(collapsed));
+    } catch (_) {}
+  }
+
+  try {
+    const isCollapsed = localStorage.getItem('veditor_right_panel_collapsed') === 'true';
+    if (isCollapsed) setCollapsed(true, false);
+  } catch (_) {}
+
+  if (btnToggle) {
+    btnToggle.addEventListener('click', () => setCollapsed(true, true));
+  }
+  if (btnExpand) {
+    btnExpand.addEventListener('click', () => setCollapsed(false, true));
+  }
+}
+
+// ── Bumper Studio Controls ───────────────────────────────────────
+function initBumperStudio() {
+  ['intro', 'outro'].forEach(type => {
+    const toggle = document.getElementById(`check-include-${type}`);
+    const wrap = document.getElementById(`${type}-options-wrap`);
+    if (toggle && wrap) {
+      toggle.addEventListener('change', () => wrap.classList.toggle('is-hidden', !toggle.checked));
+    }
+
+    const radios = document.querySelectorAll(`input[name="${type}_source"]`);
+    const customWrap = document.getElementById(`${type}-custom-wrap`);
+    const file = document.getElementById(`custom-${type}-file`);
+    const path = document.getElementById(`custom-${type}-path`);
+    const dropzone = document.getElementById(`${type}-dropzone`);
+    const fileName = document.getElementById(`${type}-file-name`);
+    let currentUploadGen = 0;
+
+    radios.forEach(r => {
+      r.addEventListener('change', () => {
+        radios.forEach(rad => rad.closest('.bumper-segment')?.classList.toggle('is-active', rad.checked));
+        if (customWrap) customWrap.classList.toggle('is-visible', r.value === 'custom' && r.checked);
+      });
+    });
+
+    async function handleSelectedFile(selected) {
+      if (!selected) return;
+      const uploadGen = ++currentUploadGen;
+      if (fileName) {
+        fileName.textContent = `${selected.name} (Uploading...)`;
+        fileName.classList.remove('is-ready');
+      }
+      if (path) path.value = selected.name;
+      try {
+        const fd = new FormData();
+        fd.append('file', selected);
+        fd.append('kind', type);
+        const res = await (window.authFetch || fetch)(`/talks/${getTalkId()}/bumpers/upload`, {
+          method: 'POST',
+          body: fd,
+        });
+        if (uploadGen !== currentUploadGen) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (uploadGen !== currentUploadGen) return;
+          if (data.path) {
+            if (path) path.value = data.path;
+            if (fileName) {
+              fileName.textContent = `${selected.name} ✓`;
+              fileName.classList.add('is-ready');
+            }
+          }
+        }
+      } catch (_) {
+        if (uploadGen === currentUploadGen && fileName) {
+          fileName.textContent = selected.name;
+        }
+      }
+    }
+
+    if (file) {
+      file.addEventListener('change', () => {
+        const selected = file.files?.[0];
+        if (selected) handleSelectedFile(selected);
+      });
+    }
+
+    if (dropzone) {
+      ['dragenter', 'dragover'].forEach(name => {
+        dropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.add('drag-over');
+        });
+      });
+      ['dragleave', 'drop'].forEach(name => {
+        dropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.remove('drag-over');
+        });
+      });
+      dropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const dropped = dt?.files?.[0];
+        if (dropped) {
+          if (file) {
+            try {
+              file.files = dt.files;
+            } catch (_) {}
+          }
+          handleSelectedFile(dropped);
+        }
+      });
+    }
+
+    if (path?.value && fileName && path.value.trim() !== '') {
+      fileName.classList.add('is-ready');
+    }
+  });
+}
+
 let studioPollInterval = null;
 async function pollStudioJobs() {
   const talkId = getTalkId();
@@ -1028,6 +1223,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initInitialVideo();
   initWaveformListeners();
   updateCutMarkersUI();
+  initRightPanelCollapse();
+  initBumperStudio();
   pollStudioJobs();
   startStudioPolling();
 
@@ -1094,11 +1291,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const actionBtns = document.getElementById('action-btns');
   if (actionBtns) {
     actionBtns.addEventListener('click', (e) => {
-      const uploadBtn = e.target.closest('#btn-upload-recording');
-      if (uploadBtn && videoInput) {
-        videoInput.click();
-        return;
-      }
       const approveBtn = e.target.closest('#btn-approve');
       if (approveBtn) {
         window.approveTalk(getTalkId());
@@ -1144,4 +1336,3 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 3000);
   }
 });
-

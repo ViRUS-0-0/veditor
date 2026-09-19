@@ -16,7 +16,7 @@ from redis.exceptions import RedisError
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
-from app.auth import hash_api_key
+from app.auth import CurrentUser, hash_api_key
 from app.config import settings
 from app.db import get_db
 from app.queue import light_queue
@@ -97,20 +97,29 @@ def _authorize_studio_talk(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=not_found_detail,
                 )
-            if (
+            authorized = (
                 sso_payload.get("scope_type") == "talk"
                 and sso_payload.get("scope_id") == talk.id
-            ):
-                return talk
-            if (
+            ) or (
                 sso_payload.get("scope_type") == "event"
                 and sso_payload.get("scope_id") == talk.event_id
-            ):
-                return talk
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=not_found_detail,
             )
+            if not authorized:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=not_found_detail,
+                )
+            if hasattr(request, "state"):
+                request.state.user = CurrentUser(
+                    role=sso_payload["role"],
+                    source="sso",
+                    event_ids=[sso_payload["scope_id"]]
+                    if sso_payload.get("scope_type") == "event"
+                    else [],
+                    scope_type=sso_payload.get("scope_type"),
+                    scope_id=sso_payload.get("scope_id"),
+                )
+            return talk
 
     user = _get_authenticated_user_from_cookie(request, db)
     if user:
@@ -125,26 +134,32 @@ def _authorize_studio_talk(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=not_found_detail,
             )
-        if user.role == "admin":
-            return talk
-        if talk.event and talk.event.created_by_user_id == user.id:
-            return talk
-        api_key = request.headers.get("X-API-Key") or request.cookies.get(
-            "veditor_api_key"
-        )
-        if api_key:
-            hashed_key = hash_api_key(api_key)
-            client = (
-                db.query(models.Client)
-                .filter(models.Client.hashed_key == hashed_key)
-                .first()
+        authorized = False
+        if user.role == "admin" or (
+            talk.event and talk.event.created_by_user_id == user.id
+        ):
+            authorized = True
+        else:
+            api_key = request.headers.get("X-API-Key") or request.cookies.get(
+                "veditor_api_key"
             )
-            if client and talk.event_id in client.event_ids:
-                return talk
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=not_found_detail,
-        )
+            if api_key:
+                hashed_key = hash_api_key(api_key)
+                client = (
+                    db.query(models.Client)
+                    .filter(models.Client.hashed_key == hashed_key)
+                    .first()
+                )
+                if client and talk.event_id in client.event_ids:
+                    authorized = True
+        if not authorized:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=not_found_detail,
+            )
+        if hasattr(request, "state"):
+            request.state.user = user
+        return talk
 
     api_key = request.headers.get("X-API-Key") or request.cookies.get("veditor_api_key")
     if not api_key:
@@ -459,6 +474,14 @@ ALLOWED_MEDIA_CATEGORIES = frozenset(
 )
 
 
+def _download_filename(talk: models.Talk, filename: str) -> str:
+    safe_title = "".join(
+        c if c.isalnum() or c in ("-", "_") else "_"
+        for c in (getattr(talk, "title", "") or "")
+    ).strip("_")
+    return f"{safe_title}_{filename}" if safe_title else f"talk_{talk.id}_{filename}"
+
+
 @router.get("/media/{talk_id}/{filename}")
 def get_talk_media_default(
     request: Request,
@@ -467,7 +490,9 @@ def get_talk_media_default(
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
-    _authorize_studio_talk(talk_id, request, db, not_found_detail="Media not found")
+    talk = _authorize_studio_talk(
+        talk_id, request, db, not_found_detail="Media not found"
+    )
 
     safe_filename = Path(filename).name
     candidate_keys = [
@@ -478,12 +503,19 @@ def get_talk_media_default(
         f"{talk_id}/cut/{safe_filename}",
         f"{talk_id}/final/{safe_filename}",
     ]
+    download_filename = (
+        _download_filename(talk, safe_filename)
+        if request.query_params.get("download") in ("1", "true", "yes")
+        else None
+    )
+
     for key in candidate_keys:
         if storage.exists(key):
             path = storage.get(key)
             return FileResponse(
                 path,
                 media_type="video/mp4",
+                filename=download_filename,
                 headers={"Cache-Control": "no-store"},
             )
     raise HTTPException(status_code=404, detail="Media not found")
@@ -502,16 +534,26 @@ def get_talk_media_categorized(
     if safe_category not in ALLOWED_MEDIA_CATEGORIES:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    _authorize_studio_talk(talk_id, request, db, not_found_detail="Media not found")
+    talk = _authorize_studio_talk(
+        talk_id, request, db, not_found_detail="Media not found"
+    )
 
     safe_filename = Path(filename).name
     key = f"{talk_id}/{safe_category}/{safe_filename}"
     if not storage.exists(key):
         raise HTTPException(status_code=404, detail=f"Media {key} not found")
     path = storage.get(key)
+
+    download_filename = (
+        _download_filename(talk, safe_filename)
+        if request.query_params.get("download") in ("1", "true", "yes")
+        else None
+    )
+
     return FileResponse(
         path,
         media_type="video/mp4",
+        filename=download_filename,
         headers={"Cache-Control": "no-store"},
     )
 
@@ -657,14 +699,6 @@ def studio(
         talk_id, request, db, not_found_detail="Talk not found"
     )
 
-    jobs = (
-        db.query(models.Job)
-        .filter(models.Job.talk_id == talk_id)
-        .order_by(models.Job.id.desc())
-        .limit(10)
-        .all()
-    )
-
     duration_seconds = None
     if talk.start and talk.end:
         duration_seconds = int((talk.end - talk.start).total_seconds())
@@ -692,7 +726,8 @@ def studio(
                     }
                 )
 
-    for rk in storage.list_keys(f"{talk.id}/raw"):
+    raw_keys = storage.list_keys(f"{talk.id}/raw")
+    for rk in sorted(raw_keys)[:1]:
         fname = Path(rk).name
         url = f"/studio/media/{talk.id}/raw/{urllib.parse.quote(fname)}"
         if url not in seen_urls:
@@ -704,6 +739,16 @@ def studio(
                     "url": url,
                 }
             )
+
+    final_asset = next((a for a in media_assets if a["category"] == "final"), None)
+    if not final_asset and (final_keys := storage.list_keys(f"{talk.id}/final")):
+        url = f"/studio/media/{talk.id}/final/{urllib.parse.quote(Path(final_keys[0]).name)}"
+        final_asset = {
+            "label": "Master Video (Final)",
+            "category": "final",
+            "url": url,
+        }
+        media_assets.append(final_asset)
 
     preview_urls = [a["url"] for a in media_assets]
 
@@ -730,10 +775,10 @@ def studio(
         "studio.html.jinja",
         {
             "talk": talk,
-            "jobs": jobs,
             "milestones": get_evaluated_milestones(talk.status),
             "duration_seconds": duration_seconds,
             "media_assets": media_assets,
+            "final_asset": final_asset,
             "preview_urls": preview_urls,
             "all_statuses": ALL_STATUSES,
             "is_other_organizer_talk": is_other_organizer_talk,
