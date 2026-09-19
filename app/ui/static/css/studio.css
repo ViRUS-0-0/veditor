@@ -936,6 +936,10 @@ a.breadcrumb-event:hover {
   color: var(--v-primary);
 }
 
+.studio-shell[data-is-other-organizer="true"] .expand-panel-tab {
+  top: 60px;
+}
+
 #studio-panel-right {
   transition: opacity 0.2s ease, width 0.25s ease;
 }

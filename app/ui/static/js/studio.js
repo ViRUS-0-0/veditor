@@ -885,9 +885,15 @@ function initAdminViewOnlyMode() {
         : '<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> <span>Enable Edit Mode</span>';
     }
     const editControlsSelector =
-      '[data-edit-control], .upload-pending-container input, .upload-pending-container button, .timeline-inputs-bar input, .timeline-inputs-bar button, .review-box input, .review-box button, .review-box textarea, .studio-panel input, .studio-panel button, .studio-panel textarea';
+      '[data-edit-control], .upload-pending-container input, .upload-pending-container button, .timeline-inputs-bar input, .timeline-inputs-bar button, .review-box input, .review-box button, .review-box textarea, .studio-panel-body input, .studio-panel-body button, .studio-panel-body textarea';
     shell.querySelectorAll(editControlsSelector).forEach(el => {
-      if (el.closest('#admin-view-only-banner') || el.closest('#admin-confirm-edit-modal')) {
+      if (
+        el.closest('#admin-view-only-banner') ||
+        el.closest('#admin-confirm-edit-modal') ||
+        el.closest('.studio-panel-header') ||
+        el.id === 'btn-toggle-right-panel' ||
+        el.id === 'btn-expand-right-panel'
+      ) {
         return;
       }
       if (unlocked) {
