@@ -74,7 +74,7 @@ def handle_reject(
     talk.cut_start = None
     talk.cut_end = None
     response = _record_review_and_advance(
-        talk, payload, "rejected", db, user_id=user_id
+        talk, payload, "pending_bounds", db, user_id=user_id
     )
     if storage is not None:
         cleanup_intermediates(storage, talk.id)

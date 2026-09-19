@@ -1742,7 +1742,7 @@ def test_lifecycle_speaker_review_reject_and_storage_cleanup():
             headers={"X-API-Key": "valid"},
         )
         assert r.status_code == 200
-        assert talk.status == "rejected"
+        assert talk.status == "pending_bounds"
         assert talk.cut_start is None
         assert talk.cut_end is None
         assert len(reviews) == 1

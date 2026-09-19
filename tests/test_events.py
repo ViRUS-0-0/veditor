@@ -126,7 +126,7 @@ def test_review_handlers_forward_user_id(mock_db):
         decision=schemas.ReviewDecision.reject, note="Rejected"
     )
     resp_rej = handle_reject(talk, payload_rej, mock_db, user_id=77)
-    assert resp_rej.talk.status == "rejected"
+    assert resp_rej.talk.status == "pending_bounds"
     added_review_rej = mock_db.add.call_args[0][0]
     assert added_review_rej.user_id == 77
 

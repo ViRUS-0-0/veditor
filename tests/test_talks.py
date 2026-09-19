@@ -904,6 +904,32 @@ def test_submit_cut_bounds_out_of_range_returns_422(cut_start: str, cut_end: str
         app.dependency_overrides.clear()
 
 
+def test_submit_cut_bounds_needs_work_accepted():
+    """POST /talks/{id}/cut succeeds when talk is in needs_work status."""
+    mock_db, mock_talk = _make_pending_bounds_talk_db()
+    mock_talk.status = "needs_work"
+    mock_client = models.Client(id=1, event_ids=[1])
+    fake_storage = FakeStorageBackend()
+    fake_storage.put("1/raw/video.mp4", b"raw video")
+
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
+
+    with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue:
+        try:
+            resp = client.post(
+                "/talks/1/cut",
+                json={"cut_start": "00:00:10", "cut_end": "00:01:10"},
+                headers={"X-API-Key": "valid_key"},
+            )
+            assert resp.status_code == 202
+            assert mock_talk.status == "cutting"
+            mock_enqueue.assert_called_once()
+        finally:
+            app.dependency_overrides.clear()
+
+
 # --- Full Path Test: recordings -> detect -> pending_approval -> approve -> cut -> preview -> preview halt ---
 
 

@@ -500,10 +500,15 @@
                 Awaiting Organizer Intro/Outro Selection
               </div>
             {% endif %}
-          {% elif talk.status in ['rejected', 'broken'] %}
-            <button class="btn btn-primary w-full" id="btn-retry">
-              Retry Talk Lifecycle
-            </button>
+          {% elif talk.status in ['broken', 'rejected'] %}
+            <div class="badge badge-danger badge-status-full">
+              {{ 'Talk Rejected' if talk.status == 'rejected' else 'Processing Failed (Broken)' }}
+            </div>
+            {% if user and user.role in ['organizer', 'admin'] %}
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort">
+                Abort Talk
+              </button>
+            {% endif %}
           {% elif talk.status == 'done' %}
             <div class="badge badge-done badge-status-full">
               <span class="badge-dot"></span> Published & Complete
@@ -647,6 +652,25 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" id="btn-cancel-abort-modal">Cancel</button>
       <button class="btn btn-danger" id="btn-confirm-abort">Yes, Abort Talk</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reset to Raw Confirm Modal -->
+<div id="modal-reset-raw" class="modal-backdrop">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3 class="modal-title">Reset to Raw Video</h3>
+      <button class="btn btn-ghost btn-sm btn-close-modal" id="btn-close-reset-raw-modal">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="modal-warning-text">
+        Are you sure you want to reset this talk to the initial raw video? All cut bounds and previews will be cleared, and you can re-trim the raw video from scratch.
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="btn-cancel-reset-raw-modal">Cancel</button>
+      <button class="btn btn-danger" id="btn-confirm-reset-raw">Reset to Raw</button>
     </div>
   </div>
 </div>

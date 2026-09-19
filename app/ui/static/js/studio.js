@@ -35,6 +35,13 @@ function getPreviewUrls() {
   return [];
 }
 
+function getActiveVideoCategory() {
+  const cat = document.getElementById('media-source-select')?.selectedOptions?.[0]?.dataset?.category;
+  if (cat) return cat;
+  const src = (video && (video.currentSrc || video.src)) || getPreviewUrls()[0] || '';
+  return src.includes('/preview/') ? 'preview' : src.includes('/final/') ? 'final' : 'raw';
+}
+
 const shellInit = getStudioShell();
 if (shellInit) {
   if (typeof window.TALK_ID === 'undefined' && shellInit.dataset.talkId) {
@@ -94,10 +101,15 @@ let waveformAbortController = null;
 
 const initShellBounds = getStudioShell();
 if (initShellBounds) {
-  const initCutStart = parseFloat(initShellBounds.dataset.cutStart);
-  const initCutEnd = parseFloat(initShellBounds.dataset.cutEnd);
-  if (!isNaN(initCutStart) && initCutStart >= 0) inPointSec = initCutStart;
-  if (!isNaN(initCutEnd) && initCutEnd > inPointSec) outPointSec = initCutEnd;
+  const start = parseFloat(initShellBounds.dataset.cutStart) || 0;
+  const end = parseFloat(initShellBounds.dataset.cutEnd) || 0;
+  if (getActiveVideoCategory() === 'preview') {
+    inPointSec = 0;
+    outPointSec = Math.max(0, end - start);
+  } else {
+    inPointSec = Math.max(0, start);
+    outPointSec = Math.max(inPointSec, end);
+  }
 }
 
 // ── Timecode Format & Parse ─────────────────────────────────────
@@ -359,16 +371,15 @@ function updateCutMarkersUI() {
 }
 
 function setInPoint(timeSec) {
-  const max = (video && Number.isFinite(video.duration) && video.duration > 0) ? video.duration : Infinity;
-  inPointSec = Math.min(max, Math.max(0, timeSec));
-  if (inPointSec > outPointSec) outPointSec = Math.min(max, inPointSec + 1);
+  const max = (video?.duration > 0) ? video.duration : Infinity;
+  inPointSec = Math.max(0, Math.min(timeSec, outPointSec > 0 ? outPointSec - 0.1 : max));
   boundsEdited = true;
   updateCutMarkersUI();
 }
 
 function setOutPoint(timeSec) {
-  const max = (video && Number.isFinite(video.duration) && video.duration > 0) ? video.duration : Infinity;
-  outPointSec = Math.min(max, Math.max(inPointSec + 0.1, timeSec));
+  const max = (video?.duration > 0) ? video.duration : Infinity;
+  outPointSec = Math.min(max, Math.max(timeSec, inPointSec + 0.1));
   boundsEdited = true;
   updateCutMarkersUI();
 }
@@ -431,7 +442,9 @@ function setupMarkerDrag(markerEl, isStart) {
 
       if (isStart) setInPoint(timeAtCursor);
       else setOutPoint(timeAtCursor);
-      if (video && video.duration) video.currentTime = timeAtCursor;
+      if (video && video.duration) {
+        video.currentTime = isStart ? inPointSec : outPointSec;
+      }
     }
 
     function onPointerUp(ev) {
@@ -525,24 +538,16 @@ if (video) {
   });
   function initializeVideoMetadata() {
     if (scrubber) scrubber.max = 1000;
-    const duration = video.duration || 10;
+    const duration = (video?.duration > 0) ? video.duration : 10;
     if (!boundsEdited) {
       const shell = getStudioShell() || shellInit;
-      const activeRow = document.querySelector(`.media-asset-row[data-asset-url="${video.src}"]`);
-      const isRaw = (video.src && video.src.includes('/raw/')) || activeRow?.dataset.assetCategory === 'raw';
-
-      if (isRaw) {
-        const rawStart = shell && shell.dataset.cutStart !== undefined && shell.dataset.cutStart !== '' ? parseFloat(shell.dataset.cutStart) : NaN;
-        const rawEnd = shell && shell.dataset.cutEnd !== undefined && shell.dataset.cutEnd !== '' ? parseFloat(shell.dataset.cutEnd) : NaN;
-        inPointSec = (!isNaN(rawStart) && rawStart >= 0) ? rawStart : 0;
-        outPointSec = (!isNaN(rawEnd) && rawEnd > inPointSec) ? rawEnd : duration;
-      } else {
-        inPointSec = 0;
-        outPointSec = duration;
-      }
-
-      inPointSec = Math.max(0, Math.min(inPointSec, duration > 0.1 ? duration - 0.1 : 0));
-      outPointSec = Math.min(duration, Math.max(outPointSec, inPointSec + 0.1));
+      const isRaw = getActiveVideoCategory() === 'raw';
+      const rawStart = isRaw ? parseFloat(shell?.dataset?.cutStart) : NaN;
+      const rawEnd = isRaw ? parseFloat(shell?.dataset?.cutEnd) : NaN;
+      inPointSec = (!isNaN(rawStart) && rawStart >= 0) ? Math.min(rawStart, duration - 0.1) : 0;
+      outPointSec = (!isNaN(rawEnd) && rawEnd > inPointSec) ? Math.min(duration, rawEnd) : duration;
+    } else if (outPointSec <= 0 || outPointSec > duration) {
+      outPointSec = duration;
     }
     updateTimecode();
     updateTimelineTicks();
@@ -671,12 +676,11 @@ window.approveTalk = async function(id) {
     if (talkStatus === 'pending_approval') {
       await postAPI(`/talks/${id}/approve`, { decision: 'approve' });
     } else if (talkStatus === 'pending_bounds' || talkStatus === 'needs_work') {
-      const dur = video && Number.isFinite(video.duration) && video.duration > 0 ? video.duration : (outPointSec || 10);
-      const clampedIn = Math.max(0, Math.min(inPointSec, dur > 0.1 ? dur - 0.1 : 0));
+      const dur = (video?.duration > 0) ? video.duration : (outPointSec || 10);
+      const clampedIn = Math.max(0, Math.min(inPointSec, dur - 0.1));
       const clampedOut = Math.min(dur, Math.max(outPointSec, clampedIn + 0.1));
-      const cutStart = formatTimecode(clampedIn);
-      const cutEnd = formatTimecode(clampedOut);
-      const cutPayload = { cut_start: cutStart, cut_end: cutEnd };
+      const base = getActiveVideoCategory() === 'preview' ? (parseFloat(getStudioShell()?.dataset?.cutStart) || 0) : 0;
+      const cutPayload = { cut_start: formatTimecode(clampedIn + base), cut_end: formatTimecode(clampedOut + base) };
       if (notes) cutPayload.note = notes;
       await postAPI(`/talks/${id}/cut`, cutPayload);
     } else if (talkStatus === 'preview') {
@@ -766,25 +770,59 @@ window.confirmAbortTalk = async function() {
   }
 };
 
+window.openResetRawModal = function(id) {
+  if (!id || typeof id !== 'number') id = getTalkId();
+  const modal = document.getElementById('modal-reset-raw');
+  if (modal) {
+    modal.classList.add('active');
+    modal.dataset.talkId = id;
+  }
+};
+
+window.closeResetRawModal = function() {
+  document.getElementById('modal-reset-raw')?.classList.remove('active');
+};
+
+window.confirmResetRawTalk = async function() {
+  const modal = document.getElementById('modal-reset-raw');
+  if (!modal) return;
+  const id = modal.dataset.talkId || getTalkId();
+  const btn = document.getElementById('btn-confirm-reset-raw');
+  setBtnBusy(btn, true, 'Resetting...');
+  const notes = (document.getElementById('review-notes-input') || {}).value || '';
+  try {
+    await postAPI(`/talks/${id}/review`, {
+      decision: 'reject',
+      note: notes || 'Reset talk to raw video',
+    });
+    location.reload();
+  } catch (err) {
+    alert(`Reset failed: ${err.message}`);
+    setBtnBusy(btn, false);
+    modal.classList.remove('active');
+  }
+};
+
 window.rejectTalk = async function(id) {
   if (!id || typeof id !== 'number') id = getTalkId();
-  const notes = (document.getElementById('review-notes-input') || {}).value || '';
   const talkStatus = getTalkStatus();
-  const msg = talkStatus === 'preview' ? 'Reset this talk to raw video?' : 'Reject this talk?';
-  if (!confirm(msg)) return;
+  if (talkStatus === 'preview') {
+    window.openResetRawModal(id);
+    return;
+  }
+  const notes = (document.getElementById('review-notes-input') || {}).value || '';
+  if (!confirm('Reject this talk?')) return;
   const btn = document.getElementById('btn-reject');
-  setBtnBusy(btn, true, talkStatus === 'preview' ? 'Resetting...' : 'Rejecting...');
+  setBtnBusy(btn, true, 'Rejecting...');
   try {
-    if (talkStatus === 'preview') {
-      await postAPI(`/talks/${id}/review`, { decision: 'reject', note: notes || 'Rejected in review studio' });
-    } else if (talkStatus === 'pending_approval') {
+    if (talkStatus === 'pending_approval') {
       await postAPI(`/talks/${id}/approve`, { decision: 'reject' });
     } else {
       await postAPI(`/talks/${id}/abort`);
     }
     location.reload();
   } catch (err) {
-    alert(`Reset failed: ${err.message}`);
+    alert(`Reject failed: ${err.message}`);
     setBtnBusy(btn, false);
   }
 };
@@ -799,19 +837,6 @@ window.requestChangesTalk = async function(id) {
     location.reload();
   } catch (err) {
     alert(`Request changes failed: ${err.message}`);
-    setBtnBusy(btn, false);
-  }
-};
-
-window.retryTalk = async function(id) {
-  if (!id || typeof id !== 'number') id = getTalkId();
-  const btn = document.getElementById('btn-retry');
-  setBtnBusy(btn, true, 'Resetting...');
-  try {
-    await postAPI(`/talks/${id}/abort`);
-    location.reload();
-  } catch (err) {
-    alert(`Reset failed: ${err.message}`);
     setBtnBusy(btn, false);
   }
 };
@@ -1123,11 +1148,6 @@ document.addEventListener('DOMContentLoaded', () => {
         window.requestChangesTalk(getTalkId());
         return;
       }
-      const retryBtn = e.target.closest('#btn-retry');
-      if (retryBtn) {
-        window.retryTalk(getTalkId());
-        return;
-      }
       const abortBtn = e.target.closest('#btn-abort');
       if (abortBtn) {
         window.abortTalk(getTalkId());
@@ -1137,14 +1157,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   document.addEventListener('click', (e) => {
-    if (e.target.closest('#btn-close-abort-modal') || e.target.closest('#btn-cancel-abort-modal')) {
-      window.closeAbortModal();
+    const closeBtn = e.target.closest('.btn-close-modal, [id^="btn-close-"], [id^="btn-cancel-"]');
+    if (closeBtn || e.target.classList.contains('modal-backdrop')) {
+      (closeBtn ? closeBtn.closest('.modal-backdrop') : e.target)?.classList.remove('active');
       return;
     }
-    if (e.target.closest('#btn-confirm-abort')) {
-      window.confirmAbortTalk();
-      return;
-    }
+    if (e.target.closest('#btn-confirm-abort')) return window.confirmAbortTalk();
+    if (e.target.closest('#btn-confirm-reset-raw')) return window.confirmResetRawTalk();
     const btn = e.target.closest('.btn-play-asset');
     if (!btn) return;
     const url = btn.getAttribute('data-asset-url') || btn.closest('.media-asset-row')?.getAttribute('data-asset-url');

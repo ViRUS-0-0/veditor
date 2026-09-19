@@ -514,7 +514,7 @@ def submit_cut_bounds(
             )
         check_event_access(talk.event_id, user, db)
 
-    if talk.status != "pending_bounds":
+    if talk.status not in ("pending_bounds", "needs_work"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot submit cut bounds for talk in status '{talk.status}'",

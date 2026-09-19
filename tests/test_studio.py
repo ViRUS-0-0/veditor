@@ -956,10 +956,10 @@ def test_ui_reject_talk_cleans_up_intermediates(
             headers={"X-API-Key": api_key},
         )
         assert res.status_code == 200
-        assert res.json()["talk"]["status"] == "rejected"
+        assert res.json()["talk"]["status"] == "pending_bounds"
 
         db_session.refresh(talk)
-        assert talk.status == "rejected"
+        assert talk.status == "pending_bounds"
 
         assert fake_storage.exists(f"{talk.id}/raw/video.mp4")
         for stage in INTERMEDIATE_STAGES:
@@ -1004,10 +1004,10 @@ def test_ui_reject_talk_storage_delete_resilient(client: TestClient, db_session)
             headers={"X-API-Key": api_key},
         )
         assert res.status_code == 200
-        assert res.json()["talk"]["status"] == "rejected"
+        assert res.json()["talk"]["status"] == "pending_bounds"
 
         db_session.refresh(talk)
-        assert talk.status == "rejected"
+        assert talk.status == "pending_bounds"
         assert mock_storage.delete.call_count == 5
     finally:
         app.dependency_overrides.pop(get_storage_backend, None)
@@ -2239,3 +2239,59 @@ def test_dashboard_role_visibility(client: TestClient, db_session):
     assert "Dashboard Visibility Talk" in res_org.text
     for elem in restricted_elements:
         assert elem in res_org.text
+
+
+def test_talk_studio_reset_to_raw_modal_and_no_retry_button(
+    client: TestClient, db_session
+):
+    """Verify Reset to Raw modal is present and extra-step btn-retry is absent in studio UI."""
+    from app.security import create_session_token
+
+    org_user = models.User(
+        email=f"org_{uuid.uuid4().hex}@test.com",
+        hashed_password="hash",
+        role="organizer",
+        is_active=True,
+    )
+    db_session.add(org_user)
+    db_session.commit()
+    db_session.refresh(org_user)
+
+    event = models.Event(
+        name=f"Modal Test Event {uuid.uuid4().hex}",
+        created_by_user_id=org_user.id,
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Reset Raw Modal Talk",
+        room="Main Hall",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+        cut_start=10.0,
+        cut_end=20.0,
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    token = create_session_token(user_id=org_user.id, role=org_user.role)
+    client.cookies.set("veditor_session", token)
+
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+    # Native website modal elements for resetting to raw
+    assert 'id="modal-reset-raw"' in res.text
+    assert 'id="btn-confirm-reset-raw"' in res.text
+    assert 'id="btn-cancel-reset-raw-modal"' in res.text
+    assert 'id="btn-close-reset-raw-modal"' in res.text
+    assert "Reset Talk to Raw" in res.text
+    assert 'id="btn-reject"' in res.text
+    # Ensure extra step retry lifecycle button is removed
+    assert 'id="btn-retry"' not in res.text
+    assert "Retry Talk Lifecycle" not in res.text
