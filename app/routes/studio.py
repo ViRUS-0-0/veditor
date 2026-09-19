@@ -134,12 +134,17 @@ def _authorize_studio_talk(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=not_found_detail,
             )
-        authorized = False
-        if user.role == "admin" or (
-            talk.event and talk.event.created_by_user_id == user.id
-        ):
-            authorized = True
-        else:
+        authorized = (
+            user.role == "admin"
+            or (
+                user.role == "speaker"
+                and talk.speaker_email
+                and user.email
+                and talk.speaker_email.lower() == user.email.lower()
+            )
+            or bool(talk.event and talk.event.created_by_user_id == user.id)
+        )
+        if not authorized:
             api_key = request.headers.get("X-API-Key") or request.cookies.get(
                 "veditor_api_key"
             )
@@ -382,6 +387,10 @@ def dashboard(
                         query = query.filter(models.Talk.id == -1)
                     else:
                         query = query.filter(models.Talk.event_id == event_id)
+            elif user.role == "speaker" and user.email:
+                query = query.filter(models.Talk.speaker_email == user.email)
+                if event_id is not None:
+                    query = query.filter(models.Talk.event_id == event_id)
             else:
                 query = query.filter(models.Talk.id == -1)
         elif client is not None:
@@ -415,6 +424,12 @@ def dashboard(
             all_talks = (
                 db.query(models.Talk)
                 .filter(models.Talk.event_id.in_(org_event_ids))
+                .all()
+            )
+        elif user.role == "speaker" and user.email:
+            all_talks = (
+                db.query(models.Talk)
+                .filter(models.Talk.speaker_email == user.email)
                 .all()
             )
         else:
@@ -763,6 +778,7 @@ def studio(
             "final_asset": final_asset,
             "preview_urls": preview_urls,
             "all_statuses": ALL_STATUSES,
+            "is_speaker": not user or user.role not in ("organizer", "admin"),
         },
         headers={"Cache-Control": "no-store"},
     )

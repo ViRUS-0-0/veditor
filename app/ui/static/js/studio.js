@@ -613,9 +613,9 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Interactive Pipeline Actions ────────────────────────────────
-async function postAPI(path, body = {}) {
+async function postAPI(path, body = {}, method = 'POST') {
   const res = await (window.authFetch || fetch)(path, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -709,6 +709,11 @@ window.approveTalk = async function(id) {
       if (includeIntro && introSource === 'custom') customIntroPath = await uploadCustomBumper('intro', customIntroPath);
       if (includeOutro && outroSource === 'custom') customOutroPath = await uploadCustomBumper('outro', customOutroPath);
 
+      const speakerEmailInput = document.getElementById('handoff-speaker-email');
+      const emailVal = speakerEmailInput ? speakerEmailInput.value.trim() : '';
+      if (emailVal) {
+        await postAPI(`/talks/${id}`, { speaker_email: emailVal }, 'PATCH');
+      }
       await postAPI(`/talks/${id}/assemble`, {
         include_intro: includeIntro,
         include_outro: includeOutro,
@@ -732,14 +737,44 @@ window.approveTalk = async function(id) {
 };
 
 
+window.abortTalk = function(id) {
+  if (!id || typeof id !== 'number') id = getTalkId();
+  const modal = document.getElementById('modal-abort');
+  if (modal) {
+    modal.classList.add('active');
+    modal.dataset.talkId = id;
+  }
+};
+
+window.closeAbortModal = function() {
+  document.getElementById('modal-abort')?.classList.remove('active');
+};
+
+window.confirmAbortTalk = async function() {
+  const modal = document.getElementById('modal-abort');
+  if (!modal) return;
+  const id = modal.dataset.talkId;
+  const btn = document.getElementById('btn-confirm-abort');
+  setBtnBusy(btn, true, 'Aborting...');
+  try {
+    await postAPI(`/talks/${id}/abort`);
+    location.reload();
+  } catch (err) {
+    alert(`Abort failed: ${err.message}`);
+    setBtnBusy(btn, false);
+    modal.classList.remove('active');
+  }
+};
+
 window.rejectTalk = async function(id) {
   if (!id || typeof id !== 'number') id = getTalkId();
   const notes = (document.getElementById('review-notes-input') || {}).value || '';
-  if (!confirm('Reject this talk?')) return;
+  const talkStatus = getTalkStatus();
+  const msg = talkStatus === 'preview' ? 'Reset this talk to raw video?' : 'Reject this talk?';
+  if (!confirm(msg)) return;
   const btn = document.getElementById('btn-reject');
-  setBtnBusy(btn, true, 'Rejecting...');
+  setBtnBusy(btn, true, talkStatus === 'preview' ? 'Resetting...' : 'Rejecting...');
   try {
-    const talkStatus = getTalkStatus();
     if (talkStatus === 'preview') {
       await postAPI(`/talks/${id}/review`, { decision: 'reject', note: notes || 'Rejected in review studio' });
     } else if (talkStatus === 'pending_approval') {
@@ -749,7 +784,7 @@ window.rejectTalk = async function(id) {
     }
     location.reload();
   } catch (err) {
-    alert(`Rejection failed: ${err.message}`);
+    alert(`Reset failed: ${err.message}`);
     setBtnBusy(btn, false);
   }
 };
@@ -1093,8 +1128,28 @@ document.addEventListener('DOMContentLoaded', () => {
         window.retryTalk(getTalkId());
         return;
       }
+      const abortBtn = e.target.closest('#btn-abort');
+      if (abortBtn) {
+        window.abortTalk(getTalkId());
+        return;
+      }
     });
   }
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('#btn-close-abort-modal') || e.target.closest('#btn-cancel-abort-modal')) {
+      window.closeAbortModal();
+      return;
+    }
+    if (e.target.closest('#btn-confirm-abort')) {
+      window.confirmAbortTalk();
+      return;
+    }
+    const btn = e.target.closest('.btn-play-asset');
+    if (!btn) return;
+    const url = btn.getAttribute('data-asset-url') || btn.closest('.media-asset-row')?.getAttribute('data-asset-url');
+    if (url) window.loadVideoSrc(url);
+  });
 
   // Auto-poll status when in background processing states
   const activeProcessingStates = ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'];

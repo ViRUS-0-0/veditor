@@ -46,7 +46,54 @@
   overflow: hidden;
 }
 
+/* ── Speaker Preview Quality Notice (Floating Area) ───────────── */
+.preview-quality-notice {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  line-height: 1.3;
+  pointer-events: none;
+  max-width: calc(100% - 32px);
+  white-space: nowrap;
+}
+
+.preview-quality-icon {
+  color: #60a5fa;
+  flex-shrink: 0;
+}
+
+.preview-quality-text strong {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .preview-quality-notice {
+    left: 12px;
+    right: 12px;
+    white-space: normal;
+    text-align: left;
+    font-size: 0.72rem;
+    padding: 6px 12px;
+    top: 8px;
+  }
+}
+
 .player-viewport {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -965,6 +1012,36 @@
   margin-bottom: 12px;
 }
 
+.bumper-handoff-card {
+  margin-top: 1rem;
+}
+
+.handoff-email-input {
+  margin-top: 0.5rem;
+}
+
+.assigned-speaker-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 0.5rem;
+  padding: 8px 12px;
+  background: var(--v-bg-card);
+  border: 1px solid var(--v-border-subtle);
+  border-radius: var(--v-radius-sm);
+  color: var(--v-text-primary);
+  font-size: 0.82rem;
+}
+
+.assigned-speaker-icon {
+  color: var(--v-text-muted);
+  flex-shrink: 0;
+}
+
+.assigned-speaker-email {
+  font-weight: 500;
+  word-break: break-all;
+}
 .bumper-studio-title {
   font-size: 0.72rem;
   font-weight: 700;

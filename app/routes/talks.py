@@ -94,6 +94,8 @@ def create_or_update_talk(
     if talk:
         talk.room = payload.room
         talk.end = payload.end
+        if payload.speaker_email is not None:
+            talk.speaker_email = payload.speaker_email
         db.commit()
         db.refresh(talk)
         response.status_code = status.HTTP_200_OK
@@ -105,6 +107,7 @@ def create_or_update_talk(
         room=payload.room,
         start=payload.start,
         end=payload.end,
+        speaker_email=payload.speaker_email,
         status="waiting_for_files",
     )
     db.add(talk)
@@ -471,7 +474,7 @@ def submit_cut_bounds(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
-    if user.source == "sso":
+    if user.source == "sso" or user.role == "speaker":
         check_talk_access(talk, user, db)
     else:
         if user.role not in ("organizer", "admin") and not user.is_machine:
@@ -883,6 +886,8 @@ def update_talk(
         talk.start = payload.start
     if payload.end is not None:
         talk.end = payload.end
+    if payload.speaker_email is not None:
+        talk.speaker_email = payload.speaker_email if payload.speaker_email else None
 
     try:
         db.commit()
@@ -1209,6 +1214,12 @@ async def import_schedule(
             for day in conf.get("days", []):
                 for room_name, room_talks in day.get("rooms", {}).items():
                     for t in room_talks:
+                        speaker_email = t.get("speaker_email")
+                        if not speaker_email and isinstance(t.get("persons"), list):
+                            for p in t["persons"]:
+                                if isinstance(p, dict) and p.get("email"):
+                                    speaker_email = p["email"]
+                                    break
                         talks_to_create.append(
                             {
                                 "title": t.get("title", "Untitled Session"),
@@ -1216,6 +1227,7 @@ async def import_schedule(
                                 "start": t.get("date") or t.get("start"),
                                 "end": t.get("end"),
                                 "duration": t.get("duration"),
+                                "speaker_email": speaker_email,
                             }
                         )
         elif "talks" in data:
@@ -1311,6 +1323,7 @@ async def import_schedule(
                 "room": room,
                 "start": start_dt,
                 "end": end_dt,
+                "speaker_email": t_info.get("speaker_email"),
             }
         )
 
@@ -1413,6 +1426,8 @@ async def import_schedule(
         if existing:
             existing.room = v_talk["room"]
             existing.end = v_talk["end"]
+            if v_talk.get("speaker_email"):
+                existing.speaker_email = v_talk["speaker_email"]
             created_count += 1
             continue
 
@@ -1422,6 +1437,7 @@ async def import_schedule(
             room=v_talk["room"],
             start=v_talk["start"],
             end=v_talk["end"],
+            speaker_email=v_talk.get("speaker_email"),
             status="waiting_for_files",
         )
         db.add(talk)

@@ -102,14 +102,6 @@ window.VEditorConfig = window.VEditorConfig || {
     return path === '/studio' || path.startsWith('/studio/');
   }
 
-  function checkSpeakerStudioMode() {
-    if (document.body && document.body.classList.contains('is-speaker')) {
-      document.documentElement.setAttribute('data-sidebar', 'hidden');
-      return true;
-    }
-    return false;
-  }
-
   function getInitialSidebarCollapsed() {
     const saved = localStorage.getItem('veditor_sidebar_state');
     if (saved === 'collapsed') return true;
@@ -119,9 +111,6 @@ window.VEditorConfig = window.VEditorConfig || {
   }
 
   function setSidebarCollapsed(collapsed, persist = true) {
-    if (document.documentElement.getAttribute('data-sidebar') === 'hidden') {
-      return;
-    }
     const state = collapsed ? 'collapsed' : 'expanded';
     document.documentElement.setAttribute('data-sidebar', state);
     if (persist) {
@@ -150,25 +139,21 @@ window.VEditorConfig = window.VEditorConfig || {
   window.setSidebarCollapsed = setSidebarCollapsed;
 
   // Immediate init before DOM paints to prevent flash
-  if (!checkSpeakerStudioMode()) {
-    const initialCollapse = getInitialSidebarCollapsed();
-    document.documentElement.setAttribute('data-sidebar', initialCollapse ? 'collapsed' : 'expanded');
-  }
+  const initialCollapse = getInitialSidebarCollapsed();
+  document.documentElement.setAttribute('data-sidebar', initialCollapse ? 'collapsed' : 'expanded');
 
   document.addEventListener('DOMContentLoaded', () => {
-    if (!checkSpeakerStudioMode()) {
-      const shouldCollapse = getInitialSidebarCollapsed();
-      setSidebarCollapsed(shouldCollapse, false);
+    const shouldCollapse = getInitialSidebarCollapsed();
+    setSidebarCollapsed(shouldCollapse, false);
 
-      const toggleBtn = document.getElementById('sidebar-toggle-btn');
-      if (toggleBtn) {
-        toggleBtn.addEventListener('click', window.toggleSidebar);
-      }
+    const toggleBtn = document.getElementById('sidebar-toggle-btn');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', window.toggleSidebar);
+    }
 
-      const collapseBtn = document.getElementById('sidebar-collapse-btn');
-      if (collapseBtn) {
-        collapseBtn.addEventListener('click', () => setSidebarCollapsed(true));
-      }
+    const collapseBtn = document.getElementById('sidebar-collapse-btn');
+    if (collapseBtn) {
+      collapseBtn.addEventListener('click', () => setSidebarCollapsed(true));
     }
   });
 })();

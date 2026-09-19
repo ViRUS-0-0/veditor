@@ -1557,8 +1557,18 @@ def test_studio_organizer_bumper_studio_in_pending_intro_outro(
     assert 'id="check-include-outro"' in res.text
     assert 'name="outro_source"' in res.text
     assert 'id="custom-outro-file"' in res.text
-    assert 'id="custom-outro-path"' in res.text
-    assert "Start Master Assembly & Transcode" in res.text
+    assert "Handoff to Speaker" in res.text
+    assert 'id="handoff-speaker-email"' in res.text
+    assert "Assign Speaker (Email)" in res.text
+
+    # Verify talk with speaker_email already set renders assigned email display (no input)
+    talk.speaker_email = "presenter@example.com"
+    db_session.commit()
+    res_with_speaker = client.get(f"/studio/talks/{talk.id}")
+    assert res_with_speaker.status_code == 200
+    assert 'id="handoff-speaker-email"' not in res_with_speaker.text
+    assert "Assigned Speaker" in res_with_speaker.text
+    assert "presenter@example.com" in res_with_speaker.text
 
     # 2. SSO Organizer session
     sso_org_token = create_sso_token(
@@ -2044,6 +2054,8 @@ def test_talk_studio_speaker_mode_body_class(client: TestClient, db_session):
     res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
     assert res.status_code == 200
     assert "is-speaker" in res.text
+    assert 'id="sidebar-toggle-btn"' in res.text
+    assert 'id="app-sidebar"' in res.text
 
     # Organizer session -> NOT speaker mode
     session_token = create_session_token(user_id=org_user.id, role=org_user.role)
@@ -2052,3 +2064,155 @@ def test_talk_studio_speaker_mode_body_class(client: TestClient, db_session):
     res_org = client.get(f"/studio/talks/{talk.id}")
     assert res_org.status_code == 200
     assert "is-speaker" not in res_org.text
+    assert 'id="sidebar-toggle-btn"' in res_org.text
+    assert 'id="app-sidebar"' in res_org.text
+
+
+def test_talk_studio_speaker_preview_quality_notice(client: TestClient, db_session):
+    """Test low-quality preview notice is displayed when viewing preview in speaker mode."""
+    from app.security import create_session_token
+
+    org_user = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    speaker_user = models.User(
+        email="speaker@domain.com",
+        hashed_password="hash",
+        role="speaker",
+    )
+    db_session.add(org_user)
+    db_session.add(speaker_user)
+    db_session.commit()
+    db_session.refresh(org_user)
+    db_session.refresh(speaker_user)
+
+    event = models.Event(
+        name=f"Preview Notice Event {uuid.uuid4().hex}",
+        created_by_user_id=org_user.id,
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Preview Quality Talk",
+        room="Hall P",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+        speaker_email="speaker@domain.com",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    # 1. Speaker session -> preview quality notice is displayed
+    speaker_token = create_session_token(
+        user_id=speaker_user.id, role=speaker_user.role
+    )
+    client.cookies.set("veditor_session", speaker_token)
+    res_speaker = client.get(f"/studio/talks/{talk.id}")
+    assert res_speaker.status_code == 200
+    assert 'id="preview-quality-notice"' in res_speaker.text
+    assert "Low-Quality Preview" in res_speaker.text
+
+    # 2. Organizer session -> preview quality notice is omitted
+    org_token = create_session_token(user_id=org_user.id, role=org_user.role)
+    client.cookies.set("veditor_session", org_token)
+    res_org = client.get(f"/studio/talks/{talk.id}")
+    assert res_org.status_code == 200
+    assert 'id="preview-quality-notice"' not in res_org.text
+
+
+def test_dashboard_role_visibility(client: TestClient, db_session):
+    """Verify speaker and user roles cannot see management and delete buttons on dashboard."""
+    from app.security import create_session_token
+
+    org_user = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    speaker_user = models.User(
+        email="speaker_dash@domain.com",
+        hashed_password="hash",
+        role="speaker",
+    )
+    regular_user = models.User(
+        email=f"user_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="user",
+    )
+    db_session.add(org_user)
+    db_session.add(speaker_user)
+    db_session.add(regular_user)
+    db_session.commit()
+
+    event = models.Event(
+        name=f"Dashboard Visibility Event {uuid.uuid4().hex}",
+        created_by_user_id=org_user.id,
+    )
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Dashboard Visibility Talk",
+        room="Hall D",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+        speaker_email="speaker_dash@domain.com",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    restricted_elements = [
+        'id="btn-open-import"',
+        'id="btn-open-room-attach"',
+        'id="btn-open-quick-talk"',
+        "btn-delete-talk",
+        'id="bulk-actions-bar"',
+        'id="select-all-talks"',
+        'class="talk-checkbox"',
+        'id="btn-events-link"',
+        'id="modal-import"',
+        'id="modal-attach-room"',
+        'id="modal-quick-talk"',
+    ]
+
+    # 1. Speaker session: can see assigned talk, but cannot see restricted controls
+    speaker_token = create_session_token(
+        user_id=speaker_user.id, role=speaker_user.role
+    )
+    client.cookies.set("veditor_session", speaker_token)
+    res_speaker = client.get("/studio")
+    assert res_speaker.status_code == 200
+    assert "Dashboard Visibility Talk" in res_speaker.text
+    assert "Open Studio" in res_speaker.text
+    for elem in restricted_elements:
+        assert elem not in res_speaker.text
+
+    # 2. Regular user session: cannot see restricted controls
+    user_token = create_session_token(user_id=regular_user.id, role=regular_user.role)
+    client.cookies.set("veditor_session", user_token)
+    res_user = client.get("/studio")
+    assert res_user.status_code == 200
+    for elem in restricted_elements:
+        assert elem not in res_user.text
+
+    # 3. Organizer session: can see all management controls
+    org_token = create_session_token(user_id=org_user.id, role=org_user.role)
+    client.cookies.set("veditor_session", org_token)
+    res_org = client.get("/studio")
+    assert res_org.status_code == 200
+    assert "Dashboard Visibility Talk" in res_org.text
+    for elem in restricted_elements:
+        assert elem in res_org.text
