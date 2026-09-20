@@ -1012,6 +1012,10 @@
   margin-bottom: 12px;
 }
 
+.bumper-studio-card .btn {
+  width: 100%;
+}
+
 .bumper-handoff-card {
   margin-top: 1rem;
 }
@@ -1360,4 +1364,13 @@
   text-decoration: none;
   flex-shrink: 0;
 }
+
+.is-hidden {
+  display: none;
+}
+
+.btn-step-spacing {
+  margin-top: 8px;
+}
+
 

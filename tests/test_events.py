@@ -102,7 +102,7 @@ def test_review_handlers_forward_user_id(mock_db):
     )
 
     resp = handle_approve(talk, payload, mock_db, user_id=99)
-    assert resp.talk.status == "pending_intro_outro"
+    assert resp.talk.status == "assembling"
     assert mock_db.add.called
     added_review = mock_db.add.call_args[0][0]
     assert added_review.user_id == 99

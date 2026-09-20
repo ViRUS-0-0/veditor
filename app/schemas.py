@@ -319,6 +319,7 @@ class IntroOutroRequest(BaseModel):
     outro_source: Literal["generated", "custom"] = "generated"
     custom_intro_path: str | None = None
     custom_outro_path: str | None = None
+    speaker_email: str | None = None
 
     @model_validator(mode="after")
     def validate_custom_paths(self):

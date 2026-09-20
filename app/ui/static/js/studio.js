@@ -715,16 +715,14 @@ window.approveTalk = async function(id) {
 
       const speakerEmailInput = document.getElementById('handoff-speaker-email');
       const emailVal = speakerEmailInput ? speakerEmailInput.value.trim() : '';
-      if (emailVal) {
-        await postAPI(`/talks/${id}`, { speaker_email: emailVal }, 'PATCH');
-      }
-      await postAPI(`/talks/${id}/assemble`, {
+      await postAPI(`/talks/${id}/handoff`, {
         include_intro: includeIntro,
         include_outro: includeOutro,
         intro_source: introSource,
         outro_source: outroSource,
         custom_intro_path: (includeIntro && introSource === 'custom') ? customIntroPath : null,
         custom_outro_path: (includeOutro && outroSource === 'custom') ? customOutroPath : null,
+        speaker_email: emailVal || null,
       });
     } else {
       await postAPI(`/talks/${id}/approve`, { decision: 'approve' });
@@ -1133,6 +1131,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const actionBtns = document.getElementById('action-btns');
   if (actionBtns) {
     actionBtns.addEventListener('click', (e) => {
+      const proceedBtn = e.target.closest('#btn-proceed-handoff');
+      const backBtn = e.target.closest('#btn-back-bumpers');
+      if (proceedBtn || backBtn) {
+        document.getElementById('card-bumper-options')?.classList.toggle('is-hidden', !!proceedBtn);
+        document.getElementById('card-speaker-handoff')?.classList.toggle('is-hidden', !proceedBtn);
+        return;
+      }
       const approveBtn = e.target.closest('#btn-approve');
       if (approveBtn) {
         window.approveTalk(getTalkId());

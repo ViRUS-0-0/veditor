@@ -333,7 +333,7 @@ def approve_talk(
     if decision == "reject":
         advance(talk, "rejected")
     else:
-        advance(talk, "pending_bounds")
+        advance(talk, "pending_intro_outro")
 
     db.commit()
     db.refresh(talk)
@@ -636,6 +636,94 @@ def upload_bumper_file(
     }
 
 
+def _apply_intro_outro_config(
+    talk: models.Talk,
+    payload: schemas.IntroOutroRequest,
+    storage: StorageBackend,
+) -> None:
+    for kind, inc, src, path in [
+        (
+            "intro",
+            payload.include_intro,
+            payload.intro_source,
+            payload.custom_intro_path,
+        ),
+        (
+            "outro",
+            payload.include_outro,
+            payload.outro_source,
+            payload.custom_outro_path,
+        ),
+    ]:
+        if inc and src == "custom":
+            try:
+                stage_custom_clip(talk.id, path, kind, storage)
+            except IngestPathRejectedError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"{kind.title()} clip rejected: {exc}",
+                ) from exc
+
+    talk.include_intro = payload.include_intro
+    talk.include_outro = payload.include_outro
+    talk.intro_source = payload.intro_source if payload.include_intro else None
+    talk.outro_source = payload.outro_source if payload.include_outro else None
+    talk.custom_intro_path = (
+        payload.custom_intro_path
+        if payload.include_intro and payload.intro_source == "custom"
+        else None
+    )
+    talk.custom_outro_path = (
+        payload.custom_outro_path
+        if payload.include_outro and payload.outro_source == "custom"
+        else None
+    )
+
+
+@router.post(
+    "/{talk_id}/handoff",
+    response_model=schemas.TalkRead,
+    status_code=status.HTTP_200_OK,
+)
+def handoff_talk(
+    talk_id: int,
+    payload: schemas.IntroOutroRequest,
+    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+):
+    """
+    Configures intro and outro bumpers and hands off talk to speaker.
+    Advances talk from 'pending_intro_outro' to 'pending_bounds'.
+    """
+    talk = (
+        db.query(models.Talk)
+        .filter(models.Talk.id == talk_id)
+        .with_for_update()
+        .first()
+    )
+    if not talk or (user.is_machine and not user.has_event_access(talk.event_id)):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
+        )
+    check_event_access(talk.event_id, user, db)
+
+    if talk.status != "pending_intro_outro":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot handoff talk in status '{talk.status}'; talk must be in 'pending_intro_outro'",
+        )
+
+    _apply_intro_outro_config(talk, payload, storage)
+    if payload.speaker_email is not None:
+        talk.speaker_email = payload.speaker_email.strip() or None
+
+    advance(talk, "pending_bounds")
+    db.commit()
+    db.refresh(talk)
+    return schemas.TalkRead.model_validate(talk)
+
+
 @router.post(
     "/{talk_id}/assemble",
     response_model=schemas.TalkRead,
@@ -688,39 +776,7 @@ def configure_assembly(
             detail="No cut recording found for talk",
         )
 
-    # Validate and stage custom clips before any DB mutation
-    if payload.include_intro and payload.intro_source == "custom":
-        try:
-            stage_custom_clip(talk.id, payload.custom_intro_path, "intro", storage)
-        except IngestPathRejectedError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Intro clip rejected: {exc}",
-            ) from exc
-
-    if payload.include_outro and payload.outro_source == "custom":
-        try:
-            stage_custom_clip(talk.id, payload.custom_outro_path, "outro", storage)
-        except IngestPathRejectedError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Outro clip rejected: {exc}",
-            ) from exc
-
-    talk.include_intro = payload.include_intro
-    talk.include_outro = payload.include_outro
-    talk.intro_source = payload.intro_source if payload.include_intro else None
-    talk.outro_source = payload.outro_source if payload.include_outro else None
-    talk.custom_intro_path = (
-        payload.custom_intro_path
-        if payload.include_intro and payload.intro_source == "custom"
-        else None
-    )
-    talk.custom_outro_path = (
-        payload.custom_outro_path
-        if payload.include_outro and payload.outro_source == "custom"
-        else None
-    )
+    _apply_intro_outro_config(talk, payload, storage)
 
     advance(talk, "assembling")
     db.commit()

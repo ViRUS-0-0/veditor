@@ -382,7 +382,7 @@
             {% endif %}
           {% elif talk.status == 'pending_intro_outro' %}
             {% if user and user.role in ['organizer', 'admin'] and not is_speaker %}
-              <div class="bumper-studio-card">
+              <div class="bumper-studio-card" id="card-bumper-options">
                 <div class="bumper-studio-title">EVENT BRANDING & BUMPERS</div>
 
                 <!-- Opening Intro -->
@@ -464,9 +464,14 @@
                     </div>
                   </div>
                 </div>
+
+                <button class="btn btn-primary w-full btn-step-spacing" id="btn-proceed-handoff" type="button">
+                  Proceed &rarr;
+                </button>
               </div>
-              <!-- Speaker Assignment -->
-              <div class="bumper-studio-card bumper-handoff-card">
+
+              <!-- Step 2: Speaker Assignment & Handoff -->
+              <div class="bumper-studio-card bumper-handoff-card is-hidden" id="card-speaker-handoff">
                 <div class="bumper-studio-title">SPEAKER HANDOFF</div>
                 <div class="bumper-group">
                   {% if talk.speaker_email %}
@@ -487,11 +492,15 @@
                     <input type="email" id="handoff-speaker-email" class="input-field handoff-email-input" placeholder="speaker@example.com" value="">
                   {% endif %}
                 </div>
+
+                <button class="btn btn-primary w-full btn-step-spacing" id="btn-approve">
+                  Handoff to Speaker
+                </button>
+                <button class="btn btn-ghost w-full btn-step-spacing" id="btn-back-bumpers" type="button">
+                  &larr; Back to Options
+                </button>
               </div>
 
-              <button class="btn btn-primary w-full" id="btn-approve">
-                Handoff to Speaker
-              </button>
               <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort">
                 Abort Talk
               </button>

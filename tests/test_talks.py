@@ -696,15 +696,15 @@ def test_post_approve_no_raw_recording_fails():
         "/talks/1/approve",
         headers={"X-API-Key": "valid_key"},
     )
-    # Approve no longer requires a raw file — just transitions to pending_bounds
+    # Approve no longer requires a raw file — just transitions to pending_intro_outro
     assert response.status_code == 200
-    assert response.json()["status"] == "pending_bounds"
+    assert response.json()["status"] == "pending_intro_outro"
 
     app.dependency_overrides.clear()
 
 
 def test_post_approve_success_enqueues_cut():
-    """Approve now transitions to pending_bounds; job_cut is enqueued later from /cut."""
+    """Approve now transitions to pending_intro_outro; handoff transitions to pending_bounds; job_cut is enqueued later from /cut."""
     mock_db = MagicMock()
     mock_client = models.Client(id=1, event_ids=[1])
 
@@ -733,8 +733,8 @@ def test_post_approve_success_enqueues_cut():
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == 1
-        assert data["status"] == "pending_bounds"
-        assert mock_talk.status == "pending_bounds"
+        assert data["status"] == "pending_intro_outro"
+        assert mock_talk.status == "pending_intro_outro"
         assert mock_db.commit.called
         # Approve no longer enqueues job_cut immediately
         mock_enqueue.assert_not_called()
@@ -772,7 +772,7 @@ def test_post_approve_with_custom_raw_key():
         headers={"X-API-Key": "valid_key"},
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "pending_bounds"
+    assert response.json()["status"] == "pending_intro_outro"
 
     app.dependency_overrides.clear()
 
@@ -1051,15 +1051,24 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
         assert talk.raw_duration_seconds == 1800.0
         mock_enqueue_after_detect.assert_not_called()  # Halts at pending_approval gate
 
-    # 4. POST /talks/1/approve -> pending_bounds (no job enqueue)
+    # 4. POST /talks/1/approve -> pending_intro_outro (no job enqueue)
     with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue_approve:
         resp = client.post(
             "/talks/1/approve",
             headers={"X-API-Key": "key"},
         )
         assert resp.status_code == 200
-        assert talk.status == "pending_bounds"
+        assert talk.status == "pending_intro_outro"
         mock_enqueue_approve.assert_not_called()
+
+    # 4b. POST /talks/1/handoff -> pending_bounds
+    resp_handoff = client.post(
+        "/talks/1/handoff",
+        json={"include_intro": False, "include_outro": False},
+        headers={"X-API-Key": "key"},
+    )
+    assert resp_handoff.status_code == 200
+    assert talk.status == "pending_bounds"
 
     # 5. POST /talks/1/cut -> cutting, enqueues job_cut
     with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue_cut:

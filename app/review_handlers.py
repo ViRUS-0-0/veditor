@@ -47,9 +47,21 @@ def handle_approve(
     storage: StorageBackend | None = None,
     user_id: int | None = None,
 ) -> schemas.ReviewResponse:
-    return _record_review_and_advance(
-        talk, payload, "pending_intro_outro", db, user_id=user_id
+    cut_keys = storage.list_keys(f"{talk.id}/cut/") if storage else []
+    cut_key = cut_keys[0] if cut_keys else f"{talk.id}/cut/cut.mp4"
+
+    response = _record_review_and_advance(
+        talk, payload, "assembling", db, user_id=user_id
     )
+
+    from app.tasks import dispatch_assembly
+
+    try:
+        dispatch_assembly(talk.id, cut_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to dispatch assembly for talk %d: %s", talk.id, exc)
+
+    return response
 
 
 def handle_needs_work(
