@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from unittest.mock import call as mock_call
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import models, schemas
@@ -220,7 +221,22 @@ def test_review_valid_decisions_success(
     assert data["review"]["note"] == note
     assert "created_at" in data["review"]
     assert data["review"]["created_at"] is not None
-    mock_db.add.assert_called_once()
+    if decision == "approve":
+        assert mock_db.add.call_count == 2
+
+        # Verify the second added object is ApprovedCut
+        added_objs = [call[0][0] for call in mock_db.add.call_args_list]
+        review_obj = added_objs[0]
+        approved_cut_obj = added_objs[1]
+
+        assert isinstance(approved_cut_obj, models.ApprovedCut)
+        assert approved_cut_obj.talk_id == preview_talk.id
+        assert approved_cut_obj.cut_start == 10.0
+        assert approved_cut_obj.cut_end == 60.0
+        assert approved_cut_obj.review == review_obj
+    else:
+        mock_db.add.assert_called_once()
+
     mock_db.flush.assert_called_once()
     mock_db.commit.assert_called_once()
 
@@ -579,6 +595,8 @@ def test_concurrent_reviews_atomic_transition_and_single_review():
         start=datetime(2026, 9, 1, 10, 0, tzinfo=UTC),
         end=datetime(2026, 9, 1, 10, 30, tzinfo=UTC),
         status="preview",
+        cut_start=10.0,
+        cut_end=60.0,
     )
     db.add(talk)
     db.commit()
@@ -982,3 +1000,87 @@ def test_review_human_admin_success(mock_db, preview_talk, fake_storage):
     data = response.json()
     assert data["talk"]["status"] == "pending_intro_outro"
     assert data["review"]["user_id"] == 1
+
+
+def test_review_multiple_approvals_create_multiple_rows(mock_db, preview_talk):
+    """A talk that goes needs_work and is approved on a later pass has one ApprovedCut row per approval, not one overwritten row."""
+    # First approve
+    req_approve1 = schemas.ReviewRequest(decision=schemas.ReviewDecision.approve)
+    handle_approve(preview_talk, req_approve1, mock_db)
+
+    # Then needs work
+    preview_talk.status = "preview"
+    req_needs_work = schemas.ReviewRequest(decision=schemas.ReviewDecision.needs_work)
+    handle_needs_work(preview_talk, req_needs_work, mock_db)
+
+    # Second approve with different bounds
+    preview_talk.status = "preview"
+    preview_talk.cut_start = 12.0
+    preview_talk.cut_end = 55.0
+    req_approve2 = schemas.ReviewRequest(decision=schemas.ReviewDecision.approve)
+    handle_approve(preview_talk, req_approve2, mock_db)
+
+    # Verify mock_db.add was called multiple times, creating multiple ApprovedCut rows
+    added_objs = [call[0][0] for call in mock_db.add.call_args_list]
+
+    # We should have two ApprovedCuts (one for each approve)
+    approved_cuts = [obj for obj in added_objs if isinstance(obj, models.ApprovedCut)]
+    assert len(approved_cuts) == 2
+
+    assert approved_cuts[0].cut_start == 10.0
+    assert approved_cuts[0].cut_end == 60.0
+
+    assert approved_cuts[1].cut_start == 12.0
+    assert approved_cuts[1].cut_end == 55.0
+
+
+@pytest.mark.parametrize(
+    ("cut_start", "cut_end"),
+    [
+        (None, 60.0),
+        (10.0, None),
+        (None, None),
+    ],
+)
+def test_review_approve_missing_bounds_returns_400(
+    mock_db, preview_talk, cut_start, cut_end
+):
+    """POST /talks/{id}/review returns 400 when approving a talk without cut bounds."""
+    preview_talk.cut_start = cut_start
+    preview_talk.cut_end = cut_end
+    mock_client = models.Client(id=1, event_ids=[1])
+    mock_db.query.return_value.filter.return_value.first.return_value = preview_talk
+
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    response = client.post(
+        "/talks/1/review",
+        json={"decision": "approve"},
+        headers={"X-API-Key": "valid_key"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Cannot approve a talk without cut bounds."
+    mock_db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("cut_start", "cut_end"),
+    [
+        (None, 60.0),
+        (10.0, None),
+        (None, None),
+    ],
+)
+def test_handle_approve_missing_bounds_raises_http_exception(
+    mock_db, preview_talk, cut_start, cut_end
+):
+    """handle_approve raises HTTPException(400) when talk lacks cut bounds."""
+    preview_talk.cut_start = cut_start
+    preview_talk.cut_end = cut_end
+    payload = schemas.ReviewRequest(decision=schemas.ReviewDecision.approve)
+
+    with pytest.raises(HTTPException) as exc_info:
+        handle_approve(preview_talk, payload, mock_db)
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Cannot approve a talk without cut bounds."
