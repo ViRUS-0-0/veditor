@@ -553,6 +553,15 @@ def check_talk_access(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="SSO session is not authorized for this event",
                 )
+            if user.role == "speaker" and not (
+                user.email
+                and target_talk.speaker_email
+                and target_talk.speaker_email.lower() == user.email.lower()
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="SSO speaker session is not authorized for this talk",
+                )
             return target_talk
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

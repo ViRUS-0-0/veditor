@@ -2483,3 +2483,93 @@ def test_talk_jobs_log_path_gated_for_speakers(client: TestClient, db_session):
     assert res_admin.status_code == 200
     data_admin = res_admin.json()
     assert data_admin["jobs"][0]["log_path"] == log_key
+
+
+def test_event_scoped_speaker_sso_talk_filtering_and_authorization(
+    client: TestClient, db_session
+):
+    """Verify event-scoped speaker SSO tokens only view and access assigned talks in the event."""
+    from app.security import create_sso_token
+
+    org_user = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    db_session.add(org_user)
+    db_session.commit()
+
+    event = models.Event(
+        name=f"SSO Event {uuid.uuid4().hex}",
+        created_by_user_id=org_user.id,
+    )
+    db_session.add(event)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    my_talk = models.Talk(
+        event_id=event.id,
+        title="Speaker Assigned Talk",
+        room="Hall 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+        speaker_email="speaker.auth@example.com",
+    )
+    other_talk = models.Talk(
+        event_id=event.id,
+        title="Other Speaker Talk",
+        room="Hall 2",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+        speaker_email="someone.else@example.com",
+    )
+    db_session.add(my_talk)
+    db_session.add(other_talk)
+    db_session.commit()
+
+    sso_token = create_sso_token(
+        scope_type="event",
+        scope_id=event.id,
+        role="speaker",
+        email="speaker.auth@example.com",
+        display_name="Assigned Speaker",
+    )
+    client.cookies.set("veditor_session", sso_token)
+
+    # 1. Dashboard only shows assigned talk, excludes other talk in same event
+    res_dash = client.get("/studio")
+    assert res_dash.status_code == 200
+    assert "Speaker Assigned Talk" in res_dash.text
+    assert "Other Speaker Talk" not in res_dash.text
+
+    # 2. Studio editor allows access to assigned talk
+    res_my_talk = client.get(f"/studio/talks/{my_talk.id}")
+    assert res_my_talk.status_code == 200
+    assert "Speaker Assigned Talk" in res_my_talk.text
+
+    # 3. Studio editor rejects access to other speaker's talk in same event (404)
+    res_other_talk = client.get(f"/studio/talks/{other_talk.id}")
+    assert res_other_talk.status_code == 404
+
+    # 4. Direct query-param handoff for assigned talk succeeds (303)
+    client.cookies.delete("veditor_session")
+    res_handoff_my = client.get(
+        f"/studio/talks/{my_talk.id}?sso_token={sso_token}", follow_redirects=False
+    )
+    assert res_handoff_my.status_code == 303
+
+    # 5. Direct query-param handoff for unrelated talk is forbidden (403)
+    res_handoff_other = client.get(
+        f"/studio/talks/{other_talk.id}?sso_token={sso_token}", follow_redirects=False
+    )
+    assert res_handoff_other.status_code == 403
+
+    # 6. Backend API with check_talk_access allows assigned talk and forbids other talk
+    client.cookies.set("veditor_session", sso_token)
+    res_api_my = client.get(f"/talks/{my_talk.id}")
+    assert res_api_my.status_code == 200
+
+    res_api_other = client.get(f"/talks/{other_talk.id}")
+    assert res_api_other.status_code == 403

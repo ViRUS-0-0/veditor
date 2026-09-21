@@ -104,6 +104,13 @@ def _authorize_studio_talk(
             ) or (
                 sso_payload.get("scope_type") == "event"
                 and sso_payload.get("scope_id") == talk.event_id
+                and (
+                    sso_payload.get("role") != "speaker"
+                    or (
+                        talk.speaker_email
+                        and talk.speaker_email.lower() == sso_payload["email"].lower()
+                    )
+                )
             )
             if not authorized:
                 raise HTTPException(
@@ -112,6 +119,8 @@ def _authorize_studio_talk(
                 )
             if hasattr(request, "state"):
                 request.state.user = CurrentUser(
+                    email=sso_payload.get("email"),
+                    display_name=sso_payload.get("display_name"),
                     role=sso_payload["role"],
                     source="sso",
                     event_ids=[sso_payload["scope_id"]]
@@ -372,6 +381,10 @@ def dashboard(
             .options(selectinload(models.Talk.jobs))
             .filter(models.Talk.event_id == scoped_event_id)
         )
+        if sso_user.get("role") == "speaker":
+            query = query.filter(
+                func.lower(models.Talk.speaker_email) == sso_user["email"].lower()
+            )
     else:
         event_id = resolved_event_id
         if user:
@@ -432,11 +445,14 @@ def dashboard(
         talks = [t for t in talks if q_lower in t.title.lower()]
 
     if sso_user:
-        all_talks = (
-            db.query(models.Talk)
-            .filter(models.Talk.event_id == sso_user["scope_id"])
-            .all()
+        all_talks_q = db.query(models.Talk).filter(
+            models.Talk.event_id == sso_user["scope_id"]
         )
+        if sso_user.get("role") == "speaker":
+            all_talks_q = all_talks_q.filter(
+                func.lower(models.Talk.speaker_email) == sso_user["email"].lower()
+            )
+        all_talks = all_talks_q.all()
     elif user:
         if user.role in ("organizer", "admin"):
             org_event_ids = [e.id for e in user_events]
@@ -685,6 +701,14 @@ def studio(
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="SSO token is not authorized for this event",
+                )
+            if sso_payload.get("role") == "speaker" and not (
+                talk_obj.speaker_email
+                and talk_obj.speaker_email.lower() == sso_payload["email"].lower()
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="SSO token is not authorized for this talk",
                 )
 
         is_secure = (request.url.scheme == "https") or (
