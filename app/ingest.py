@@ -99,7 +99,6 @@ def stage_recording(
 
 
 def get_upload_staging_dir() -> Path:
-    """Return the absolute staging directory for uploaded recording files."""
     base = (
         Path(settings.ingest_roots[0])
         if settings.ingest_roots
@@ -111,7 +110,6 @@ def get_upload_staging_dir() -> Path:
 
 
 def get_bumper_staging_dir() -> Path:
-    """Return the absolute staging directory for uploaded custom bumper clips."""
     base = get_upload_staging_dir() / "bumpers"
     # storage-boundary-exempt: bumper staging directory
     base.mkdir(parents=True, exist_ok=True)

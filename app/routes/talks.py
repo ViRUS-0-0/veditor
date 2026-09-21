@@ -1054,11 +1054,9 @@ async def upload_recording(
         )
 
     raw_key = f"{talk_id}/raw/raw.mp4"
-    staging_dir = get_upload_staging_dir()
-    staged_path = staging_dir / f"upload_{talk_id}_{uuid.uuid4().hex}.mp4"
+    staged_path = get_upload_staging_dir() / f"upload_{talk_id}_{uuid.uuid4().hex}.mp4"
 
     try:
-        # Stream raw upload to temporary staging
         # storage-boundary-exempt: upload staging
         with open(staged_path, "wb") as f_out:  # noqa: ASYNC230
             while chunk := await file.read(1024 * 1024):
