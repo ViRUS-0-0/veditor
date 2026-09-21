@@ -98,13 +98,19 @@ def stage_recording(
     return key
 
 
-def get_bumper_staging_dir() -> Path:
-    """Return the absolute staging directory for uploaded custom bumper clips."""
+def get_upload_staging_dir() -> Path:
     base = (
         Path(settings.ingest_roots[0])
         if settings.ingest_roots
         else Path(tempfile.gettempdir()) / "veditor_staging"
-    ).resolve() / "bumpers"
+    ).resolve()
+    # storage-boundary-exempt: upload staging directory
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def get_bumper_staging_dir() -> Path:
+    base = get_upload_staging_dir() / "bumpers"
     # storage-boundary-exempt: bumper staging directory
     base.mkdir(parents=True, exist_ok=True)
     return base

@@ -10,6 +10,10 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=veditor
       - REDIS_URL=redis://redis:6379/0
+      - 'INGEST_ROOTS=["/app/ingest"]'
+    volumes:
+      - veditor_data:/app/data
+      - veditor_ingest:/app/ingest
     depends_on:
       postgres:
         condition: service_healthy
@@ -26,6 +30,10 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=veditor
       - REDIS_URL=redis://redis:6379/0
+      - 'INGEST_ROOTS=["/app/ingest"]'
+    volumes:
+      - veditor_data:/app/data
+      - veditor_ingest:/app/ingest
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,6 +50,10 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=veditor
       - REDIS_URL=redis://redis:6379/0
+      - 'INGEST_ROOTS=["/app/ingest"]'
+    volumes:
+      - veditor_data:/app/data
+      - veditor_ingest:/app/ingest
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,3 +83,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+volumes:
+  veditor_data:
+  veditor_ingest:
+

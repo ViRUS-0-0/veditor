@@ -11,6 +11,7 @@ from sqlalchemy import inspect
 
 from app import models
 from app.auth import hash_api_key
+from app.config import settings
 from app.db import SessionLocal, get_db
 from app.main import app
 from app.security import create_session_token, create_sso_token
@@ -705,6 +706,63 @@ def test_talk_upload_recording(client: TestClient, db_session, temp_storage, tmp
                 )
             if staged_path:
                 Path(staged_path).unlink(missing_ok=True)
+
+
+def test_talk_upload_recording_with_ingest_roots(
+    client: TestClient, db_session, temp_storage, tmp_path, monkeypatch
+):
+    ingest_dir = tmp_path / "custom_ingest"
+    ingest_dir.mkdir()
+    monkeypatch.setattr(settings, "ingest_roots", [ingest_dir])
+
+    event = models.Event(name=f"Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Upload Recording Ingest Root Talk",
+        room="Room B",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+    )
+    db_session.add(talk)
+    db_session.commit()
+    db_session.refresh(talk)
+
+    clip = generate_clip(0.5, output_dir=tmp_path)
+    mock_queue = None
+    try:
+        with (
+            patch("app.routes.talks.light_queue") as mq,
+            open(clip, "rb") as f_vid,
+        ):
+            mock_queue = mq
+            res = client.post(
+                f"/talks/{talk.id}/upload",
+                files={"file": ("recording.mp4", f_vid, "video/mp4")},
+                headers={"X-API-Key": api_key},
+            )
+            assert res.status_code == 202
+            mock_queue.enqueue.assert_called_once()
+            call_args = mock_queue.enqueue.call_args
+            staged_path_arg = Path(call_args.args[2])
+            assert staged_path_arg.is_relative_to(ingest_dir.resolve())
+            assert staged_path_arg.is_file()
+    finally:
+        clip.unlink(missing_ok=True)
+        if mock_queue and mock_queue.enqueue.called:
+            call = mock_queue.enqueue.call_args
+            if call and call.args and len(call.args) > 2:
+                Path(call.args[2]).unlink(missing_ok=True)
 
 
 def test_import_schedule_json_list(client: TestClient, db_session):

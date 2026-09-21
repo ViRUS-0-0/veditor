@@ -11,6 +11,8 @@ from app.config import settings
 from app.ingest import (
     IngestPathRejectedError,
     InsufficientStorageError,
+    get_bumper_staging_dir,
+    get_upload_staging_dir,
     stage_custom_clip,
     stage_recording,
 )
@@ -440,3 +442,23 @@ def test_stage_custom_clip_rejects_unscoped_shared_staging_path(
         stage_custom_clip(1, str(unauthorized), "intro", mock_backend)
 
     mock_backend.put.assert_not_called()
+
+
+def test_get_upload_staging_dir_with_ingest_roots(ingest_root):
+    staging_dir = get_upload_staging_dir()
+    assert staging_dir == ingest_root.resolve()
+    assert staging_dir.is_dir()
+
+
+def test_get_upload_staging_dir_without_ingest_roots(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "ingest_roots", [])
+    monkeypatch.setattr("app.ingest.tempfile.gettempdir", lambda: str(tmp_path))
+    staging_dir = get_upload_staging_dir()
+    assert staging_dir == (tmp_path / "veditor_staging").resolve()
+    assert staging_dir.is_dir()
+
+
+def test_get_bumper_staging_dir_nests_under_upload_staging_dir(ingest_root):
+    bumper_dir = get_bumper_staging_dir()
+    assert bumper_dir == ingest_root.resolve() / "bumpers"
+    assert bumper_dir.is_dir()

@@ -10,9 +10,11 @@
     <span class="badge badge-waiting"><span class="badge-dot"></span>Waiting for files</span>
   {% elif status == 'detecting' %}
     <span class="badge badge-processing"><span class="spinner spinner-sm"></span>Detecting</span>
+  {% elif status == 'pending_intro_outro' %}
+    <span class="badge badge-pending"><span class="badge-dot"></span>Pending Bumpers</span>
   {% elif status in ['pending_approval', 'pending_bounds'] %}
     <span class="badge badge-pending"><span class="badge-dot"></span>Pending Review</span>
-  {% elif status in ['cutting', 'generating_previews', 'transcoding', 'uploading'] %}
+  {% elif status in ['cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'] %}
     <span class="badge badge-processing"><span class="spinner spinner-sm"></span>{{ status | replace('_', ' ') | title }}</span>
   {% elif status == 'preview' %}
     <span class="badge badge-preview"><span class="badge-dot"></span>Preview Ready</span>
@@ -171,7 +173,7 @@
       </thead>
       <tbody>
         {% for talk in talks %}
-        <tr data-talk-id="{{ talk.id }}" data-status="{{ talk.status }}">
+        <tr data-talk-id="{{ talk.id }}" data-status="{{ talk.status }}" data-title="{{ (talk.title or '') | e }}" data-room="{{ (talk.room or '') | e }}" data-start="{{ talk.start.isoformat() if talk.start else '' }}" data-end="{{ talk.end.isoformat() if talk.end else '' }}" data-speaker-email="{{ (talk.speaker_email or '') | e }}">
           {% if can_manage %}
           <td class="col-checkbox">
             <input type="checkbox" class="talk-checkbox" value="{{ talk.id }}">
@@ -218,7 +220,10 @@
                 Open Studio
               </a>
               {% if can_manage %}
-              <button class="btn btn-ghost btn-sm btn-delete-talk" data-talk-id="{{ talk.id }}" data-talk-title="{{ talk.title }}" title="Delete Talk">
+              <button class="btn btn-ghost btn-sm btn-edit-talk" data-talk-id="{{ talk.id }}" title="Edit Talk">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              </button>
+              <button class="btn btn-ghost btn-sm btn-delete-talk" data-talk-id="{{ talk.id }}" data-talk-title="{{ (talk.title or '') | e }}" title="Delete Talk">
                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
               </button>
               {% endif %}
@@ -342,12 +347,12 @@
     </div>
 
     <div class="dashboard-modal-field-sm">
-      <label class="dashboard-modal-label dashboard-modal-label-tight">Talk Title</label>
+      <label class="dashboard-modal-label dashboard-modal-label-tight" for="quick-talk-title">Talk Title</label>
       <input type="text" id="quick-talk-title" class="input-field" placeholder="e.g. Building Open Video Systems" required>
     </div>
 
     <div class="dashboard-modal-field-sm">
-      <label class="dashboard-modal-label dashboard-modal-label-tight">Room</label>
+      <label class="dashboard-modal-label dashboard-modal-label-tight" for="quick-talk-room">Room</label>
       <input type="text" id="quick-talk-room" class="input-field" value="Auditorium A">
     </div>
 
@@ -358,11 +363,11 @@
 
     <div class="dashboard-modal-grid-2">
       <div>
-        <label class="dashboard-modal-label dashboard-modal-label-tight">Start Time (Optional)</label>
+        <label class="dashboard-modal-label dashboard-modal-label-tight" for="quick-talk-start">Start Time (Optional)</label>
         <input type="datetime-local" id="quick-talk-start" class="input-field">
       </div>
       <div>
-        <label class="dashboard-modal-label dashboard-modal-label-tight">End Time (Optional)</label>
+        <label class="dashboard-modal-label dashboard-modal-label-tight" for="quick-talk-end">End Time (Optional)</label>
         <input type="datetime-local" id="quick-talk-end" class="input-field">
       </div>
     </div>
