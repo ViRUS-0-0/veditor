@@ -9,7 +9,7 @@
 /* ── Reset & Base ─────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-[hidden] { display: none !important; }
+[hidden] { display: none; }
 
 html { font-size: 14px; scroll-behavior: smooth; }
 
@@ -296,10 +296,13 @@ body.is-studio-mode.is-speaker .main-content {
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   z-index: 1000;
-  display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
+}
+
+.modal-backdrop:not([hidden]) {
+  display: flex;
 }
 
 .modal-dialog {
