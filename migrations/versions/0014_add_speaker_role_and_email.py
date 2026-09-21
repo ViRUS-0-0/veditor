@@ -1,8 +1,8 @@
-"""Add speaker role and email
+"""add_speaker_role_and_email
 
-Revision ID: 0013
-Revises: 0012
-Create Date: 2026-09-15 23:16:19.806690
+Revision ID: 0014
+Revises: 0013
+Create Date: 2026-09-21 18:23:33.525769
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '0013'
-down_revision: Union[str, Sequence[str], None] = '0012'
+revision: str = '0014'
+down_revision: Union[str, Sequence[str], None] = '0013'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
