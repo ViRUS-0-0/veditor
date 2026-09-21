@@ -30,13 +30,31 @@
 {% endmacro %}
 
 {% block breadcrumb %}
-  <a href="/studio" class="breadcrumb-back">&larr; Talks</a>
-  <span class="sep">/</span>
-  <span class="breadcrumb-event">{{ talk.event.name if talk.event and talk.event.name else ('Event #' ~ talk.event_id) }}</span>
-  <span class="sep">/</span>
-  <span class="breadcrumb-room">{{ talk.room or '—' }}</span>
-  <span class="sep">/</span>
-  <span class="current" title="{{ talk.title }}">{{ talk.title }}</span>
+  {% if is_from_admin %}
+    <a href="/admin">Admin Console</a>
+    <span class="sep">/</span>
+    <a href="/admin/events">Events</a>
+    <span class="sep">/</span>
+    {% if talk.event_id %}
+      <a href="/admin/events/{{ talk.event_id }}" class="breadcrumb-event">{{ talk.event.name if talk.event and talk.event.name else ('Event #' ~ talk.event_id) }}</a>
+    {% else %}
+      <span class="breadcrumb-event">{{ talk.event.name if talk.event and talk.event.name else 'Event' }}</span>
+    {% endif %}
+    {% if talk.room %}
+      <span class="sep">/</span>
+      <span class="breadcrumb-room">{{ talk.room }}</span>
+    {% endif %}
+    <span class="sep">/</span>
+    <span class="current" title="{{ talk.title }}">{{ talk.title }}</span>
+  {% else %}
+    <a href="/studio" class="breadcrumb-back">&larr; Talks</a>
+    <span class="sep">/</span>
+    <span class="breadcrumb-event">{{ talk.event.name if talk.event and talk.event.name else ('Event #' ~ talk.event_id) }}</span>
+    <span class="sep">/</span>
+    <span class="breadcrumb-room">{{ talk.room or '—' }}</span>
+    <span class="sep">/</span>
+    <span class="current" title="{{ talk.title }}">{{ talk.title }}</span>
+  {% endif %}
   {% if (user and user.role in ['organizer', 'admin'] and not user.is_sso) or (user is none) %}
   <button class="btn btn-ghost btn-sm breadcrumb-edit-btn" id="btn-edit-talk-studio" title="Edit Talk">
     <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -66,7 +84,7 @@
 {% set can_manage = (user and user.role in ['organizer', 'admin'] and not user.is_sso) or (user is none) %}
 {% set is_admin_or_org = (user and user.role in ['organizer', 'admin']) or (user is none) %}
 {% set awaiting_speaker = talk.speaker_email and not is_speaker %}
-<div class="studio-shell" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-cut-start="{{ talk.cut_start if talk.cut_start is not none else '' }}" data-cut-end="{{ talk.cut_end if talk.cut_end is not none else '' }}" data-talk-title="{{ (talk.title or '') | e }}" data-talk-room="{{ (talk.room or '') | e }}" data-talk-start="{{ talk.start.isoformat() if talk.start else '' }}" data-talk-end="{{ talk.end.isoformat() if talk.end else '' }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}">
+<div class="studio-shell{% if is_other_organizer_talk %} is-view-only{% endif %}" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-cut-start="{{ talk.cut_start if talk.cut_start is not none else '' }}" data-cut-end="{{ talk.cut_end if talk.cut_end is not none else '' }}" data-talk-title="{{ (talk.title or '') | e }}" data-talk-room="{{ (talk.room or '') | e }}" data-talk-start="{{ talk.start.isoformat() if talk.start else '' }}" data-talk-end="{{ talk.end.isoformat() if talk.end else '' }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}" data-is-other-organizer="{{ 'true' if is_other_organizer_talk else 'false' }}">
 
   <!-- ── CENTER: Video Player or Upload Dropzone ─────────────── -->
   <div class="player-panel">
@@ -76,11 +94,35 @@
       </svg>
     </button>
 
+    {% if is_other_organizer_talk %}
+    <!-- Admin View-Only Warning Banner -->
+    <div class="admin-view-only-banner" id="admin-view-only-banner">
+      <div class="banner-info-group">
+        <span class="badge badge-warning" id="banner-mode-badge">View Only</span>
+        <span class="banner-text-desc" id="banner-mode-text" data-event-name="{{ talk.event.name if talk.event and talk.event.name else ('Event #' ~ talk.event_id) }}" data-default-text="Viewing another organizer's talk ({{ talk.event.name if talk.event and talk.event.name else ('Event #' ~ talk.event_id) }}). Editing and pipeline actions are locked.">
+          Viewing another organizer's talk (<strong>{{ talk.event.name if talk.event and talk.event.name else ('Event #' ~ talk.event_id) }}</strong>). Editing and pipeline actions are locked.
+        </span>
+      </div>
+      <div class="banner-actions-group">
+        <a href="{{ back_url }}" class="btn btn-ghost btn-sm" id="btn-banner-back">
+          &larr; Back to Event Talks
+        </a>
+        <button type="button" class="btn btn-warning btn-sm" id="btn-toggle-edit-mode">
+          <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 20h9"/>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+          </svg>
+          <span>Enable Edit Mode</span>
+        </button>
+      </div>
+    </div>
+    {% endif %}
+
     {% if talk.status == 'waiting_for_files' %}
     <!-- Upload Dropzone Box (Pending Upload State) -->
     <div class="upload-pending-container">
       <div class="upload-dropzone-box" id="no-preview-msg">
-        <input type="file" id="video-file-input" accept="video/mp4,video/mkv,video/webm,video/quicktime,video/*">
+        <input type="file" id="video-file-input" data-edit-control="true" accept="video/mp4,video/mkv,video/webm,video/quicktime,video/*">
         <div class="upload-icon-circle">
           <svg class="upload-icon" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -97,7 +139,7 @@
         <span class="upload-prompt-formats">
           Supports MP4, MKV, MOV, WebM
         </span>
-        <button class="btn btn-primary btn-sm" id="btn-browse-file" type="button">
+        <button class="btn btn-primary btn-sm" id="btn-browse-file" data-edit-control="true" type="button">
           Browse Video File
         </button>
         <div id="upload-progress-wrap">
@@ -232,17 +274,17 @@
       <div class="timeline-inputs-bar">
         <div class="bounds-inputs-group">
           <div class="bounds-input-pair">
-            <button class="btn btn-success btn-sm" id="btn-set-in" title="Set In-Point (I)">
+            <button class="btn btn-success btn-sm" id="btn-set-in" data-edit-control="true" title="Set In-Point (I)">
               Set In (I)
             </button>
-            <input type="text" id="input-in-point" value="00:00:00.00" class="input-field bounds-time-input">
+            <input type="text" id="input-in-point" data-edit-control="true" value="00:00:00.00" class="input-field bounds-time-input">
           </div>
 
           <span class="bounds-to-label">to</span>
 
           <div class="bounds-input-pair">
-            <input type="text" id="input-out-point" value="00:00:00.00" class="input-field bounds-time-input">
-            <button class="btn btn-danger btn-sm" id="btn-set-out" title="Set Out-Point (O)">
+            <input type="text" id="input-out-point" data-edit-control="true" value="00:00:00.00" class="input-field bounds-time-input">
+            <button class="btn btn-danger btn-sm" id="btn-set-out" data-edit-control="true" title="Set Out-Point (O)">
               Set Out (O)
             </button>
           </div>
@@ -250,7 +292,7 @@
 
         <div class="bounds-action-btns">
           <span class="badge badge-info bounds-duration-badge" id="cut-duration-badge">Selected Cut: 0s</span>
-          <button class="btn btn-ghost btn-sm" id="btn-play-cut" title="Play trimmed range">
+          <button class="btn btn-ghost btn-sm" id="btn-play-cut" data-edit-control="true" title="Play trimmed range">
             <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21"/></svg>
             Play Cut Range
           </button>
@@ -289,7 +331,7 @@
         {% if talk.status in ['pending_bounds', 'preview', 'needs_work'] and not awaiting_speaker %}
         <div class="review-notes-wrap">
           <label for="review-notes-input" class="review-notes-label">Reviewer Notes</label>
-          <textarea id="review-notes-input" class="input-field" rows="2" placeholder="Optional note for organizer"></textarea>
+          <textarea id="review-notes-input" data-edit-control="true" class="input-field" rows="2" placeholder="Optional note for organizer"></textarea>
         </div>
         {% endif %}
 
@@ -327,15 +369,16 @@
             <div class="badge badge-waiting badge-status-full">
               Status: Awaiting Recording Upload (Drop file in player)
             </div>
+
           {% elif talk.status in ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'] %}
             <div class="badge badge-processing badge-status-full">
               <span class="spinner spinner-sm"></span> Processing in background ({{ talk.status | replace('_', ' ') | title }})...
             </div>
           {% elif talk.status == 'pending_approval' %}
-            <button class="btn btn-success w-full" id="btn-approve">
+            <button class="btn btn-success w-full" id="btn-approve" data-edit-control="true">
               Approve Raw Video
             </button>
-            <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject">
+            <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject" data-edit-control="true">
               Reject Raw Video
             </button>
           {% elif talk.status == 'pending_bounds' %}
@@ -344,12 +387,12 @@
                 Awaiting Speaker to Submit Timestamps
               </div>
             {% else %}
-              <button class="btn btn-primary w-full" id="btn-approve">
+              <button class="btn btn-primary w-full" id="btn-approve" data-edit-control="true">
                 Submit Timestamps
               </button>
             {% endif %}
             {% if is_admin_or_org %}
-              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort">
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort" data-edit-control="true">
                 Abort Talk
               </button>
             {% endif %}
@@ -359,12 +402,12 @@
                 Awaiting Speaker to Submit Revised Timestamps
               </div>
             {% else %}
-              <button class="btn btn-primary w-full" id="btn-approve">
+              <button class="btn btn-primary w-full" id="btn-approve" data-edit-control="true">
                 Submit Timestamps
               </button>
             {% endif %}
             {% if is_admin_or_org %}
-              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort">
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort" data-edit-control="true">
                 Abort Talk
               </button>
             {% endif %}
@@ -374,18 +417,18 @@
                 Awaiting Speaker to Review Preview
               </div>
             {% else %}
-              <button class="btn btn-success w-full" id="btn-approve">
+              <button class="btn btn-success w-full" id="btn-approve" data-edit-control="true">
                 Approve Preview
               </button>
-              <button class="btn btn-warning w-full" id="btn-needs-work">
+              <button class="btn btn-warning w-full" id="btn-needs-work" data-edit-control="true">
                 Request Changes (Needs Work)
               </button>
-              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject">
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject" data-edit-control="true">
                 Reset Talk to Raw
               </button>
             {% endif %}
             {% if is_admin_or_org %}
-              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort">
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort" data-edit-control="true">
                 Abort Talk
               </button>
             {% endif %}
@@ -474,7 +517,7 @@
                   </div>
                 </div>
 
-                <button class="btn btn-primary w-full btn-step-spacing" id="btn-proceed-handoff" type="button">
+                <button class="btn btn-primary w-full btn-step-spacing" id="btn-proceed-handoff" type="button" data-edit-control="true">
                   Proceed &rarr;
                 </button>
               </div>
@@ -502,15 +545,15 @@
                   {% endif %}
                 </div>
 
-                <button class="btn btn-primary w-full btn-step-spacing" id="btn-approve">
+                <button class="btn btn-primary w-full btn-step-spacing" id="btn-approve" data-edit-control="true">
                   Handoff to Speaker
                 </button>
-                <button class="btn btn-ghost w-full btn-step-spacing" id="btn-back-bumpers" type="button">
+                <button class="btn btn-ghost w-full btn-step-spacing" id="btn-back-bumpers" type="button" data-edit-control="true">
                   &larr; Back to Options
                 </button>
               </div>
 
-              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort">
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort" data-edit-control="true">
                 Abort Talk
               </button>
             {% else %}
@@ -523,7 +566,7 @@
               {{ 'Talk Rejected' if talk.status == 'rejected' else 'Processing Failed (Broken)' }}
             </div>
             {% if is_admin_or_org %}
-              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort">
+              <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort" data-edit-control="true">
                 Abort Talk
               </button>
             {% endif %}
@@ -653,10 +696,37 @@
     </div>
   </div>
 
+  {% if is_other_organizer_talk %}
+  <!-- Admin Confirm Edit Modal -->
+  <div class="modal-backdrop" id="admin-confirm-edit-modal" hidden>
+    <div class="modal-dialog" role="dialog" aria-labelledby="confirm-edit-title" aria-modal="true">
+      <div class="modal-header">
+        <h3 class="modal-title" id="confirm-edit-title">Enable Edit Mode</h3>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-modal-close-x" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-warning-intro">
+          This talk belongs to another organizer's event: <strong>{{ talk.event.name if talk.event and talk.event.name else ('Event #' ~ talk.event_id) }}</strong>.
+        </p>
+        <p class="modal-warning-details">
+          Enabling edit mode allows you to modify recording bounds, trigger processing, upload media, or submit review decisions that impact this event's production.
+        </p>
+        <p class="modal-warning-question">
+          Are you sure you want to enable editing for this talk?
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-modal-cancel">Cancel</button>
+        <button type="button" class="btn btn-warning btn-sm" id="btn-modal-confirm">Confirm & Enable Editing</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
 </div>
 
 <!-- Abort Confirm Modal -->
-<div id="modal-abort" class="modal-backdrop">
+<div id="modal-abort" class="modal-backdrop" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
       <h3 class="modal-title">Abort Talk</h3>
@@ -675,7 +745,7 @@
 </div>
 
 <!-- Reset to Raw Confirm Modal -->
-<div id="modal-reset-raw" class="modal-backdrop">
+<div id="modal-reset-raw" class="modal-backdrop" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
       <h3 class="modal-title">Reset to Raw Video</h3>

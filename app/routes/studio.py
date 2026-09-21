@@ -810,6 +810,24 @@ def studio(
 
     preview_urls = [a["url"] for a in media_assets]
 
+    is_other_organizer_talk = bool(
+        user
+        and user.role == "admin"
+        and (not talk.event or talk.event.created_by_user_id != user.id)
+    )
+
+    is_from_admin = bool(
+        user
+        and user.role == "admin"
+        and (request.query_params.get("from") == "admin" or is_other_organizer_talk)
+    )
+
+    back_url = (
+        (f"/admin/events/{talk.event_id}" if talk.event_id else "/admin/events")
+        if is_from_admin
+        else "/studio"
+    )
+
     return templates.TemplateResponse(
         request,
         "studio.html.jinja",
@@ -825,6 +843,9 @@ def studio(
                 sso_user.get("role") if sso_user else getattr(user, "role", None)
             )
             == "speaker",
+            "is_other_organizer_talk": is_other_organizer_talk,
+            "is_from_admin": is_from_admin,
+            "back_url": back_url,
         },
         headers={"Cache-Control": "no-store"},
     )
