@@ -218,6 +218,7 @@ def test_post_talks_concurrent_race_handled():
                 "room": "Updated Concurrent Room",
                 "start": start_time.isoformat(),
                 "end": updated_end.isoformat(),
+                "speaker_email": "updated@speaker.com",
             },
             headers={"X-API-Key": "valid_key"},
         )
@@ -228,6 +229,7 @@ def test_post_talks_concurrent_race_handled():
         assert data["room"] == "Updated Concurrent Room"
         assert existing_talk.room == "Updated Concurrent Room"
         assert existing_talk.end == updated_end
+        assert existing_talk.speaker_email == "updated@speaker.com"
         assert mock_db.rollback.called
     finally:
         app.dependency_overrides.clear()

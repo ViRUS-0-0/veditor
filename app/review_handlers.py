@@ -1,6 +1,7 @@
 """Review decision handlers."""
 
 import logging
+import traceback
 from collections.abc import Callable
 
 from fastapi import HTTPException, status
@@ -75,8 +76,27 @@ def handle_approve(
 
     try:
         dispatch_assembly(talk.id, cut_key)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to dispatch assembly for talk %d: %s", talk.id, exc)
+    except Exception:
+        advance(talk, "broken")
+        log_key = f"{talk.id}/logs/assembly.log" if storage else None
+        if log_key:
+            try:
+                storage.put(log_key, traceback.format_exc().encode("utf-8"))
+            except Exception as log_err:  # noqa: BLE001
+                logger.warning(
+                    "Failed to persist dispatch failure log to storage: %s", log_err
+                )
+                log_key = None
+        db.add(
+            models.Job(
+                talk_id=talk.id,
+                kind="assembly",
+                status="failed",
+                log_path=log_key,
+            )
+        )
+        db.commit()
+        raise
 
     return response
 

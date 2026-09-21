@@ -235,7 +235,7 @@ def test_user_email_unique_enforced(db_session):
 
 
 def test_user_role_constraint_enforced(db_session):
-    for role in ("user", "organizer", "admin"):
+    for role in ("user", "organizer", "admin", "speaker"):
         u = User(email=f"{role}@example.com", hashed_password="pw", role=role)
         db_session.add(u)
         db_session.flush()
@@ -247,3 +247,14 @@ def test_user_role_constraint_enforced(db_session):
     with pytest.raises(IntegrityError):
         db_session.flush()
     db_session.rollback()
+
+
+def test_talk_speaker_email_normalization():
+    talk = Talk(speaker_email="  Speaker.Name@Example.COM  ")
+    assert talk.speaker_email == "speaker.name@example.com"
+
+    talk.speaker_email = "   "
+    assert talk.speaker_email is None
+
+    talk.speaker_email = None
+    assert talk.speaker_email is None

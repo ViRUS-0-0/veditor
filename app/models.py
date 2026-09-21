@@ -191,6 +191,10 @@ class Talk(Base):
         back_populates="talk", cascade="all, delete-orphan"
     )
 
+    @validates("speaker_email")
+    def _validate_speaker_email(self, key: str, value: str | None) -> str | None:
+        return value.strip().lower() or None if value else None
+
 
 class Job(Base):
     __tablename__ = "jobs"

@@ -28,5 +28,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_constraint('ck_users_role', 'users', type_='check')
+    op.execute("UPDATE users SET role = 'user' WHERE role = 'speaker'")
     op.create_check_constraint('ck_users_role', 'users', "role IN ('user', 'organizer', 'admin')")
     op.drop_column('talks', 'speaker_email')

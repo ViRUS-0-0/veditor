@@ -2090,6 +2090,26 @@ def test_talk_studio_speaker_mode_body_class(client: TestClient, db_session):
     assert 'id="sidebar-toggle-btn"' in res_org.text
     assert 'id="app-sidebar"' in res_org.text
 
+    # SSO Organizer session -> NOT speaker mode
+    from app.security import create_sso_token
+
+    sso_org_token = create_sso_token(
+        scope_type="talk", scope_id=talk.id, role="organizer"
+    )
+    client.cookies.set("veditor_session", sso_org_token)
+    res_sso_org = client.get(f"/studio/talks/{talk.id}")
+    assert res_sso_org.status_code == 200
+    assert "is-speaker" not in res_sso_org.text
+
+    # SSO Speaker session -> IS speaker mode
+    sso_spk_token = create_sso_token(
+        scope_type="talk", scope_id=talk.id, role="speaker"
+    )
+    client.cookies.set("veditor_session", sso_spk_token)
+    res_sso_spk = client.get(f"/studio/talks/{talk.id}")
+    assert res_sso_spk.status_code == 200
+    assert "is-speaker" in res_sso_spk.text
+
 
 def test_talk_studio_speaker_preview_quality_notice(client: TestClient, db_session):
     """Test low-quality preview notice is displayed when viewing preview in speaker mode."""

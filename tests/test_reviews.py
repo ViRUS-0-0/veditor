@@ -1079,3 +1079,33 @@ def test_handle_approve_missing_bounds_raises_http_exception(
         handle_approve(preview_talk, payload, mock_db)
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "Cannot approve a talk without cut bounds."
+
+
+def test_handle_approve_dispatch_failure_advances_to_broken(
+    mock_db, preview_talk, fake_storage
+):
+    """When dispatch_assembly fails during approve, talk advances to broken, logs error, and raises."""
+    payload = schemas.ReviewRequest(decision=schemas.ReviewDecision.approve)
+
+    with (
+        patch(
+            "app.tasks.dispatch_assembly",
+            side_effect=RuntimeError("RQ queue failure"),
+        ),
+        pytest.raises(RuntimeError, match="RQ queue failure"),
+    ):
+        handle_approve(preview_talk, payload, mock_db, storage=fake_storage)
+
+    assert preview_talk.status == "broken"
+    assert any(
+        isinstance(call.args[0], models.Job)
+        and call.args[0].kind == "assembly"
+        and call.args[0].status == "failed"
+        and call.args[0].log_path == f"{preview_talk.id}/logs/assembly.log"
+        for call in mock_db.add.call_args_list
+    )
+    assert fake_storage.exists(f"{preview_talk.id}/logs/assembly.log")
+    assert (
+        b"RQ queue failure"
+        in fake_storage.get(f"{preview_talk.id}/logs/assembly.log").read_bytes()
+    )

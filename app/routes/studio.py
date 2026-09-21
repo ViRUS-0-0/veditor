@@ -794,7 +794,10 @@ def studio(
             "final_asset": final_asset,
             "preview_urls": preview_urls,
             "all_statuses": ALL_STATUSES,
-            "is_speaker": not user or user.role not in ("organizer", "admin"),
+            "is_speaker": (
+                sso_user.get("role") if sso_user else getattr(user, "role", None)
+            )
+            == "speaker",
         },
         headers={"Cache-Control": "no-store"},
     )

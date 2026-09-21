@@ -131,6 +131,8 @@ def create_or_update_talk(
             raise
         talk.room = payload.room
         talk.end = payload.end
+        if payload.speaker_email is not None:
+            talk.speaker_email = payload.speaker_email
         db.commit()
         db.refresh(talk)
         response.status_code = status.HTTP_200_OK
