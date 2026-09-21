@@ -1,7 +1,6 @@
 import json
 import logging
 import math
-import tempfile
 import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -38,6 +37,7 @@ from app.ingest import (
     IngestPathRejectedError,
     InsufficientStorageError,
     get_bumper_staging_dir,
+    get_upload_staging_dir,
     stage_custom_clip,
     stage_recording,
 )
@@ -1054,9 +1054,7 @@ async def upload_recording(
         )
 
     raw_key = f"{talk_id}/raw/raw.mp4"
-    staging_dir = Path(tempfile.gettempdir()) / "veditor_staging"
-    # storage-boundary-exempt: upload staging directory
-    staging_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = get_upload_staging_dir()
     staged_path = staging_dir / f"upload_{talk_id}_{uuid.uuid4().hex}.mp4"
 
     try:
