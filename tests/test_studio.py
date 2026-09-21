@@ -2315,3 +2315,171 @@ def test_talk_studio_reset_to_raw_modal_and_no_retry_button(
     # Ensure extra step retry lifecycle button is removed
     assert 'id="btn-retry"' not in res.text
     assert "Retry Talk Lifecycle" not in res.text
+
+
+def test_dashboard_speaker_email_case_insensitivity(client: TestClient, db_session):
+    """Verify that speaker dashboard queries match talks case-insensitively while respecting event_id."""
+    from app.security import create_session_token
+
+    org_user = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    speaker_user = models.User(
+        email="Speaker.Case@Example.com",
+        hashed_password="hash",
+        role="speaker",
+    )
+    db_session.add(org_user)
+    db_session.add(speaker_user)
+    db_session.commit()
+
+    event1 = models.Event(
+        name=f"Event 1 {uuid.uuid4().hex}",
+        created_by_user_id=org_user.id,
+    )
+    event2 = models.Event(
+        name=f"Event 2 {uuid.uuid4().hex}",
+        created_by_user_id=org_user.id,
+    )
+    db_session.add(event1)
+    db_session.add(event2)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    talk1 = models.Talk(
+        event_id=event1.id,
+        title="Matching Talk Upper",
+        room="Room 1",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+        speaker_email="SPEAKER.CASE@EXAMPLE.COM",
+    )
+    talk2 = models.Talk(
+        event_id=event2.id,
+        title="Matching Talk Lower",
+        room="Room 2",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+        speaker_email="speaker.case@example.com",
+    )
+    talk_other = models.Talk(
+        event_id=event1.id,
+        title="Unrelated Other Talk",
+        room="Room 3",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="waiting_for_files",
+        speaker_email="someone.else@example.com",
+    )
+    db_session.add(talk1)
+    db_session.add(talk2)
+    db_session.add(talk_other)
+    db_session.commit()
+
+    token = create_session_token(user_id=speaker_user.id, role=speaker_user.role)
+    client.cookies.set("veditor_session", token)
+
+    # 1. Unfiltered dashboard shows both case-matching talks, excludes unrelated talk
+    res = client.get("/studio")
+    assert res.status_code == 200
+    assert "Matching Talk Upper" in res.text
+    assert "Matching Talk Lower" in res.text
+    assert "Unrelated Other Talk" not in res.text
+
+    # 2. Filtered dashboard by event_id shows only matching talk in that event
+    res_event1 = client.get(f"/studio?event_id={event1.id}")
+    assert res_event1.status_code == 200
+    assert "Matching Talk Upper" in res_event1.text
+    assert "Matching Talk Lower" not in res_event1.text
+    assert "Unrelated Other Talk" not in res_event1.text
+
+
+def test_talk_jobs_log_path_gated_for_speakers(client: TestClient, db_session):
+    """Verify speakers can view talk jobs status and progress but never log_path, preserving it for organizer/admin."""
+    from app.security import create_session_token
+
+    org_user = models.User(
+        email=f"org_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="organizer",
+    )
+    speaker_user = models.User(
+        email="speaker.dev@example.com",
+        hashed_password="hash",
+        role="speaker",
+    )
+    admin_user = models.User(
+        email=f"admin_{uuid.uuid4().hex[:8]}@example.com",
+        hashed_password="hash",
+        role="admin",
+    )
+    db_session.add(org_user)
+    db_session.add(speaker_user)
+    db_session.add(admin_user)
+    db_session.commit()
+
+    event = models.Event(
+        name=f"Event {uuid.uuid4().hex}",
+        created_by_user_id=org_user.id,
+    )
+    db_session.add(event)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    talk = models.Talk(
+        event_id=event.id,
+        title="Job Log Security Talk",
+        room="Hall Security",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="transcoding",
+        speaker_email="SPEAKER.DEV@EXAMPLE.COM",
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    log_key = f"{talk.id}/logs/job_sensitive.log"
+    job = models.Job(
+        talk_id=talk.id,
+        kind="transcode",
+        status="running",
+        progress_pct=45.0,
+        log_path=log_key,
+        started_at=now - timedelta(seconds=20),
+        updated_at=now,
+    )
+    db_session.add(job)
+    db_session.commit()
+
+    # 1. Speaker session: receives status and progress, but log_path is stripped (None)
+    speaker_token = create_session_token(
+        user_id=speaker_user.id, role=speaker_user.role
+    )
+    client.cookies.set("veditor_session", speaker_token)
+    res_speaker = client.get(f"/talks/{talk.id}/jobs")
+    assert res_speaker.status_code == 200
+    data_speaker = res_speaker.json()
+    assert data_speaker["status"] == "transcoding"
+    assert len(data_speaker["jobs"]) == 1
+    assert data_speaker["jobs"][0]["progress_pct"] == 45.0
+    assert data_speaker["jobs"][0]["log_path"] is None
+
+    # 2. Organizer session: preserves log_path
+    org_token = create_session_token(user_id=org_user.id, role=org_user.role)
+    client.cookies.set("veditor_session", org_token)
+    res_org = client.get(f"/talks/{talk.id}/jobs")
+    assert res_org.status_code == 200
+    data_org = res_org.json()
+    assert data_org["jobs"][0]["log_path"] == log_key
+
+    # 3. Admin session: preserves log_path
+    admin_token = create_session_token(user_id=admin_user.id, role=admin_user.role)
+    client.cookies.set("veditor_session", admin_token)
+    res_admin = client.get(f"/talks/{talk.id}/jobs")
+    assert res_admin.status_code == 200
+    data_admin = res_admin.json()
+    assert data_admin["jobs"][0]["log_path"] == log_key

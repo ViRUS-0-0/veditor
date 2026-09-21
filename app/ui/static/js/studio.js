@@ -340,7 +340,7 @@ function updateCutMarkersUI() {
   if (!dur || dur <= 0) return;
 
   const inPct  = Math.max(0, Math.min(100, (inPointSec / dur) * 100));
-  const outPct = Math.max(0, Math.min(100, (outPointSec / dur) * 100));
+  const outPct = Math.max(0, Math.min(100, ((outPointSec || dur) / dur) * 100));
 
   if (tlStartMarker) tlStartMarker.style.left = `${inPct}%`;
   if (tlEndMarker)   tlEndMarker.style.left   = `${outPct}%`;

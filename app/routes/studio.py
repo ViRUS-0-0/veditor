@@ -13,6 +13,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from redis.exceptions import RedisError
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
@@ -404,7 +405,9 @@ def dashboard(
                     else:
                         query = query.filter(models.Talk.event_id == event_id)
             elif user.role == "speaker" and user.email:
-                query = query.filter(models.Talk.speaker_email == user.email)
+                query = query.filter(
+                    func.lower(models.Talk.speaker_email) == user.email.lower()
+                )
                 if event_id is not None:
                     query = query.filter(models.Talk.event_id == event_id)
             else:
@@ -445,7 +448,7 @@ def dashboard(
         elif user.role == "speaker" and user.email:
             all_talks = (
                 db.query(models.Talk)
-                .filter(models.Talk.speaker_email == user.email)
+                .filter(func.lower(models.Talk.speaker_email) == user.email.lower())
                 .all()
             )
         else:

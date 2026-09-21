@@ -220,7 +220,14 @@ def get_talk_jobs(
         .limit(10)
         .all()
     )
-    return {"status": talk.status, "jobs": jobs}
+    can_view_logs = (
+        user.is_machine or user.is_platform or user.role in ("organizer", "admin")
+    ) and user.role != "speaker"
+    job_reads = [schemas.JobRead.model_validate(j) for j in jobs]
+    if not can_view_logs:
+        for j in job_reads:
+            j.log_path = None
+    return {"status": talk.status, "jobs": job_reads}
 
 
 @router.post(
