@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models
 from app.db import Base, engine, get_db
 from app.main import app
-from app.security import create_session_token, hash_password
+from app.security import create_session_token, create_sso_token, hash_password
 from app.storage import get_storage_backend
 
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False)
@@ -719,3 +719,145 @@ def test_create_quick_talk_unauthorized_event(client: TestClient, db_session):
         },
     )
     assert res.status_code == 403
+
+
+def test_dashboard_edit_button_visible_for_organizer(client: TestClient, db_session):
+    org = create_user(db_session, "org_edit_btn@test.com", "organizer")
+    ev = models.Event(name="Edit Btn Conf", created_by_user_id=org.id)
+    db_session.add(ev)
+    db_session.commit()
+    db_session.refresh(ev)
+    talk = models.Talk(
+        event_id=ev.id,
+        title="Edit Me",
+        room="Main",
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    authenticate_client(client, org)
+    res = client.get("/studio")
+    assert res.status_code == 200
+    assert "btn-edit-talk" in res.text
+
+
+def test_dashboard_edit_button_hidden_for_sso(client: TestClient, db_session):
+    org = create_user(db_session, "org_sso_btn@test.com", "organizer")
+    ev = models.Event(name="SSO Btn Conf", created_by_user_id=org.id)
+    db_session.add(ev)
+    db_session.commit()
+    db_session.refresh(ev)
+    talk = models.Talk(
+        event_id=ev.id,
+        title="SSO Me",
+        room="Main",
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    sso_token = create_sso_token(scope_type="talk", scope_id=talk.id, role="speaker")
+    client.cookies.set("veditor_session", sso_token)
+
+    res = client.get("/studio")
+    assert res.status_code == 200
+    assert "btn-edit-talk" not in res.text
+
+
+def test_studio_edit_button_visible_for_organizer(client: TestClient, db_session):
+    org = create_user(db_session, "org_edit_studio_btn@test.com", "organizer")
+    ev = models.Event(name="Edit Studio Conf", created_by_user_id=org.id)
+    db_session.add(ev)
+    db_session.commit()
+    db_session.refresh(ev)
+    talk = models.Talk(
+        event_id=ev.id,
+        title="Edit Me Studio",
+        room="Main",
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    authenticate_client(client, org)
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+    assert "btn-edit-talk-studio" in res.text
+
+
+def test_studio_edit_button_hidden_for_sso(client: TestClient, db_session):
+    org = create_user(db_session, "org_sso_studio_btn@test.com", "organizer")
+    ev = models.Event(name="SSO Studio Conf", created_by_user_id=org.id)
+    db_session.add(ev)
+    db_session.commit()
+    db_session.refresh(ev)
+    talk = models.Talk(
+        event_id=ev.id,
+        title="SSO Me Studio",
+        room="Main",
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    sso_token = create_sso_token(scope_type="talk", scope_id=talk.id, role="speaker")
+    client.cookies.set("veditor_session", sso_token)
+
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+    assert "btn-edit-talk-studio" not in res.text
+
+
+def test_dashboard_room_attribute_escaped(client: TestClient, db_session):
+    org = create_user(db_session, "org_xss@test.com", "organizer")
+    ev = models.Event(name="XSS Conf", created_by_user_id=org.id)
+    db_session.add(ev)
+    db_session.commit()
+    db_session.refresh(ev)
+    talk = models.Talk(
+        event_id=ev.id,
+        title='Title "With Quotes"',
+        room='Room "Breakout" <script>alert(1)</script>',
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    authenticate_client(client, org)
+    res = client.get("/studio")
+    assert res.status_code == 200
+    assert (
+        'data-room="Room &#34;Breakout&#34; &lt;script&gt;alert(1)&lt;/script&gt;"'
+        in res.text
+    )
+
+
+def test_studio_room_attribute_escaped(client: TestClient, db_session):
+    org = create_user(db_session, "org_studio_xss@test.com", "organizer")
+    ev = models.Event(name="Studio XSS Conf", created_by_user_id=org.id)
+    db_session.add(ev)
+    db_session.commit()
+    db_session.refresh(ev)
+    talk = models.Talk(
+        event_id=ev.id,
+        title='Title "With Quotes"',
+        room='Room "Breakout" <script>alert(1)</script>',
+        start=datetime.now(UTC),
+        end=datetime.now(UTC),
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    authenticate_client(client, org)
+    res = client.get(f"/studio/talks/{talk.id}")
+    assert res.status_code == 200
+    assert (
+        'data-talk-room="Room &#34;Breakout&#34; &lt;script&gt;alert(1)&lt;/script&gt;"'
+        in res.text
+    )

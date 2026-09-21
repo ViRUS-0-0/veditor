@@ -1,7 +1,6 @@
 import json
 import logging
 import math
-import tempfile
 import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -38,6 +37,7 @@ from app.ingest import (
     IngestPathRejectedError,
     InsufficientStorageError,
     get_bumper_staging_dir,
+    get_upload_staging_dir,
     stage_custom_clip,
     stage_recording,
 )
@@ -867,6 +867,14 @@ def abort_talk(
     return schemas.TalkRead.model_validate(talk)
 
 
+def _normalize_dt(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 @router.patch("/{talk_id}", response_model=schemas.TalkRead)
 def update_talk(
     talk_id: int,
@@ -890,29 +898,43 @@ def update_talk(
         )
     check_event_access(talk.event_id, user, db)
 
-    if payload.title is not None:
-        title = payload.title.strip()
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if "title" in update_data:
+        title = (update_data["title"] or "").strip()
         if not title:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Talk title cannot be empty",
             )
         talk.title = title
-    if payload.room is not None:
-        talk.room = payload.room
+    if "room" in update_data:
+        raw_room = update_data["room"]
+        talk.room = raw_room.strip() if (raw_room and raw_room.strip()) else None
 
-    new_start = payload.start if payload.start is not None else talk.start
-    new_end = payload.end if payload.end is not None else talk.end
+    if "start" in update_data and update_data["start"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Talk start time cannot be empty",
+        )
+    if "end" in update_data and update_data["end"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Talk end time cannot be empty",
+        )
+
+    new_start = _normalize_dt(update_data.get("start", talk.start))
+    new_end = _normalize_dt(update_data.get("end", talk.end))
     if new_start and new_end and new_end <= new_start:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Talk end time must be after start time",
         )
 
-    if payload.start is not None:
-        talk.start = payload.start
-    if payload.end is not None:
-        talk.end = payload.end
+    if "start" in update_data:
+        talk.start = new_start
+    if "end" in update_data:
+        talk.end = new_end
 
     try:
         db.commit()
@@ -1054,13 +1076,9 @@ async def upload_recording(
         )
 
     raw_key = f"{talk_id}/raw/raw.mp4"
-    staging_dir = Path(tempfile.gettempdir()) / "veditor_staging"
-    # storage-boundary-exempt: upload staging directory
-    staging_dir.mkdir(parents=True, exist_ok=True)
-    staged_path = staging_dir / f"upload_{talk_id}_{uuid.uuid4().hex}.mp4"
+    staged_path = get_upload_staging_dir() / f"upload_{talk_id}_{uuid.uuid4().hex}.mp4"
 
     try:
-        # Stream raw upload to temporary staging
         # storage-boundary-exempt: upload staging
         with open(staged_path, "wb") as f_out:  # noqa: ASYNC230
             while chunk := await file.read(1024 * 1024):
