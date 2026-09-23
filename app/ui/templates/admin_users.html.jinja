@@ -170,7 +170,7 @@
       </div>
       <div class="pagination-controls">
         <a
-          href="/admin/users?page={{ pagination.prev_page }}&limit={{ pagination.limit }}{% if search %}&search={{ search }}{% endif %}"
+          href="/admin/users?page={{ pagination.prev_page }}&limit={{ pagination.limit }}{% if search %}&search={{ search | urlencode }}{% endif %}"
           class="btn btn-ghost btn-sm pagination-btn {% if not pagination.has_prev %}disabled{% endif %}"
           {% if not pagination.has_prev %}aria-disabled="true" tabindex="-1"{% endif %}
         >
@@ -178,7 +178,7 @@
         </a>
         <span class="pagination-page-label">Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
         <a
-          href="/admin/users?page={{ pagination.next_page }}&limit={{ pagination.limit }}{% if search %}&search={{ search }}{% endif %}"
+          href="/admin/users?page={{ pagination.next_page }}&limit={{ pagination.limit }}{% if search %}&search={{ search | urlencode }}{% endif %}"
           class="btn btn-ghost btn-sm pagination-btn {% if not pagination.has_next %}disabled{% endif %}"
           {% if not pagination.has_next %}aria-disabled="true" tabindex="-1"{% endif %}
         >

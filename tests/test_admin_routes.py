@@ -1103,3 +1103,64 @@ def test_admin_nav_includes_users_link(client: TestClient, db_session):
     res_events = client.get("/admin/events")
     assert res_events.status_code == 200
     assert 'href="/admin/users"' in res_events.text
+
+
+def test_admin_users_search_wildcard_escaping(client: TestClient, db_session):
+    admin_user = _create_test_user(
+        db_session, "admin_escape_test@admin-test.com", role="admin"
+    )
+    _create_test_user(db_session, "user_abc@admin-test.com", role="user")
+    _create_test_user(db_session, "userXabc@admin-test.com", role="user")
+
+    token = create_session_token(admin_user.id, admin_user.role)
+    client.cookies.set("veditor_session", token)
+
+    # Search with '_' which should only match literal '_' and NOT 'userXabc'
+    res = client.get("/admin/users?search=user_abc")
+    assert res.status_code == 200
+    data = res.json()
+    emails = [u["email"] for u in data]
+    assert "user_abc@admin-test.com" in emails
+    assert "userXabc@admin-test.com" not in emails
+
+    # Search with '%' which should match nothing when no user has a literal '%'
+    res_pct = client.get("/admin/users?search=%")
+    assert res_pct.status_code == 200
+    assert res_pct.json() == []
+
+
+def test_admin_users_pagination_url_encoding(client: TestClient, db_session):
+    admin_user = _create_test_user(
+        db_session, "admin_urlenc@admin-test.com", role="admin"
+    )
+    # Create 3 users matching a tag search
+    for i in range(3):
+        _create_test_user(
+            db_session, f"tag_user_{i}+special@admin-test.com", role="user"
+        )
+
+    token = create_session_token(admin_user.id, admin_user.role)
+    client.cookies.set("veditor_session", token)
+
+    # Search with '+' (URL encoded as %2B in the query string) and limit=1 to trigger pagination
+    res = client.get(
+        "/admin/users?page=1&limit=1&search=%2Bspecial",
+        headers={"Accept": "text/html"},
+    )
+    assert res.status_code == 200
+    html = res.text
+    # Check that the Next link properly encodes '+special' as '%2Bspecial'
+    assert "search=%2Bspecial" in html
+
+
+def test_admin_users_html_skip_out_of_range_raises_404(client: TestClient, db_session):
+    admin_user = _create_test_user(
+        db_session, "admin_skip_test@admin-test.com", role="admin"
+    )
+    token = create_session_token(admin_user.id, admin_user.role)
+    client.cookies.set("veditor_session", token)
+
+    # HTML request with skip exceeding total users must return 404
+    res = client.get("/admin/users?skip=999999", headers={"Accept": "text/html"})
+    assert res.status_code == 404
+    assert res.json()["detail"] == "Page not found"

@@ -102,7 +102,12 @@ def list_users(
     search_term = (search or q or email or "").strip()
     query = db.query(models.User)
     if search_term:
-        query = query.filter(models.User.email.ilike(f"%{search_term}%"))
+        escaped_search = (
+            search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        query = query.filter(
+            models.User.email.ilike(f"%{escaped_search}%", escape="\\")
+        )
 
     total_users = query.count()
     total_pages = max(1, (total_users + limit - 1) // limit) if total_users > 0 else 1
@@ -115,18 +120,18 @@ def list_users(
         and format_param != "json"
     )
 
-    if wants_html and page > total_pages and total_users > 0:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Page not found",
-        )
-
     if skip is not None:
         offset = skip
         calculated_page = (skip // limit) + 1
     else:
         calculated_page = page
         offset = (page - 1) * limit
+
+    if wants_html and calculated_page > total_pages and total_users > 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Page not found",
+        )
 
     users = query.order_by(models.User.id.asc()).offset(offset).limit(limit).all()
 
