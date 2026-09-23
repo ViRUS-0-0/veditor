@@ -566,7 +566,7 @@ def get_talk_media_default(
                 path,
                 media_type="video/mp4",
                 filename=download_filename,
-                headers={"Cache-Control": "no-store"},
+                headers={"Cache-Control": "no-cache"},
             )
     raise HTTPException(status_code=404, detail="Media not found")
 
@@ -604,7 +604,7 @@ def get_talk_media_categorized(
         path,
         media_type="video/mp4",
         filename=download_filename,
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-cache"},
     )
 
 

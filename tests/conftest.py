@@ -107,6 +107,9 @@ class FakeStorageBackend(StorageBackend):
     def total_bytes(self) -> int:
         return self.DEFAULT_FREE_BYTES
 
+    def get_temp_dir(self) -> Path:
+        return Path(tempfile.gettempdir())
+
 
 @pytest.fixture
 def fake_storage() -> FakeStorageBackend:

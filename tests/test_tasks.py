@@ -162,7 +162,7 @@ def test_job_ingest_success(dummy_talk, mock_storage, tmp_path):
     job = next(iter(jobs.values()))
     assert job.status == "done"
     assert job.kind == "ingest"
-    assert mock_storage.put.call_count == 2
+    assert mock_storage.put.call_count == 1
     mock_enqueue.assert_called_once_with(
         job_detect,
         dummy_talk.id,
@@ -859,6 +859,43 @@ def test_job_cut_discards_when_talk_aborted(dummy_talk, mock_storage):
     # Talk should not have been advanced to generating_previews or broken
     assert dummy_talk.status == "waiting_for_files"
     mock_enqueue.assert_not_called()
+
+
+def test_job_cut_with_local_storage_caches_waveform(dummy_talk, tmp_path):
+    import json
+
+    from app.storage import LocalDiskBackend
+    from tests.conftest import generate_clip
+
+    storage = LocalDiskBackend(data_dir=tmp_path)
+    raw_clip = generate_clip(
+        2.0,
+        has_video=True,
+        has_audio=True,
+        audio_waveform="tone",
+        output_dir=tmp_path / "raw_src",
+    )
+    storage.put("1/raw/raw.mp4", raw_clip)
+
+    dummy_talk.status = "cutting"
+    dummy_talk.cut_start = 0.0
+    dummy_talk.cut_end = 2.0
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=storage),
+        patch("app.tasks.light_queue.enqueue"),
+    ):
+        job_cut(dummy_talk.id, "1/raw/raw.mp4", "1/cut/cut.mp4")
+
+    assert storage.exists("1/cut/cut.mp4")
+    wf_key = "1/cut/cut.mp4.waveform.json"
+    assert storage.exists(wf_key)
+    wf_content = json.loads(storage.get(wf_key).read_text(encoding="utf-8"))
+    assert len(wf_content["peaks"]) > 0
+    assert max(wf_content["peaks"]) > 0.0
 
 
 def test_handle_failure_on_deleted_job_does_not_mark_talk_broken(

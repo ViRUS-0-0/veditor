@@ -47,6 +47,17 @@ def test_put_and_get_file(storage_backend: StorageBackend, tmp_path: Path):
     assert path.read_bytes() == content
 
 
+def test_put_from_temp_dir_moves_file(tmp_path: Path):
+    storage = LocalDiskBackend(data_dir=tmp_path)
+    scratch_file = storage.get_temp_dir() / "scratch.mp4"
+    scratch_file.write_bytes(b"scratch content")
+    key = "talk_1/final/final.mp4"
+    storage.put(key, scratch_file)
+    assert storage.exists(key)
+    assert storage.get(key).read_bytes() == b"scratch content"
+    assert not scratch_file.exists()
+
+
 def test_put_overwrites_silently(storage_backend: StorageBackend):
     key = "talk_1/raw/video.mp4"
 

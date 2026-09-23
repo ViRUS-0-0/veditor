@@ -348,3 +348,16 @@ def test_concat_respects_custom_output_container_format(tmp_path: Path):
     assert output_path.is_file()
     with av.open(str(output_path)) as container:
         assert "matroska" in container.format.name
+
+
+def test_concat_rejects_invalid_threads(tmp_path: Path):
+    """Verify ValueError is raised if threads is non-positive."""
+    cut_path = generate_clip(1.0, output_dir=tmp_path)
+    intro_path = generate_clip(1.0, output_dir=tmp_path)
+    output_path = tmp_path / "out.mp4"
+
+    with pytest.raises(ValueError, match="threads must be positive"):
+        concat(cut_path, intro_path=intro_path, output_path=output_path, threads=0)
+
+    with pytest.raises(ValueError, match="threads must be positive"):
+        concat(cut_path, intro_path=intro_path, output_path=output_path, threads=-2)

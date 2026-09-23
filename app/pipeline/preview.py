@@ -37,8 +37,11 @@ def generate_preview(
         out_audio = None
         width, height = preset.resolution
 
+        stride = 1
         if in_video:
-            fps = in_video.guessed_rate or in_video.average_rate or 24
+            raw_fps = float(in_video.guessed_rate or in_video.average_rate or 24)
+            stride = max(1, round(raw_fps / 24.0)) if raw_fps > 30.0 else 1
+            fps = max(1, round(raw_fps / stride))
             speed_preset = getattr(preset, "preset_speed", "veryfast") or "veryfast"
             options = {"preset": speed_preset}
             if preset.crf is not None:
@@ -58,9 +61,14 @@ def generate_preview(
             out_audio.layout = in_audio.layout.name if in_audio.layout else "mono"
 
         streams = [s for s in (in_video, in_audio) if s is not None]
+        video_frame_count = 0
         for packet in in_container.demux(*streams):
             for frame in packet.decode():
                 if packet.stream.type == "video" and out_video:
+                    skip = stride > 1 and (video_frame_count % stride != 0)
+                    video_frame_count += 1
+                    if skip:
+                        continue
                     reformatted = frame.reformat(
                         width=width, height=height, format="yuv420p"
                     )

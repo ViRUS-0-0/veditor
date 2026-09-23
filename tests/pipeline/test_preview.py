@@ -219,3 +219,19 @@ def test_generate_preview_rejects_invalid_threads(tmp_path: Path):
 
     with pytest.raises(ValueError, match="threads must be greater than zero"):
         generate_preview(input_clip, output_clip, preset, threads=-1)
+
+
+def test_generate_preview_high_framerate_decimation(tmp_path: Path):
+    """Verify that >30 fps videos are decimated to <=30 fps and duration matches."""
+    input_clip = generate_clip(2.0, fps=60, pattern="solid", output_dir=tmp_path)
+    output_clip = tmp_path / "decimated_preview.mp4"
+
+    generate_preview(input_clip, output_clip, PREVIEW_PRESETS["small_video"])
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+    assert_duration_close(input_clip, output_clip, tolerance_seconds=0.25)
+    with av.open(str(output_clip)) as c:
+        v = c.streams.video[0]
+        avg_rate = float(v.average_rate or v.guessed_rate)
+        assert avg_rate <= 30.0
