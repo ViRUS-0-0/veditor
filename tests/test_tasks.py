@@ -1230,7 +1230,9 @@ def test_job_preview_reuses_cached_cut_waveform(dummy_talk, mock_storage):
         return key == "1/cut/cut.mp4.waveform.json"
 
     mock_storage.exists.side_effect = exists_side_effect
-    mock_storage.get.return_value = Path("/tmp/cut.mp4.waveform.json")
+    mock_path = MagicMock()
+    mock_path.read_bytes.return_value = b'{"peaks": [0.5]}'
+    mock_storage.get.return_value = mock_path
 
     with (
         patch("app.tasks.SessionLocal", side_effect=db_ctx),
@@ -1241,7 +1243,7 @@ def test_job_preview_reuses_cached_cut_waveform(dummy_talk, mock_storage):
         job_preview(1, "1/cut/cut.mp4", "1/preview/preview.mp4")
 
     mock_storage.put.assert_any_call(
-        "1/preview/preview.mp4.waveform.json", Path("/tmp/cut.mp4.waveform.json")
+        "1/preview/preview.mp4.waveform.json", b'{"peaks": [0.5]}'
     )
     mock_cache.assert_not_called()
 
@@ -1271,3 +1273,38 @@ def test_encoder_threads_forwarded_when_configured(
         job_cut(1, "1/raw/raw.mp4", "1/cut/cut.mp4")
 
     assert captured_cut_kwargs.get("threads") == 2
+
+    # Verify job_preview forwards threads=2
+    dummy_talk.status = "generating_previews"
+    captured_preview_kwargs = {}
+
+    def fake_preview(*args, **kwargs):
+        captured_preview_kwargs.update(kwargs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.generate_preview", side_effect=fake_preview),
+        patch("app.tasks._cache_waveform"),
+    ):
+        job_preview(1, "1/cut/cut.mp4", "1/preview/preview.mp4")
+
+    assert captured_preview_kwargs.get("threads") == 2
+
+    # Verify job_transcode forwards threads=2
+    dummy_talk.status = "transcoding"
+    captured_transcode_kwargs = {}
+
+    def fake_transcode(*args, **kwargs):
+        captured_transcode_kwargs.update(kwargs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.transcode", side_effect=fake_transcode),
+        patch("app.tasks._cache_waveform"),
+        patch("app.tasks.light_queue.enqueue"),
+    ):
+        job_transcode(1, "1/cut/cut_loud.mp4", "1/final/final.mp4")
+
+    assert captured_transcode_kwargs.get("threads") == 2

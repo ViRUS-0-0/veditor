@@ -1,6 +1,7 @@
 """Unit tests for the pure preview video generator (pipeline/preview.py)."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import av
 import pytest
@@ -164,7 +165,42 @@ def test_generate_preview_with_threads_and_preset_speed(tmp_path: Path):
         output_dir=tmp_path,
     )
     output_clip = tmp_path / "threads_preview.mp4"
-    generate_preview(input_clip, output_clip, preset, threads=1)
+
+    real_open = av.open
+    captured_streams = []
+
+    class ContainerProxy:
+        def __init__(self, target):
+            self._target = target
+
+        def __enter__(self):
+            self._target.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._target.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self._target, name)
+
+        def add_stream(self, *args, **kwargs):
+            captured_streams.append((args, kwargs))
+            return self._target.add_stream(*args, **kwargs)
+
+    def fake_open(*args, **kwargs):
+        c = real_open(*args, **kwargs)
+        return ContainerProxy(c) if kwargs.get("mode") == "w" else c
+
+    with patch("app.pipeline.preview.av.open", side_effect=fake_open):
+        generate_preview(input_clip, output_clip, preset, threads=1)
+
+    libx264_calls = [
+        kwargs for args, kwargs in captured_streams if args and args[0] == "libx264"
+    ]
+    assert len(libx264_calls) == 1
+    encoder_options = libx264_calls[0].get("options", {})
+    assert encoder_options.get("preset") == "ultrafast"
+    assert encoder_options.get("threads") == "1"
 
     assert output_clip.is_file()
     assert_playable(output_clip)

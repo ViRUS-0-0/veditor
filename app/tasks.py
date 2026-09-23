@@ -648,8 +648,16 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
             cut_wf_key = f"{cut_key}.waveform.json"
             if storage.exists(cut_wf_key):
                 try:
-                    storage.put(f"{preview_key}.waveform.json", storage.get(cut_wf_key))
-                except OSError, ValueError, RuntimeError:
+                    cut_wf_path = storage.get(cut_wf_key)
+                    # storage-boundary-exempt: copy cached waveform bytes to preview
+                    wf_data = cut_wf_path.read_bytes()
+                    storage.put(f"{preview_key}.waveform.json", wf_data)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    logger.warning(
+                        "Failed to reuse cut waveform for preview %s: %s",
+                        preview_key,
+                        exc,
+                    )
                     _cache_waveform(storage, preview_key, tmp_out)
             else:
                 _cache_waveform(storage, preview_key, tmp_out)
