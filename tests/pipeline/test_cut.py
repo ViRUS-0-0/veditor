@@ -1,9 +1,11 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from app.pipeline.cut import (
     CutStrategy,
+    _add_video_stream,
     _resolve_audio_encoder,
     _resolve_video_encoder,
     cut,
@@ -219,3 +221,35 @@ def test_cut_reencode_with_threads(tmp_path: Path):
     assert strategy == CutStrategy.RE_ENCODE
     assert output_clip.is_file()
     assert_playable(output_clip)
+
+
+def test_add_video_stream_fallback_preserves_options_and_defaults_preset():
+    """Verify fallback to libx264 preserves options and defaults preset to veryfast."""
+    # Scenario 1: options is None -> defaults to {"preset": "veryfast"}
+    container_1 = MagicMock()
+    container_1.add_stream.side_effect = [ValueError("unsupported"), MagicMock()]
+    _add_video_stream(container_1, "unknown_codec", rate=24, options=None)
+    container_1.add_stream.assert_called_with(
+        "libx264", rate=24, options={"preset": "veryfast"}
+    )
+
+    # Scenario 2: options with threads -> preserves threads and adds preset="veryfast"
+    container_2 = MagicMock()
+    container_2.add_stream.side_effect = [ValueError("unsupported"), MagicMock()]
+    _add_video_stream(container_2, "unknown_codec", rate=24, options={"threads": "2"})
+    container_2.add_stream.assert_called_with(
+        "libx264", rate=24, options={"threads": "2", "preset": "veryfast"}
+    )
+
+    # Scenario 3: explicit preset provided -> preserves existing preset
+    container_3 = MagicMock()
+    container_3.add_stream.side_effect = [ValueError("unsupported"), MagicMock()]
+    _add_video_stream(
+        container_3,
+        "unknown_codec",
+        rate=24,
+        options={"preset": "medium", "threads": "1"},
+    )
+    container_3.add_stream.assert_called_with(
+        "libx264", rate=24, options={"preset": "medium", "threads": "1"}
+    )

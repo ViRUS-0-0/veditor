@@ -222,7 +222,9 @@ def _add_video_stream(
             preferred_encoder,
             exc,
         )
-        return container.add_stream("libx264", rate=rate, options=options)
+        fallback_options = dict(options) if options else {}
+        fallback_options.setdefault("preset", "veryfast")
+        return container.add_stream("libx264", rate=rate, options=fallback_options)
 
 
 def _add_audio_stream(
