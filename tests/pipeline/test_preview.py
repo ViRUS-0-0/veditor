@@ -147,3 +147,26 @@ def test_generate_preview_custom_preset(tmp_path: Path):
     assert_playable(output_clip)
     info = open_and_inspect(output_clip)
     assert info.resolution == (160, 120)
+
+
+def test_generate_preview_with_threads_and_preset_speed(tmp_path: Path):
+    """Verify preview generation with explicit thread count and speed preset."""
+    preset = PreviewPreset(
+        name="custom_speed",
+        resolution=(320, 180),
+        video_bitrate=150_000,
+        preset_speed="ultrafast",
+    )
+    input_clip = generate_clip(
+        1.0,
+        resolution=(640, 360),
+        pattern="gradient",
+        output_dir=tmp_path,
+    )
+    output_clip = tmp_path / "threads_preview.mp4"
+    generate_preview(input_clip, output_clip, preset, threads=1)
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+    info = open_and_inspect(output_clip)
+    assert info.resolution == (320, 180)

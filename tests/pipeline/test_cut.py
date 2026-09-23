@@ -202,3 +202,20 @@ def test_cut_reencode_container_codec_fallback(tmp_path: Path):
     assert strategy == CutStrategy.RE_ENCODE
     assert output_clip.is_file()
     assert_playable(output_clip)
+
+
+def test_cut_reencode_with_threads(tmp_path: Path):
+    """Verify cut re-encode works with explicit thread constraints."""
+    source_clip = generate_clip(2.0, output_dir=tmp_path)
+    output_clip = tmp_path / "cut_threads.mp4"
+    strategy = cut(
+        source_clip,
+        output_clip,
+        start_seconds=0.2,
+        end_seconds=1.2,
+        force_reencode=True,
+        threads=1,
+    )
+    assert strategy == CutStrategy.RE_ENCODE
+    assert output_clip.is_file()
+    assert_playable(output_clip)

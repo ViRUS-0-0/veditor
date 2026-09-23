@@ -9,12 +9,13 @@ def generate_preview(
     input_path: Path,
     output_path: Path,
     preset: PreviewPreset,
+    threads: int | None = None,
 ) -> None:
     """
     Generate a low-resolution review clip from an input recording using PyAV.
 
-    Applies the target resolution, video bitrate (or CRF), and audio bitrate
-    specified by the given PreviewPreset.
+    Applies the target resolution, video bitrate (or CRF), audio bitrate,
+    and speed preset specified by the given PreviewPreset.
     """
     container_options = (
         {"movflags": "faststart"} if output_path.suffix.lower() == ".mp4" else {}
@@ -35,7 +36,12 @@ def generate_preview(
 
         if in_video:
             fps = in_video.guessed_rate or in_video.average_rate or 24
-            options = {"crf": str(preset.crf)} if preset.crf is not None else {}
+            speed_preset = getattr(preset, "preset_speed", "veryfast") or "veryfast"
+            options = {"preset": speed_preset}
+            if preset.crf is not None:
+                options["crf"] = str(preset.crf)
+            if threads is not None:
+                options["threads"] = str(threads)
             out_video = out_container.add_stream("libx264", rate=fps, options=options)
             out_video.width = width
             out_video.height = height

@@ -50,7 +50,6 @@ from app.storage import (
 
 logger = logging.getLogger(__name__)
 
-# ponytail: timeouts are generous defaults; tune per deployment if jobs time out in production
 STAGE_CONFIG: dict[str, dict[str, str | int]] = {
     "ingest": {"queue": "light", "job_timeout": 600},
     "detect": {"queue": "light", "job_timeout": 300},
@@ -282,7 +281,18 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "cut.mp4"
-            cut(raw_path, tmp_out, start_seconds, end_seconds)
+            cut_kwargs = (
+                {"threads": settings.encoder_threads}
+                if settings.encoder_threads is not None
+                else {}
+            )
+            cut(
+                raw_path,
+                tmp_out,
+                start_seconds,
+                end_seconds,
+                **cut_kwargs,
+            )
             storage.put(cut_key, tmp_out)
             _cache_waveform(storage, cut_key, tmp_out)
 
@@ -623,9 +633,26 @@ def job_preview(talk_id: int, cut_key: str, preview_key: str | None = None) -> N
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "preview.mp4"
-            generate_preview(cut_path, tmp_out, preset=preset)
+            preview_kwargs = (
+                {"threads": settings.encoder_threads}
+                if settings.encoder_threads is not None
+                else {}
+            )
+            generate_preview(
+                cut_path,
+                tmp_out,
+                preset=preset,
+                **preview_kwargs,
+            )
             storage.put(preview_key, tmp_out)
-            _cache_waveform(storage, preview_key, tmp_out)
+            cut_wf_key = f"{cut_key}.waveform.json"
+            if storage.exists(cut_wf_key):
+                try:
+                    storage.put(f"{preview_key}.waveform.json", storage.get(cut_wf_key))
+                except OSError, ValueError, RuntimeError:
+                    _cache_waveform(storage, preview_key, tmp_out)
+            else:
+                _cache_waveform(storage, preview_key, tmp_out)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -752,7 +779,6 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
                 else:
                     raise
             storage.put(loud_key, tmp_out)
-            _cache_waveform(storage, loud_key, tmp_out)
 
         with SessionLocal() as db:
             talk = db.get(Talk, talk_id)
@@ -835,7 +861,17 @@ def job_transcode(
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_out = Path(tmpdir) / "final.mp4"
-            transcode(loud_path, tmp_out, on_progress=_on_progress)
+            transcode_kwargs = (
+                {"threads": settings.encoder_threads}
+                if settings.encoder_threads is not None
+                else {}
+            )
+            transcode(
+                loud_path,
+                tmp_out,
+                on_progress=_on_progress,
+                **transcode_kwargs,
+            )
             storage.put(final_key, tmp_out)
             _cache_waveform(storage, final_key, tmp_out)
 

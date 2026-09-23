@@ -264,3 +264,14 @@ def test_transcode_graceful_fallback_when_duration_unavailable(
     assert_playable(output_clip)
     # When duration is None, intermediate progress is skipped but final 1.0 is called
     assert progress_events == [1.0]
+
+
+def test_transcode_with_threads(tmp_path: Path):
+    """Verify transcoding succeeds with explicit thread limits."""
+    source_clip = generate_clip(
+        1.0, has_video=True, has_audio=True, output_dir=tmp_path
+    )
+    output_clip = tmp_path / "transcoded_threads.mp4"
+    transcode(source_clip, output_clip, threads=1)
+    assert output_clip.is_file()
+    assert_playable(output_clip)

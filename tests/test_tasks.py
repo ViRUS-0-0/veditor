@@ -381,7 +381,7 @@ def test_no_db_session_held_during_cut_and_enqueues_preview(dummy_talk, mock_sto
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_cut(input_path, output_path, start_s, end_s):
+    def fake_cut(input_path, output_path, start_s, end_s, *args, **kwargs):
         assert db_ctx.open_sessions == 0, "DB session was open during cut!"
 
     with (
@@ -524,7 +524,7 @@ def test_no_db_session_held_during_preview_and_halts(dummy_talk, mock_storage):
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_preview(input_path, output_path, preset):
+    def fake_preview(input_path, output_path, preset, *args, **kwargs):
         assert db_ctx.open_sessions == 0, "DB session was open during preview!"
 
     with (
@@ -600,7 +600,7 @@ def test_transcode_enqueues_publish_on_light(dummy_talk, mock_storage):
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_transcode(input_path, output_path, on_progress=None):
+    def fake_transcode(input_path, output_path, on_progress=None, *args, **kwargs):
         assert db_ctx.open_sessions == 0, "DB session was open during transcode!"
 
     with (
@@ -662,7 +662,7 @@ def test_transcode_progress_callback_updates_job_progress(dummy_talk, mock_stora
 
     progress_history: list[float] = []
 
-    def fake_transcode(input_path, output_path, on_progress=None):
+    def fake_transcode(input_path, output_path, on_progress=None, *args, **kwargs):
         assert db_ctx.open_sessions == 0, "DB session was open during transcode!"
         if on_progress:
             on_progress(0.25)
@@ -843,7 +843,7 @@ def test_job_cut_discards_when_talk_aborted(dummy_talk, mock_storage):
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_cut(input_path, output_path, start_s, end_s):
+    def fake_cut(input_path, output_path, start_s, end_s, *args, **kwargs):
         # Simulate /abort occurring during pure video processing
         dummy_talk.status = "waiting_for_files"
         jobs.clear()
@@ -1219,3 +1219,55 @@ def test_job_waveform_generates_when_needed():
     mock_cache.assert_called_once_with(
         mock_storage, "1/preview/preview.mp4", Path("/tmp/fake_preview.mp4")
     )
+
+
+def test_job_preview_reuses_cached_cut_waveform(dummy_talk, mock_storage):
+    dummy_talk.status = "generating_previews"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    def exists_side_effect(key):
+        return key == "1/cut/cut.mp4.waveform.json"
+
+    mock_storage.exists.side_effect = exists_side_effect
+    mock_storage.get.return_value = Path("/tmp/cut.mp4.waveform.json")
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.generate_preview"),
+        patch("app.tasks._cache_waveform") as mock_cache,
+    ):
+        job_preview(1, "1/cut/cut.mp4", "1/preview/preview.mp4")
+
+    mock_storage.put.assert_any_call(
+        "1/preview/preview.mp4.waveform.json", Path("/tmp/cut.mp4.waveform.json")
+    )
+    mock_cache.assert_not_called()
+
+
+def test_encoder_threads_forwarded_when_configured(
+    dummy_talk, mock_storage, monkeypatch
+):
+    dummy_talk.status = "cutting"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "encoder_threads", 2)
+
+    captured_cut_kwargs = {}
+
+    def fake_cut(*args, **kwargs):
+        captured_cut_kwargs.update(kwargs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.cut", side_effect=fake_cut),
+        patch("app.tasks.light_queue.enqueue"),
+    ):
+        job_cut(1, "1/raw/raw.mp4", "1/cut/cut.mp4")
+
+    assert captured_cut_kwargs.get("threads") == 2
