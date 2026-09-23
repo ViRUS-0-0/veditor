@@ -100,6 +100,11 @@ def transcode(
 
     active_preset = preset or PRESET_1080P_DEFAULT
 
+    if threads is not None and threads <= 0:
+        raise ValueError(f"threads must be greater than zero: {threads}")
+    if active_preset.threads is not None and active_preset.threads <= 0:
+        raise ValueError(f"threads must be greater than zero: {active_preset.threads}")
+
     # storage-boundary-exempt: creating parent directory for pipeline output
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -141,7 +146,9 @@ def transcode(
                     video_options["crf"] = str(active_preset.crf)
                 if active_preset.preset_speed:
                     video_options["preset"] = active_preset.preset_speed
-                active_threads = threads or active_preset.threads
+                active_threads = (
+                    threads if threads is not None else active_preset.threads
+                )
                 if active_threads is not None:
                     video_options["threads"] = str(active_threads)
 

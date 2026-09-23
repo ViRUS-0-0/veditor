@@ -206,3 +206,16 @@ def test_generate_preview_with_threads_and_preset_speed(tmp_path: Path):
     assert_playable(output_clip)
     info = open_and_inspect(output_clip)
     assert info.resolution == (320, 180)
+
+
+def test_generate_preview_rejects_invalid_threads(tmp_path: Path):
+    """Verify that non-positive threads values raise ValueError."""
+    input_clip = generate_clip(1.0, output_dir=tmp_path)
+    output_clip = tmp_path / "invalid_threads_preview.mp4"
+    preset = PREVIEW_PRESETS["small_video"]
+
+    with pytest.raises(ValueError, match="threads must be greater than zero"):
+        generate_preview(input_clip, output_clip, preset, threads=0)
+
+    with pytest.raises(ValueError, match="threads must be greater than zero"):
+        generate_preview(input_clip, output_clip, preset, threads=-1)

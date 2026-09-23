@@ -17,6 +17,9 @@ def generate_preview(
     Applies the target resolution, video bitrate (or CRF), audio bitrate,
     and speed preset specified by the given PreviewPreset.
     """
+    if threads is not None and threads <= 0:
+        raise ValueError(f"threads must be greater than zero: {threads}")
+
     container_options = (
         {"movflags": "faststart"} if output_path.suffix.lower() == ".mp4" else {}
     )
