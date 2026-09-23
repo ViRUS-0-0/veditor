@@ -101,6 +101,9 @@ def cut(
             f"end_seconds ({end_seconds}) must be greater than start_seconds ({start_seconds})"
         )
 
+    if threads is not None and threads <= 0:
+        raise ValueError(f"threads must be greater than zero: {threads}")
+
     # storage-boundary-exempt: creating parent directory for pipeline output
     out_path.parent.mkdir(parents=True, exist_ok=True)
 

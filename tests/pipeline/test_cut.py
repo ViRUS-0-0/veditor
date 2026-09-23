@@ -132,6 +132,12 @@ def test_cut_invalid_inputs(tmp_path: Path):
     ):
         cut(valid_clip, output_clip, 2.0, 2.0)
 
+    # Invalid thread count (zero or negative)
+    with pytest.raises(ValueError, match="threads must be greater than zero"):
+        cut(valid_clip, output_clip, 0.0, 1.0, threads=0)
+    with pytest.raises(ValueError, match="threads must be greater than zero"):
+        cut(valid_clip, output_clip, 0.0, 1.0, threads=-1)
+
 
 def test_resolve_encoders():
     """Verify decoder-to-encoder mapping for video and audio."""
