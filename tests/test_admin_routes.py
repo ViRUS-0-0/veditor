@@ -1164,3 +1164,11 @@ def test_admin_users_html_skip_out_of_range_raises_404(client: TestClient, db_se
     res = client.get("/admin/users?skip=999999", headers={"Accept": "text/html"})
     assert res.status_code == 404
     assert res.json()["detail"] == "Page not found"
+
+    # HTML request where skip is within page 1 bounds (calculated_page=1 <= total_pages=1) but offset >= total_users
+    res_search = client.get(
+        f"/admin/users?search={admin_user.email}&skip=1",
+        headers={"Accept": "text/html"},
+    )
+    assert res_search.status_code == 404
+    assert res_search.json()["detail"] == "Page not found"

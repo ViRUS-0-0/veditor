@@ -127,7 +127,11 @@ def list_users(
         calculated_page = page
         offset = (page - 1) * limit
 
-    if wants_html and calculated_page > total_pages and total_users > 0:
+    if (
+        wants_html
+        and total_users > 0
+        and (calculated_page > total_pages or offset >= total_users)
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Page not found",
