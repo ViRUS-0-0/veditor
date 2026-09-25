@@ -58,6 +58,22 @@ def test_put_from_temp_dir_moves_file(tmp_path: Path):
     assert not scratch_file.exists()
 
 
+def test_put_outside_temp_dir_in_same_parent_copies_file(tmp_path: Path):
+    storage = LocalDiskBackend(data_dir=tmp_path)
+    key = "talk_1/raw/video.mp4"
+    target_path = storage._get_path(key)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    source_file = target_path.parent / "source.mp4"
+    source_file.write_bytes(b"persistent content")
+
+    storage.put(key, source_file)
+
+    assert storage.exists(key)
+    assert storage.get(key).read_bytes() == b"persistent content"
+    assert source_file.exists()
+    assert source_file.read_bytes() == b"persistent content"
+
+
 def test_put_overwrites_silently(storage_backend: StorageBackend):
     key = "talk_1/raw/video.mp4"
 

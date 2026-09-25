@@ -112,7 +112,7 @@ class LocalDiskBackend(StorageBackend):
             and source.is_file()
             and (
                 source.is_relative_to(self.get_temp_dir())
-                or source.parent.resolve() == target_path.parent.resolve()
+                or source.resolve().is_relative_to(self.get_temp_dir())
             )
         ):
             shutil.move(str(source), str(target_path))

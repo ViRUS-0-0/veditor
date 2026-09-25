@@ -468,7 +468,11 @@ def concat(
 
     # Render into a temporary file, then persist via StorageBackend
     out_suffix = out_p.suffix or cut_p.suffix or ".mp4"
-    scratch_dir = getattr(backend, "get_temp_dir", lambda: None)() if backend else None
+    scratch_dir = (
+        getattr(storage_backend, "get_temp_dir", lambda: None)()
+        if storage_backend
+        else None
+    )
     with tempfile.TemporaryDirectory(
         prefix="veditor-concat-", dir=scratch_dir
     ) as tmpdir:
