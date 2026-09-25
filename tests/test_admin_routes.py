@@ -1133,6 +1133,7 @@ def test_admin_users_pagination_url_encoding(client: TestClient, db_session):
     admin_user = _create_test_user(
         db_session, "admin_urlenc@admin-test.com", role="admin"
     )
+    _create_test_user(db_session, "other_normal@admin-test.com", role="user")
     # Create 3 users matching a tag search
     for i in range(3):
         _create_test_user(
@@ -1151,6 +1152,18 @@ def test_admin_users_pagination_url_encoding(client: TestClient, db_session):
     html = res.text
     # Check that the Next link properly encodes '+special' as '%2Bspecial'
     assert "search=%2Bspecial" in html
+    assert "other_normal@admin-test.com" not in html
+
+    res_page2 = client.get(
+        "/admin/users?page=2&limit=1&search=%2Bspecial",
+        headers={"Accept": "text/html"},
+    )
+    assert res_page2.status_code == 200
+    html_page2 = res_page2.text
+    assert "tag_user_1+special@admin-test.com" in html_page2
+    assert "other_normal@admin-test.com" not in html_page2
+    assert 'of 3 users matching "+special"' in html_page2
+    assert "search=%2Bspecial" in html_page2
 
 
 def test_admin_users_html_skip_out_of_range_raises_404(client: TestClient, db_session):
