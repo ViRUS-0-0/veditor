@@ -128,7 +128,9 @@
               >
                 <option value="user" {% if item.role == 'user' %}selected{% endif %}>User</option>
                 <option value="organizer" {% if item.role == 'organizer' %}selected{% endif %}>Organizer</option>
-                <option value="admin" {% if item.role == 'admin' %}selected{% endif %}>Admin</option>
+                {% if item.role == 'admin' %}
+                <option value="admin" selected disabled>Admin</option>
+                {% endif %}
                 {% if item.role == 'speaker' %}
                 <option value="speaker" selected disabled>Speaker</option>
                 {% endif %}

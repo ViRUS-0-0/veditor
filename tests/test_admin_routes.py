@@ -197,10 +197,25 @@ def test_promote_user_invalid_role_payload(client: TestClient, db_session):
     token = create_session_token(admin_user.id, admin_user.role)
     client.cookies.set("veditor_session", token)
 
-    # Only "organizer" and "admin" are permitted in schemas.UserPromoteRequest
+    # Only "user" and "organizer" are permitted in schemas.UserPromoteRequest
     res = client.post(
         f"/admin/users/{target_user.id}/promote", json={"role": "invalid"}
     )
+    assert res.status_code == 422
+
+
+def test_promote_rejects_admin_role(client: TestClient, db_session):
+    admin_user = _create_test_user(
+        db_session, "admin_p_rej@admin-test.com", role="admin"
+    )
+    target_user = _create_test_user(
+        db_session, "target_p_rej@admin-test.com", role="user"
+    )
+
+    token = create_session_token(admin_user.id, admin_user.role)
+    client.cookies.set("veditor_session", token)
+
+    res = client.post(f"/admin/users/{target_user.id}/promote", json={"role": "admin"})
     assert res.status_code == 422
 
 
@@ -222,10 +237,13 @@ def test_promote_user_success(client: TestClient, db_session):
     db_session.refresh(target_user)
     assert target_user.role == "organizer"
 
-    # Now promote to admin
-    res2 = client.post(f"/admin/users/{target_user.id}/promote", json={"role": "admin"})
+    # Promote back to user
+    res2 = client.post(f"/admin/users/{target_user.id}/promote", json={"role": "user"})
     assert res2.status_code == 200
-    assert res2.json()["role"] == "admin"
+    assert res2.json()["role"] == "user"
+
+    db_session.refresh(target_user)
+    assert target_user.role == "user"
 
 
 def test_promote_guard_cannot_demote_last_admin(client: TestClient, db_session):
@@ -893,8 +911,11 @@ def test_admin_users_html_view_rendering(client: TestClient, db_session):
     managed_user = _create_test_user(
         db_session, "managed_one@admin-test.com", role="user"
     )
-    _create_test_user(
+    managed_two = _create_test_user(
         db_session, "managed_two@admin-test.com", role="organizer", is_active=False
+    )
+    speaker_user = _create_test_user(
+        db_session, "managed_speaker@admin-test.com", role="speaker"
     )
 
     token = create_session_token(admin_user.id, admin_user.role)
@@ -927,6 +948,7 @@ def test_admin_users_html_view_rendering(client: TestClient, db_session):
     assert "admin_ui_user@admin-test.com" in html
     assert "managed_one@admin-test.com" in html
     assert "managed_two@admin-test.com" in html
+    assert "managed_speaker@admin-test.com" in html
     assert "badge-current-user" in html  # "(You)" badge for signed-in admin
     assert "Active" in html
     assert "Inactive" in html
@@ -936,6 +958,43 @@ def test_admin_users_html_view_rendering(client: TestClient, db_session):
     assert f'id="toggle-active-btn-{managed_user.id}"' in html
     assert "Deactivate" in html
     assert "Activate" in html
+
+    # Role select options verification:
+    # 1. Admin row: Admin option is selected and disabled; User and Organizer are available
+    admin_select = html.split(f'id="role-select-{admin_user.id}"')[1].split(
+        "</select>"
+    )[0]
+    assert '<option value="admin" selected disabled>Admin</option>' in admin_select
+    assert '<option value="user"' in admin_select
+    assert '<option value="organizer"' in admin_select
+    assert '<option value="speaker"' not in admin_select
+
+    # 2. Regular user row: User and Organizer available; Admin is not present
+    user_select = html.split(f'id="role-select-{managed_user.id}"')[1].split(
+        "</select>"
+    )[0]
+    assert '<option value="user" selected>User</option>' in user_select
+    assert '<option value="organizer"' in user_select
+    assert 'value="admin"' not in user_select
+    assert '<option value="speaker"' not in user_select
+
+    # 3. Organizer row: Organizer and User available; Admin is not present
+    org_select = html.split(f'id="role-select-{managed_two.id}"')[1].split("</select>")[
+        0
+    ]
+    assert '<option value="organizer" selected>Organizer</option>' in org_select
+    assert '<option value="user"' in org_select
+    assert 'value="admin"' not in org_select
+    assert '<option value="speaker"' not in org_select
+
+    # 4. Speaker row: Speaker option is selected and disabled; Admin is not present
+    speaker_select = html.split(f'id="role-select-{speaker_user.id}"')[1].split(
+        "</select>"
+    )[0]
+    assert (
+        '<option value="speaker" selected disabled>Speaker</option>' in speaker_select
+    )
+    assert 'value="admin"' not in speaker_select
 
     # Script tag present
     assert '<script src="/static/js/admin_users.js"></script>' in html
