@@ -110,6 +110,32 @@ def test_dynamic_settings_override(db_session):
     assert get_setting("default_preview_preset", db=db_session) == "big_video"
 
 
+def test_preview_preset_options_includes_configured_presets(db_session, monkeypatch):
+    from app.config import PreviewPreset
+    from app.routes.admin import _get_all_settings_data
+
+    custom = dict(settings.preview_presets)
+    custom["custom_hd_preview"] = PreviewPreset(
+        name="custom_hd_preview",
+        resolution=(1280, 720),
+        video_bitrate=800_000,
+    )
+    monkeypatch.setattr(settings, "preview_presets", custom)
+
+    data = _get_all_settings_data(db_session)
+    preview_setting = next(s for s in data if s.key == "default_preview_preset")
+    option_values = [opt.value for opt in preview_setting.options]
+
+    assert "small_video" in option_values
+    assert "big_video" in option_values
+    assert "custom_hd_preview" in option_values
+
+    custom_opt = next(
+        opt for opt in preview_setting.options if opt.value == "custom_hd_preview"
+    )
+    assert "1280x720" in custom_opt.label
+
+
 def test_secrets_exclusion(db_session):
     # Attempting to override a secret key in DB should be ignored by get_setting
     override = models.SystemSetting(
@@ -127,11 +153,17 @@ def test_secrets_exclusion(db_session):
 
 def test_validate_system_setting():
     # Valid values
+    _validate_system_setting("detect_duration_tolerance_seconds", "60.0")
     _validate_system_setting("detect_duration_tolerance_seconds", "120.0")
+    _validate_system_setting("detect_duration_tolerance_seconds", "1800.0")
     _validate_system_setting("loudness_target_lufs", "-23.0")
     _validate_system_setting("default_preview_preset", "big_video")
     for preset_name in ("480p", "720p", "1080p_default", "1440p"):
         _validate_system_setting("default_transcode_preset", preset_name)
+
+    # Mixed-case keys must be accepted and normalized
+    _validate_system_setting("Detect_Duration_Tolerance_Seconds", "120.0")
+    _validate_system_setting("DEFAULT_PREVIEW_PRESET", "big_video")
 
     # Excluded secret
     for secret in EXCLUDED_SETTING_KEYS:
@@ -143,12 +175,10 @@ def test_validate_system_setting():
     with pytest.raises(HTTPException):
         _validate_system_setting("unknown_arbitrary_key", "foo")
 
-    # Negative tolerance
-    with pytest.raises(HTTPException):
-        _validate_system_setting("detect_duration_tolerance_seconds", "-10.0")
-
-    with pytest.raises(HTTPException):
-        _validate_system_setting("detect_duration_tolerance_seconds", "invalid_num")
+    # Tolerance out-of-range (below 60.0 or above 1800.0)
+    for bad_tol in ("-10.0", "0.0", "59.9", "1800.1", "invalid_num"):
+        with pytest.raises(HTTPException):
+            _validate_system_setting("detect_duration_tolerance_seconds", bad_tol)
 
     # Invalid LUFS (outside -70 to 0)
     with pytest.raises(HTTPException):

@@ -21,6 +21,7 @@ from app.config import (
     EXCLUDED_SETTING_KEYS,
     PREVIEW_PRESETS,
     SYSTEM_SETTING_DEFINITIONS,
+    SettingDefinition,
     settings,
 )
 from app.db import get_db
@@ -33,6 +34,63 @@ router = APIRouter(
     tags=["admin"],
     dependencies=[Depends(require_admin)],
 )
+
+
+def _get_setting_options(
+    key: str, defn: SettingDefinition | None
+) -> list[schemas.SystemSettingOption]:
+    if not defn:
+        return []
+    options = [
+        schemas.SystemSettingOption(value=v, label=lbl) for v, lbl in defn.options
+    ]
+    if key == "default_preview_preset":
+        existing_keys = {opt.value for opt in options}
+        for k, p in settings.preview_presets.items():
+            if k not in existing_keys:
+                res = (
+                    f" ({p.resolution[0]}x{p.resolution[1]})"
+                    if hasattr(p, "resolution")
+                    else ""
+                )
+                options.append(schemas.SystemSettingOption(value=k, label=f"{k}{res}"))
+    return options
+
+
+def _get_all_settings_data(db: Session) -> list[schemas.SystemSettingRead]:
+    db_rows = {s.key: s for s in db.query(models.SystemSetting).all()}
+    results: list[schemas.SystemSettingRead] = []
+
+    for def_key, defn in SYSTEM_SETTING_DEFINITIONS.items():
+        row = db_rows.get(def_key)
+        current_value = row.value if row else str(defn.default_value)
+        try:
+            is_overridden = row is not None and (
+                float(row.value) != float(defn.default_value)
+                if defn.value_type is float
+                else row.value != str(defn.default_value)
+            )
+        except ValueError, TypeError:
+            is_overridden = True
+
+        results.append(
+            schemas.SystemSettingRead(
+                key=def_key,
+                title=defn.title,
+                value=current_value,
+                description=defn.description,
+                updated_at=row.updated_at if row else None,
+                is_overridden=is_overridden,
+                default_value=str(defn.default_value),
+                options=_get_setting_options(def_key, defn),
+                input_type=defn.input_type,
+                min_value=defn.min_value,
+                max_value=defn.max_value,
+                step=defn.step,
+            )
+        )
+
+    return results
 
 
 @router.get("", response_class=HTMLResponse)
@@ -182,29 +240,33 @@ def _validate_system_setting(key: str, value: str) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Setting '{key}' is a protected credential or infrastructure parameter and cannot be modified dynamically.",
         )
-    if key not in SYSTEM_SETTING_DEFINITIONS:
+    if norm not in SYSTEM_SETTING_DEFINITIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Setting '{key}' is not a recognized platform setting.",
         )
 
+    defn = SYSTEM_SETTING_DEFINITIONS[norm]
+
     try:
-        if key == "detect_duration_tolerance_seconds":
+        if norm == "detect_duration_tolerance_seconds":
             v = float(value)
-            if not math.isfinite(v) or v < 0:
+            min_val = defn.min_value if defn.min_value is not None else 60.0
+            max_val = defn.max_value if defn.max_value is not None else 1800.0
+            if not math.isfinite(v) or not (min_val <= v <= max_val):
                 raise ValueError
-        elif key == "loudness_target_lufs":
+        elif norm == "loudness_target_lufs":
             v = float(value)
             if not math.isfinite(v) or not (-70.0 <= v <= 0.0):
                 raise ValueError
-        elif key == "default_preview_preset":
+        elif norm == "default_preview_preset":
             valid = set(settings.preview_presets.keys()) | set(PREVIEW_PRESETS.keys())
             if value not in valid:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"default_preview_preset must be one of: {sorted(valid)}",
                 )
-        elif key == "default_transcode_preset":
+        elif norm == "default_transcode_preset":
             valid_transcode = ("480p", "720p", "1080p_default", "1440p")
             # ("4k_master",) commented out for now
             if value not in valid_transcode:
@@ -214,50 +276,11 @@ def _validate_system_setting(key: str, value: str) -> None:
                 )
     except ValueError:
         detail = (
-            "detect_duration_tolerance_seconds must be a finite non-negative number"
-            if key == "detect_duration_tolerance_seconds"
+            f"detect_duration_tolerance_seconds must be a finite number between {defn.min_value} and {defn.max_value}"
+            if norm == "detect_duration_tolerance_seconds"
             else "loudness_target_lufs must be a finite float between -70.0 and 0.0"
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
-
-
-def _get_all_settings_data(db: Session) -> list[schemas.SystemSettingRead]:
-    db_rows = {s.key: s for s in db.query(models.SystemSetting).all()}
-    results: list[schemas.SystemSettingRead] = []
-
-    for def_key, defn in SYSTEM_SETTING_DEFINITIONS.items():
-        row = db_rows.get(def_key)
-        current_value = row.value if row else str(defn.default_value)
-        try:
-            is_overridden = row is not None and (
-                float(row.value) != float(defn.default_value)
-                if defn.value_type is float
-                else row.value != str(defn.default_value)
-            )
-        except ValueError, TypeError:
-            is_overridden = True
-
-        results.append(
-            schemas.SystemSettingRead(
-                key=def_key,
-                title=defn.title,
-                value=current_value,
-                description=defn.description,
-                updated_at=row.updated_at if row else None,
-                is_overridden=is_overridden,
-                default_value=str(defn.default_value),
-                options=[
-                    schemas.SystemSettingOption(value=v, label=lbl)
-                    for v, lbl in defn.options
-                ],
-                input_type=defn.input_type,
-                min_value=defn.min_value,
-                max_value=defn.max_value,
-                step=defn.step,
-            )
-        )
-
-    return results
 
 
 @router.get("/settings", response_class=HTMLResponse)
@@ -424,6 +447,7 @@ def _upsert_setting(
             detail="Setting key cannot exceed 255 characters",
         )
     _validate_system_setting(key, value)
+    key = key.lower()
 
     setting = db.get(models.SystemSetting, key)
     desc = (description.strip() if description else None) or (
@@ -477,12 +501,7 @@ async def update_setting(
             updated_at=setting.updated_at,
             is_overridden=True,
             default_value=str(defn.default_value) if defn else None,
-            options=[
-                schemas.SystemSettingOption(value=v, label=lbl)
-                for v, lbl in defn.options
-            ]
-            if defn
-            else [],
+            options=_get_setting_options(setting.key, defn),
             input_type=defn.input_type if defn else "select",
             min_value=defn.min_value if defn else None,
             max_value=defn.max_value if defn else None,
@@ -555,6 +574,7 @@ async def reset_setting(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
 ):
+    key = key.strip().lower()
     setting = db.get(models.SystemSetting, key)
     if setting:
         db.delete(setting)

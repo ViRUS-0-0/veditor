@@ -280,7 +280,10 @@
 }
 
 html[data-sidebar="collapsed"] .settings-bottom-dock,
-html[data-sidebar="hidden"] .settings-bottom-dock,
+html[data-sidebar="hidden"] .settings-bottom-dock {
+  left: 0;
+}
+
 @media (max-width: 850px) {
   .settings-bottom-dock {
     left: 0;

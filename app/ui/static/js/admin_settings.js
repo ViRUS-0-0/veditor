@@ -6,18 +6,20 @@ document.addEventListener("DOMContentLoaded", () => {
   const badge = document.getElementById("badge-detect_duration_tolerance_seconds");
   const presetPills = document.querySelectorAll(".preset-pill");
 
-  function syncTolerance(index) {
+  function syncTolerance(index, updateInput = true) {
     const idx = Math.max(0, Math.min(PRESET_VALUES.length - 1, index));
     const sec = PRESET_VALUES[idx];
     if (slider) slider.value = idx;
-    if (hiddenInput) hiddenInput.value = sec.toFixed(1);
-    if (readout) readout.textContent = `${Math.round(sec / 60)} mins${sec === 300 ? " (Default)" : ""}`;
+    if (updateInput && hiddenInput) hiddenInput.value = sec.toFixed(1);
+    const effectiveSec = updateInput ? sec : (parseFloat(hiddenInput?.value) || sec);
+    if (readout) readout.textContent = `${Math.round(effectiveSec / 60)} mins${effectiveSec === 300 ? " (Default)" : ""}`;
     if (badge) {
-      const isDef = sec === 300;
+      const isDef = effectiveSec === 300;
       badge.className = `setting-badge ${isDef ? "badge-default" : "badge-custom"}`;
       badge.textContent = isDef ? "System Default" : "Custom Override";
     }
-    presetPills.forEach((p) => p.classList.toggle("active", Number(p.dataset.index) === idx));
+    const isExact = PRESET_VALUES.includes(effectiveSec);
+    presetPills.forEach((p) => p.classList.toggle("active", isExact && Number(p.dataset.index) === idx));
   }
 
   if (slider && hiddenInput) {
@@ -25,7 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const initialIdx = PRESET_VALUES.reduce((closest, val, i, arr) =>
       Math.abs(val - initialSec) < Math.abs(arr[closest] - initialSec) ? i : closest, 2
     );
-    syncTolerance(initialIdx);
+    syncTolerance(initialIdx, false);
     slider.addEventListener("input", (e) => syncTolerance(parseInt(e.target.value, 10)));
   }
 

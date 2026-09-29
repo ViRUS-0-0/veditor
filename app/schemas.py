@@ -456,9 +456,3 @@ class SystemSettingRead(BaseModel):
     step: float | None = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class SystemSettingUpdate(BaseModel):
-    key: str = Field(..., min_length=1, max_length=255)
-    value: str
-    description: str | None = None

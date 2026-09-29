@@ -29,9 +29,9 @@ from app.ingest import validate_media_file
 from app.models import Job, Talk
 from app.pipeline.concat import concat
 from app.pipeline.cut import cut
-from app.pipeline.detect import detect
+from app.pipeline.detect import DETECT_DURATION_TOLERANCE_SECONDS, detect
 from app.pipeline.intro import generate_intro_clip
-from app.pipeline.loudness import normalize
+from app.pipeline.loudness import DEFAULT_TARGET_LUFS, normalize
 from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
@@ -250,9 +250,10 @@ def job_detect(talk_id: int, raw_key: str) -> None:
                 get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
             )
 
+        # Omit parameter when default to preserve pipeline default and mock compatibility
         detect_kwargs = (
             {"tolerance_seconds": tolerance_seconds}
-            if tolerance_seconds != 300.0
+            if tolerance_seconds != DETECT_DURATION_TOLERANCE_SECONDS
             else {}
         )
         raw_path = storage.get(raw_key)
@@ -827,7 +828,10 @@ def job_loudness(talk_id: int, cut_key: str, loud_key: str | None = None) -> Non
             job_id = job.id
             target_lufs = float(get_setting("loudness_target_lufs", -16.0, db=db))
 
-        loud_kwargs = {"target_lufs": target_lufs} if target_lufs != -16.0 else {}
+        # Omit parameter when default to preserve pipeline default and mock compatibility
+        loud_kwargs = (
+            {"target_lufs": target_lufs} if target_lufs != DEFAULT_TARGET_LUFS else {}
+        )
         cut_path = storage.get(cut_key)
 
         with tempfile.TemporaryDirectory(dir=_get_scratch_dir(storage)) as tmpdir:
