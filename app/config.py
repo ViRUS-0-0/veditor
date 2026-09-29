@@ -186,9 +186,11 @@ SYSTEM_SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
         default_value="1080p_default",
         value_type=str,
         options=(
-            ("1080p_default", "Full HD (1080p, High Quality) - Default"),
+            ("480p", "SD (480p)"),
             ("720p", "HD (720p, Standard)"),
-            ("4k_master", "Ultra HD (4K Master)"),
+            ("1080p_default", "Full HD (1080p, High Quality) - Default"),
+            ("1440p", "QHD (1440p)"),
+            # ("4k_master", "Ultra HD (4K Master)"),
         ),
     ),
 }

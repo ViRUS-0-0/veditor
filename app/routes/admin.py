@@ -205,10 +205,12 @@ def _validate_system_setting(key: str, value: str) -> None:
                     detail=f"default_preview_preset must be one of: {sorted(valid)}",
                 )
         elif key == "default_transcode_preset":
-            if value not in ("1080p_default", "720p", "4k_master"):
+            valid_transcode = ("480p", "720p", "1080p_default", "1440p")
+            # ("4k_master",) commented out for now
+            if value not in valid_transcode:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="default_transcode_preset must be one of: ['1080p_default', '720p', '4k_master']",
+                    detail=f"default_transcode_preset must be one of: {list(valid_transcode)}",
                 )
     except ValueError:
         detail = (

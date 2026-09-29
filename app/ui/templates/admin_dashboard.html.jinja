@@ -111,7 +111,7 @@
             {% if s.key == 'detect_duration_tolerance_seconds' %}±{{ (s.value|float / 60)|int }} mins
             {% elif s.key == 'loudness_target_lufs' %}{{ s.value|float|round(1) }} LUFS
             {% elif s.key == 'default_preview_preset' %}{{ 'High Detail (640x360)' if s.value == 'big_video' else 'Standard (320x180)' }}
-            {% elif s.key == 'default_transcode_preset' %}{{ 'HD (720p)' if s.value == '720p' else ('Ultra HD (4K)' if s.value == '4k_master' else 'Full HD (1080p)') }}
+            {% elif s.key == 'default_transcode_preset' %}{{ 'SD (480p)' if s.value == '480p' else ('HD (720p)' if s.value == '720p' else ('QHD (1440p)' if s.value == '1440p' else 'Full HD (1080p)')) }}
             {% else %}{{ s.value }}{% endif %}
           </span>
         </div>

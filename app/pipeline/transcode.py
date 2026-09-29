@@ -36,15 +36,17 @@ class TranscodePreset:
     threads: int | None = None
 
 
-PRESET_1080P_DEFAULT = TranscodePreset(
-    name="1080p_default",
+PRESET_480P = TranscodePreset(
+    name="480p",
     video_codec="libx264",
-    crf=22,
+    crf=24,
     preset_speed="medium",
     audio_codec="aac",
-    audio_bitrate=192_000,
+    audio_bitrate=128_000,
     container_format="mp4",
     pix_fmt="yuv420p",
+    max_width=854,
+    max_height=480,
 )
 
 PRESET_720P = TranscodePreset(
@@ -60,16 +62,43 @@ PRESET_720P = TranscodePreset(
     max_height=720,
 )
 
-PRESET_4K_MASTER = TranscodePreset(
-    name="4k_master",
+PRESET_1080P_DEFAULT = TranscodePreset(
+    name="1080p_default",
     video_codec="libx264",
-    crf=20,
-    preset_speed="slow",
+    crf=22,
+    preset_speed="medium",
+    audio_codec="aac",
+    audio_bitrate=192_000,
+    container_format="mp4",
+    pix_fmt="yuv420p",
+    max_width=1920,
+    max_height=1080,
+)
+
+PRESET_1440P = TranscodePreset(
+    name="1440p",
+    video_codec="libx264",
+    crf=21,
+    preset_speed="medium",
     audio_codec="aac",
     audio_bitrate=256_000,
     container_format="mp4",
     pix_fmt="yuv420p",
+    max_width=2560,
+    max_height=1440,
 )
+
+# 4K master preset commented out for now:
+# PRESET_4K_MASTER = TranscodePreset(
+#     name="4k_master",
+#     video_codec="libx264",
+#     crf=20,
+#     preset_speed="slow",
+#     audio_codec="aac",
+#     audio_bitrate=256_000,
+#     container_format="mp4",
+#     pix_fmt="yuv420p",
+# )
 
 
 def transcode(

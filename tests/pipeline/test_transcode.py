@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 
 from app.pipeline.transcode import (
+    PRESET_480P,
     PRESET_720P,
     PRESET_1080P_DEFAULT,
+    PRESET_1440P,
     TranscodePreset,
     transcode,
 )
@@ -61,6 +63,52 @@ def test_transcode_with_preset_scaling(tmp_path: Path):
     assert info.resolution is not None
     assert info.resolution[0] <= 1280
     assert info.resolution[1] <= 720
+
+
+def test_transcode_with_480p_scaling(tmp_path: Path):
+    """Verify transcoding with 480p preset respects scaling parameters."""
+    source_clip = generate_clip(
+        2.0,
+        has_video=True,
+        has_audio=True,
+        resolution=(1920, 1080),
+        output_dir=tmp_path,
+    )
+    output_clip = tmp_path / "transcoded_480p.mp4"
+
+    transcode(source_clip, output_clip, preset=PRESET_480P)
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+    info = open_and_inspect(output_clip)
+    assert info.has_video is True
+    assert info.resolution is not None
+    assert info.resolution[0] <= 854
+    assert info.resolution[1] <= 480
+
+
+def test_transcode_with_1440p_preset(tmp_path: Path):
+    """Verify transcoding with 1440p preset produces valid output."""
+    source_clip = generate_clip(
+        1.5,
+        has_video=True,
+        has_audio=True,
+        resolution=(1280, 720),
+        output_dir=tmp_path,
+    )
+    output_clip = tmp_path / "transcoded_1440p.mp4"
+
+    transcode(source_clip, output_clip, preset=PRESET_1440P)
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+    info = open_and_inspect(output_clip)
+    assert info.has_video is True
+    assert info.resolution is not None
+    assert info.resolution[0] <= 2560
+    assert info.resolution[1] <= 1440
 
 
 def test_transcode_progress_callback(tmp_path: Path):

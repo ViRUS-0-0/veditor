@@ -36,9 +36,11 @@ from app.pipeline.outro import generate_outro_clip
 from app.pipeline.preview import generate_preview
 from app.pipeline.publish import publish
 from app.pipeline.transcode import (
-    PRESET_4K_MASTER,
+    # PRESET_4K_MASTER,
+    PRESET_480P,
     PRESET_720P,
     PRESET_1080P_DEFAULT,
+    PRESET_1440P,
     transcode,
 )
 from app.pipeline.waveform import extract_waveform_peaks
@@ -57,9 +59,11 @@ from app.storage import (
 )
 
 TRANSCODE_PRESETS = {
-    "1080p_default": PRESET_1080P_DEFAULT,
+    "480p": PRESET_480P,
     "720p": PRESET_720P,
-    "4k_master": PRESET_4K_MASTER,
+    "1080p_default": PRESET_1080P_DEFAULT,
+    "1440p": PRESET_1440P,
+    # "4k_master": PRESET_4K_MASTER,
 }
 
 

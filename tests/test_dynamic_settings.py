@@ -130,7 +130,8 @@ def test_validate_system_setting():
     _validate_system_setting("detect_duration_tolerance_seconds", "120.0")
     _validate_system_setting("loudness_target_lufs", "-23.0")
     _validate_system_setting("default_preview_preset", "big_video")
-    _validate_system_setting("default_transcode_preset", "720p")
+    for preset_name in ("480p", "720p", "1080p_default", "1440p"):
+        _validate_system_setting("default_transcode_preset", preset_name)
 
     # Excluded secret
     for secret in EXCLUDED_SETTING_KEYS:
@@ -161,6 +162,8 @@ def test_validate_system_setting():
 
     with pytest.raises(HTTPException):
         _validate_system_setting("default_transcode_preset", "unknown_transcode_xyz")
+    with pytest.raises(HTTPException):
+        _validate_system_setting("default_transcode_preset", "4k_master")
 
     # NaN and Inf injection must be rejected
     for bad_val in ("nan", "NaN", "NAN", "inf", "Inf", "-inf", "+inf"):
