@@ -40,7 +40,7 @@ PRESET_1080P_DEFAULT = TranscodePreset(
     name="1080p_default",
     video_codec="libx264",
     crf=22,
-    preset_speed="medium",
+    preset_speed="veryfast",
     audio_codec="aac",
     audio_bitrate=192_000,
     container_format="mp4",
@@ -78,6 +78,8 @@ def transcode(
     preset: TranscodePreset | None = None,
     on_progress: Callable[[float], None] | None = None,
     threads: int | None = None,
+    start_seconds: float = 0.0,
+    end_seconds: float | None = None,
 ) -> None:
     """Encode media to final publish quality using the given preset.
 
@@ -87,6 +89,8 @@ def transcode(
         preset: Target transcode preset (defaults to PRESET_1080P_DEFAULT).
         on_progress: Optional callback invoked periodically with completion ratio (0.0 to 1.0).
         threads: Optional thread count limit for the video encoder.
+        start_seconds: Optional start timestamp in seconds (defaults to 0.0).
+        end_seconds: Optional end timestamp in seconds.
 
     Raises:
         FileNotFoundError: If input_path does not exist.
@@ -97,6 +101,13 @@ def transcode(
 
     if not in_path.is_file():
         raise FileNotFoundError(f"Input file not found: {in_path}")
+
+    if start_seconds < 0:
+        raise ValueError(f"start_seconds must be non-negative: {start_seconds}")
+    if end_seconds is not None and end_seconds <= start_seconds:
+        raise ValueError(
+            f"end_seconds ({end_seconds}) must be greater than start_seconds ({start_seconds})"
+        )
 
     active_preset = preset or PRESET_1080P_DEFAULT
 
@@ -109,6 +120,12 @@ def transcode(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     with av.open(str(in_path)) as in_container:
+        if start_seconds > 0.0:
+            in_container.seek(
+                int(start_seconds * av.time_base),
+                backward=True,
+                any_frame=False,
+            )
         video_streams = list(in_container.streams.video)
         audio_streams = list(in_container.streams.audio)
 
@@ -219,11 +236,27 @@ def transcode(
             video_frame_count = 0
             audio_sample_count = 0
             stream_first_pts: dict[int, float] = {}
+            streams_past_end: set[int] = set()
             last_reported_pct = 0.0
 
+            total_duration_s = (
+                (end_seconds - start_seconds)
+                if end_seconds is not None
+                else (
+                    in_duration_s - start_seconds
+                    if in_duration_s > start_seconds
+                    else in_duration_s
+                )
+            )
+
             for packet in in_container.demux(*streams_to_demux):
+                if len(streams_past_end) >= len(streams_to_demux):
+                    break
+                if packet.stream.index in streams_past_end:
+                    continue
+
                 # Progress calculation relative to stream start timestamp throttled to >= 2% delta
-                if on_progress and in_duration_s > 0:
+                if on_progress and total_duration_s > 0:
                     ts = packet.pts if packet.pts is not None else packet.dts
                     if ts is not None:
                         stream_idx = packet.stream.index
@@ -239,7 +272,7 @@ def transcode(
                         elapsed_s = max(
                             0.0, current_ts_s - stream_first_pts[stream_idx]
                         )
-                        pct = min(0.99, max(0.0, elapsed_s / in_duration_s))
+                        pct = min(0.99, max(0.0, elapsed_s / total_duration_s))
                         reported_pct = round(pct, 4)
                         if reported_pct > last_reported_pct:
                             on_progress(reported_pct)
@@ -247,6 +280,26 @@ def transcode(
 
                 if packet.stream.type == "video" and out_video is not None:
                     for frame in packet.decode():
+                        time_base = (
+                            float(frame.time_base)
+                            if frame.time_base is not None
+                            else (
+                                float(packet.stream.time_base)
+                                if packet.stream.time_base is not None
+                                else 1.0
+                            )
+                        )
+                        frame_time_s = (
+                            float(frame.pts * time_base)
+                            if frame.pts is not None
+                            else (float(frame.time) if frame.time is not None else 0.0)
+                        )
+                        if end_seconds is not None and frame_time_s > end_seconds:
+                            streams_past_end.add(packet.stream.index)
+                            break
+                        if frame_time_s < start_seconds:
+                            continue
+
                         if frame.format.name != active_preset.pix_fmt:
                             frame = frame.reformat(format=active_preset.pix_fmt)
                         frame.pts = video_frame_count
@@ -257,6 +310,26 @@ def transcode(
 
                 elif packet.stream.type == "audio" and out_audio is not None:
                     for frame in packet.decode():
+                        time_base = (
+                            float(frame.time_base)
+                            if frame.time_base is not None
+                            else (
+                                float(packet.stream.time_base)
+                                if packet.stream.time_base is not None
+                                else 1.0
+                            )
+                        )
+                        frame_time_s = (
+                            float(frame.pts * time_base)
+                            if frame.pts is not None
+                            else (float(frame.time) if frame.time is not None else 0.0)
+                        )
+                        if end_seconds is not None and frame_time_s > end_seconds:
+                            streams_past_end.add(packet.stream.index)
+                            break
+                        if frame_time_s < start_seconds:
+                            continue
+
                         frame.pts = audio_sample_count
                         frame.time_base = Fraction(1, sample_rate)
                         audio_sample_count += frame.samples

@@ -259,3 +259,50 @@ def test_add_video_stream_fallback_preserves_options_and_defaults_preset():
     container_3.add_stream.assert_called_with(
         "libx264", rate=24, options={"preset": "medium", "threads": "1"}
     )
+
+
+def test_cut_stream_copy_succeeds_without_fallback_when_keyframe_far(tmp_path: Path):
+    """Verify stream copy succeeds even when keyframe distance from start > 0.5s."""
+    # Synthetic clips have keyframes at ~2s intervals
+    source_clip = generate_clip(8.0, output_dir=tmp_path)
+    output_clip = tmp_path / "cut_stream_copy_distant.mp4"
+
+    strategy = cut(
+        source_clip,
+        output_clip,
+        start_seconds=3.0,
+        end_seconds=6.0,
+    )
+
+    assert strategy == CutStrategy.STREAM_COPY
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+
+def test_cut_reencode_uses_ultrafast_preset(tmp_path: Path):
+    """Verify forced re-encode uses the ultrafast preset."""
+    from unittest.mock import patch
+
+    source_clip = generate_clip(2.0, output_dir=tmp_path)
+    output_clip = tmp_path / "cut_ultrafast.mp4"
+
+    captured_options = {}
+
+    real_add_video = _add_video_stream
+
+    def fake_add_video(container, preferred_encoder, rate, options=None):
+        if options:
+            captured_options.update(options)
+        return real_add_video(container, preferred_encoder, rate, options=options)
+
+    with patch("app.pipeline.cut._add_video_stream", side_effect=fake_add_video):
+        strategy = cut(
+            source_clip,
+            output_clip,
+            start_seconds=0.2,
+            end_seconds=1.2,
+            force_reencode=True,
+        )
+
+    assert strategy == CutStrategy.RE_ENCODE
+    assert captured_options.get("preset") == "ultrafast"

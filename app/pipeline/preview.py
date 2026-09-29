@@ -1,3 +1,4 @@
+from fractions import Fraction
 from pathlib import Path
 
 import av
@@ -10,6 +11,8 @@ def generate_preview(
     output_path: Path,
     preset: PreviewPreset,
     threads: int | None = None,
+    start_seconds: float = 0.0,
+    end_seconds: float | None = None,
 ) -> None:
     """
     Generate a low-resolution review clip from an input recording using PyAV.
@@ -19,6 +22,12 @@ def generate_preview(
     """
     if threads is not None and threads <= 0:
         raise ValueError(f"threads must be greater than zero: {threads}")
+    if start_seconds < 0:
+        raise ValueError(f"start_seconds must be non-negative: {start_seconds}")
+    if end_seconds is not None and end_seconds <= start_seconds:
+        raise ValueError(
+            f"end_seconds ({end_seconds}) must be greater than start_seconds ({start_seconds})"
+        )
 
     container_options = (
         {"movflags": "faststart"} if output_path.suffix.lower() == ".mp4" else {}
@@ -27,6 +36,12 @@ def generate_preview(
         av.open(str(input_path)) as in_container,
         av.open(str(output_path), mode="w", options=container_options) as out_container,
     ):
+        if start_seconds > 0.0:
+            in_container.seek(
+                int(start_seconds * av.time_base),
+                backward=True,
+                any_frame=False,
+            )
         in_video = in_container.streams.video[0] if in_container.streams.video else None
         in_audio = in_container.streams.audio[0] if in_container.streams.audio else None
 
@@ -38,6 +53,7 @@ def generate_preview(
         width, height = preset.resolution
 
         stride = 1
+        fps = 24
         if in_video:
             raw_fps = float(in_video.guessed_rate or in_video.average_rate or 24)
             stride = max(1, round(raw_fps / 24.0)) if raw_fps > 30.0 else 1
@@ -62,19 +78,53 @@ def generate_preview(
 
         streams = [s for s in (in_video, in_audio) if s is not None]
         video_frame_count = 0
+        input_frame_count = 0
+        audio_sample_count = 0
+        streams_past_end: set[int] = set()
         for packet in in_container.demux(*streams):
+            if len(streams_past_end) >= len(streams):
+                break
+            if packet.stream.index in streams_past_end:
+                continue
+
             for frame in packet.decode():
+                time_base = (
+                    float(frame.time_base)
+                    if frame.time_base is not None
+                    else (
+                        float(packet.stream.time_base)
+                        if packet.stream.time_base is not None
+                        else 1.0
+                    )
+                )
+                frame_time_s = (
+                    float(frame.pts * time_base)
+                    if frame.pts is not None
+                    else (float(frame.time) if frame.time is not None else 0.0)
+                )
+                if end_seconds is not None and frame_time_s > end_seconds:
+                    streams_past_end.add(packet.stream.index)
+                    break
+                if frame_time_s < start_seconds:
+                    continue
+
                 if packet.stream.type == "video" and out_video:
-                    skip = stride > 1 and (video_frame_count % stride != 0)
-                    video_frame_count += 1
+                    skip = stride > 1 and (input_frame_count % stride != 0)
+                    input_frame_count += 1
                     if skip:
                         continue
                     reformatted = frame.reformat(
                         width=width, height=height, format="yuv420p"
                     )
+                    reformatted.pts = video_frame_count
+                    reformatted.time_base = Fraction(1, fps)
+                    video_frame_count += 1
                     for out_pkt in out_video.encode(reformatted):
                         out_container.mux(out_pkt)
                 elif packet.stream.type == "audio" and out_audio:
+                    frame.pts = audio_sample_count
+                    frame.time_base = Fraction(1, in_audio.rate or 44100)
+                    audio_sample_count += frame.samples
                     for out_pkt in out_audio.encode(frame):
                         out_container.mux(out_pkt)
 

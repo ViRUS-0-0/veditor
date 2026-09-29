@@ -297,3 +297,52 @@ def test_transcode_rejects_invalid_threads(tmp_path: Path):
     invalid_preset_neg = replace(PRESET_1080P_DEFAULT, threads=-2)
     with pytest.raises(ValueError, match="threads must be greater than zero"):
         transcode(source_clip, output_clip, preset=invalid_preset_neg)
+
+
+def test_preset_1080p_default_preset_speed():
+    """Verify PRESET_1080P_DEFAULT uses veryfast preset speed."""
+    assert PRESET_1080P_DEFAULT.preset_speed == "veryfast"
+
+
+def test_transcode_start_and_end_seconds(tmp_path: Path):
+    """Verify transcoding with start_seconds and end_seconds windows the output properly."""
+    source_clip = generate_clip(
+        6.0, has_video=True, has_audio=True, output_dir=tmp_path
+    )
+    output_clip = tmp_path / "transcoded_windowed.mp4"
+
+    transcode(
+        source_clip,
+        output_clip,
+        start_seconds=1.5,
+        end_seconds=4.5,
+    )
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+    info_out = open_and_inspect(output_clip)
+    assert info_out.has_video is True
+    assert info_out.has_audio is True
+    assert info_out.duration is not None
+    # 4.5 - 1.5 = 3.0s window
+    assert abs(info_out.duration - 3.0) <= 0.8
+
+
+def test_transcode_invalid_start_end_bounds(tmp_path: Path):
+    """Verify negative start_seconds and inverted end_seconds raise ValueError."""
+    source_clip = generate_clip(2.0, output_dir=tmp_path)
+    output_clip = tmp_path / "out.mp4"
+
+    with pytest.raises(ValueError, match="start_seconds must be non-negative"):
+        transcode(source_clip, output_clip, start_seconds=-1.0)
+
+    with pytest.raises(
+        ValueError, match="end_seconds .* must be greater than start_seconds"
+    ):
+        transcode(source_clip, output_clip, start_seconds=2.0, end_seconds=1.0)
+
+    with pytest.raises(
+        ValueError, match="end_seconds .* must be greater than start_seconds"
+    ):
+        transcode(source_clip, output_clip, start_seconds=2.0, end_seconds=2.0)

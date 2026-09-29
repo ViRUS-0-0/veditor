@@ -139,29 +139,6 @@ def _cut_stream_copy(
         seek_target = int(start_seconds * av.time_base)
         in_container.seek(seek_target, backward=True, any_frame=False)
 
-        # Ensure the keyframe we sought to is close to start_seconds (< 0.5s).
-        # If the keyframe is far before start_seconds, stream copy cannot produce
-        # an accurate cut window without retaining lead-in footage.
-        if in_container.streams.video and start_seconds > 0.2:
-            first_v_pts = None
-            for packet in in_container.demux(in_container.streams.video[0]):
-                if packet.is_keyframe or packet.pts is not None:
-                    time_base = (
-                        float(packet.stream.time_base)
-                        if packet.stream.time_base is not None
-                        else (1.0 / av.time_base)
-                    )
-                    first_v_pts = float(
-                        (packet.pts if packet.pts is not None else packet.dts or 0)
-                        * time_base
-                    )
-                    break
-            if first_v_pts is not None and (start_seconds - first_v_pts > 0.5):
-                raise ValueError(
-                    f"Keyframe at {first_v_pts:.2f}s is too far from requested start {start_seconds:.2f}s; falling back to re-encode."
-                )
-            in_container.seek(seek_target, backward=True, any_frame=False)
-
         with av.open(output_path, mode="w") as out_container:
             out_streams: dict[int, av.stream.Stream] = {}
             offset_map: dict[int, int] = {}
@@ -278,7 +255,7 @@ def _cut_reencode(
                 fps = in_v.average_rate or in_v.guessed_rate or 24
                 video_options: dict[str, str] = {}
                 if encoder_name == "libx264":
-                    video_options["preset"] = "veryfast"
+                    video_options["preset"] = "ultrafast"
                 if threads is not None:
                     video_options["threads"] = str(threads)
                 out_video = _add_video_stream(
