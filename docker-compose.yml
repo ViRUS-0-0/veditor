@@ -31,7 +31,7 @@ services:
       - POSTGRES_DB=veditor
       - REDIS_URL=redis://redis:6379/0
       - 'INGEST_ROOTS=["/app/ingest"]'
-      - ENCODER_THREADS=1
+      - ENCODER_THREADS=2
     volumes:
       - veditor_data:/app/data
       - veditor_ingest:/app/ingest

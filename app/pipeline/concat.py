@@ -51,8 +51,6 @@ def _can_stream_copy(segments: list[Path]) -> bool:
                             ctx.height,
                             ctx.pix_fmt,
                             fps_val,
-                            v.time_base,
-                            bytes(ctx.extradata or b""),
                         )
                     )
 
@@ -66,8 +64,6 @@ def _can_stream_copy(segments: list[Path]) -> bool:
                             ctx.sample_rate,
                             ctx.channels,
                             fmt_name,
-                            a.time_base,
-                            bytes(ctx.extradata or b""),
                         )
                     )
 
@@ -230,7 +226,7 @@ def _concat_reencode(
     ) as out_container:
         out_video = None
         if has_video:
-            video_options: dict[str, str] = {"crf": "22", "preset": "veryfast"}
+            video_options: dict[str, str] = {"crf": "22", "preset": "ultrafast"}
             if threads is not None:
                 video_options["threads"] = str(threads)
             out_video = out_container.add_stream(

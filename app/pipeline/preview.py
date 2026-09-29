@@ -58,7 +58,7 @@ def generate_preview(
             raw_fps = float(in_video.guessed_rate or in_video.average_rate or 24)
             stride = max(1, round(raw_fps / 24.0)) if raw_fps > 30.0 else 1
             fps = max(1, round(raw_fps / stride))
-            speed_preset = getattr(preset, "preset_speed", "veryfast") or "veryfast"
+            speed_preset = getattr(preset, "preset_speed", "ultrafast") or "ultrafast"
             options = {"preset": speed_preset}
             if preset.crf is not None:
                 options["crf"] = str(preset.crf)
