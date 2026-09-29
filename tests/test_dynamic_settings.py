@@ -62,20 +62,31 @@ def test_system_setting_model_crud(db_session):
     assert db_session.get(models.SystemSetting, "test_key") is None
 
 
-def test_get_setting_fallback():
+def test_get_setting_fallback(db_session):
     # Without any DB override, should return definition default
-    val = get_setting("detect_duration_tolerance_seconds")
+    keys = (
+        "detect_duration_tolerance_seconds",
+        "loudness_target_lufs",
+        "default_preview_preset",
+        "default_transcode_preset",
+    )
+    db_session.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(keys)
+    ).delete(synchronize_session=False)
+    db_session.flush()
+
+    val = get_setting("detect_duration_tolerance_seconds", db=db_session)
     assert val == 300.0
     assert isinstance(val, float)
 
-    val_lufs = get_setting("loudness_target_lufs")
+    val_lufs = get_setting("loudness_target_lufs", db=db_session)
     assert val_lufs == -16.0
     assert isinstance(val_lufs, float)
 
-    val_preset = get_setting("default_preview_preset")
+    val_preset = get_setting("default_preview_preset", db=db_session)
     assert val_preset == "small_video"
 
-    val_transcode = get_setting("default_transcode_preset")
+    val_transcode = get_setting("default_transcode_preset", db=db_session)
     assert val_transcode == "1080p_default"
 
 
@@ -223,6 +234,23 @@ def test_cast_setting_value_rejects_nan_inf():
 def test_get_setting_fallback_default():
     val = get_setting("non_existent_key", default="fallback_val")
     assert val == "fallback_val"
+
+
+def test_get_setting_db_failure_logged(caplog):
+    from unittest.mock import MagicMock
+
+    mock_db = MagicMock()
+    mock_db.get.side_effect = RuntimeError("DB connection dropped")
+
+    with caplog.at_level("WARNING"):
+        val = get_setting("detect_duration_tolerance_seconds", db=mock_db)
+
+    assert val == 300.0
+    assert (
+        "Database lookup failed for setting 'detect_duration_tolerance_seconds'"
+        in caplog.text
+    )
+    assert "DB connection dropped" in caplog.text
 
 
 def test_pipeline_job_detect_dynamic_tolerance():

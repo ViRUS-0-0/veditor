@@ -217,9 +217,10 @@
   background-position: right 0.85rem center;
 }
 
-.setting-select:focus {
+.setting-select:focus-visible {
   outline: none;
   border-color: var(--v-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
 }
 
 .setting-slider-wrap {

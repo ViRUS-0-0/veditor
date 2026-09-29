@@ -1097,6 +1097,14 @@ def test_admin_settings_post_json(client: TestClient, db_session):
     assert data["value"] == "-20.0"
     assert data["is_overridden"] is True
 
+    # Updating setting to default value returns is_overridden == False
+    res_default = client.post(
+        "/admin/settings",
+        json={"key": "loudness_target_lufs", "value": "-16.0"},
+    )
+    assert res_default.status_code == 200
+    assert res_default.json()["is_overridden"] is False
+
     # Reset via JSON
     res = client.post(
         "/admin/settings/loudness_target_lufs/reset",

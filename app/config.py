@@ -1,3 +1,4 @@
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -5,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -250,8 +253,10 @@ def get_setting(key: str, default: Any = None, db: Any = None) -> Any:
                 row = session.get(SystemSetting, normalized_key)
         if row is not None:
             return _cast_setting_value(normalized_key, row.value, default)
-    except Exception:  # noqa: BLE001, S110
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Database lookup failed for setting '%s': %s", normalized_key, exc
+        )
 
     if default is not None:
         return default

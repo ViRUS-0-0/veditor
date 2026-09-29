@@ -57,6 +57,23 @@ def _get_setting_options(
     return options
 
 
+def _is_setting_overridden(
+    row_value: str | None, defn: SettingDefinition | None
+) -> bool:
+    if row_value is None:
+        return False
+    if defn is None:
+        return True
+    try:
+        return (
+            float(row_value) != float(defn.default_value)
+            if defn.value_type is float
+            else row_value != str(defn.default_value)
+        )
+    except ValueError, TypeError:
+        return True
+
+
 def _get_all_settings_data(db: Session) -> list[schemas.SystemSettingRead]:
     db_rows = {s.key: s for s in db.query(models.SystemSetting).all()}
     results: list[schemas.SystemSettingRead] = []
@@ -64,14 +81,7 @@ def _get_all_settings_data(db: Session) -> list[schemas.SystemSettingRead]:
     for def_key, defn in SYSTEM_SETTING_DEFINITIONS.items():
         row = db_rows.get(def_key)
         current_value = row.value if row else str(defn.default_value)
-        try:
-            is_overridden = row is not None and (
-                float(row.value) != float(defn.default_value)
-                if defn.value_type is float
-                else row.value != str(defn.default_value)
-            )
-        except ValueError, TypeError:
-            is_overridden = True
+        is_overridden = _is_setting_overridden(row.value if row else None, defn)
 
         results.append(
             schemas.SystemSettingRead(
@@ -609,7 +619,7 @@ async def update_setting(
             value=setting.value,
             description=setting.description,
             updated_at=setting.updated_at,
-            is_overridden=True,
+            is_overridden=_is_setting_overridden(setting.value, defn),
             default_value=str(defn.default_value) if defn else None,
             options=_get_setting_options(setting.key, defn),
             input_type=defn.input_type if defn else "select",
