@@ -51,6 +51,7 @@ def _can_stream_copy(segments: list[Path]) -> bool:
                             ctx.height,
                             ctx.pix_fmt,
                             fps_val,
+                            bytes(ctx.extradata or b""),
                         )
                     )
 
@@ -64,6 +65,7 @@ def _can_stream_copy(segments: list[Path]) -> bool:
                             ctx.sample_rate,
                             ctx.channels,
                             fmt_name,
+                            bytes(ctx.extradata or b""),
                         )
                     )
 
