@@ -221,7 +221,12 @@ def _cut_smart(
             v = container.streams.video[0]
             container.seek(int(K_pre * av.time_base), backward=True, any_frame=False)
             for pkt in container.demux(v):
-                for frame in pkt.decode():
+                try:
+                    decoded_frames = pkt.decode()
+                except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                    logger.warning("Skipping unparseable head packet in cut: %s", exc)
+                    continue
+                for frame in decoded_frames:
                     t = (
                         float(frame.pts * v.time_base)
                         if frame.pts is not None
@@ -243,7 +248,12 @@ def _cut_smart(
                 int(K_end_body * av.time_base), backward=True, any_frame=False
             )
             for pkt in container.demux(v):
-                for frame in pkt.decode():
+                try:
+                    decoded_frames = pkt.decode()
+                except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                    logger.warning("Skipping unparseable tail packet in cut: %s", exc)
+                    continue
+                for frame in decoded_frames:
                     t = (
                         float(frame.pts * v.time_base)
                         if frame.pts is not None
@@ -615,7 +625,14 @@ def _cut_reencode(
                 if len(streams_past_end) >= len(streams_to_demux):
                     break
 
-                for frame in packet.decode():
+                try:
+                    decoded_frames = packet.decode()
+                except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                    logger.warning(
+                        "Skipping unparseable packet in cut reencode: %s", exc
+                    )
+                    continue
+                for frame in decoded_frames:
                     time_base = (
                         float(frame.time_base) if frame.time_base is not None else 1.0
                     )

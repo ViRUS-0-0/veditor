@@ -167,7 +167,14 @@ def normalize(
                     )
 
                 elif packet.stream.type == "audio":
-                    for frame in packet.decode():
+                    try:
+                        decoded_frames = packet.decode()
+                    except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                        logger.warning(
+                            "Skipping unparseable audio packet in loudness: %s", exc
+                        )
+                        continue
+                    for frame in decoded_frames:
                         graph.push(frame)
                         while True:
                             try:

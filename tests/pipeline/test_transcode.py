@@ -374,3 +374,32 @@ def test_transcode_unified_intro_outro_loudness(tmp_path: Path):
     assert abs(info.duration - 4.0) <= 0.6
     assert "h264" in info.codec_names
     assert "aac" in info.codec_names
+
+
+def test_transcode_resilient_to_corrupt_packet(tmp_path: Path):
+    """Verify transcode ignores corrupt/unparseable video packets and completes successfully."""
+    from unittest.mock import patch
+
+    import av
+
+    source_clip = generate_clip(2.0, output_dir=tmp_path)
+    output_clip = tmp_path / "corrupt_resilient_final.mp4"
+
+    orig_decode = av.packet.Packet.decode
+    call_count = [0]
+
+    def faulty_decode(self, *args, **kwargs):
+        call_count[0] += 1
+        # Inject an InvalidDataError on the 5th packet to simulate bitstream glitch
+        if call_count[0] == 5:
+            raise av.error.InvalidDataError(1094995529, "avcodec_send_packet()")
+        return orig_decode(self, *args, **kwargs)
+
+    with patch.object(av.packet.Packet, "decode", faulty_decode):
+        transcode(source_clip, output_clip)
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+    info = open_and_inspect(output_clip)
+    assert info.duration is not None
+    assert abs(info.duration - 2.0) <= 0.5

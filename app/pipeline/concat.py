@@ -297,7 +297,12 @@ def _concat_reencode(
 
                 streams = [s for s in (v_stream, a_stream) if s is not None]
                 for packet in in_c.demux(*streams):
-                    for frame in packet.decode():
+                    try:
+                        decoded_frames = packet.decode()
+                    except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                        logger.warning("Skipping unparseable packet in concat: %s", exc)
+                        continue
+                    for frame in decoded_frames:
                         if isinstance(frame, av.VideoFrame) and out_video is not None:
                             seg_had_video = True
                             if fps_graph is not None:

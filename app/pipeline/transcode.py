@@ -430,7 +430,15 @@ def transcode(
                                 last_reported_pct = reported_pct
 
                     if packet.stream.type == "video" and out_video is not None:
-                        for frame in packet.decode():
+                        try:
+                            decoded_frames = packet.decode()
+                        except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                            logger.warning(
+                                "Skipping unparseable video packet in transcode: %s",
+                                exc,
+                            )
+                            continue
+                        for frame in decoded_frames:
                             time_base = (
                                 float(frame.time_base)
                                 if frame.time_base is not None
@@ -465,7 +473,15 @@ def transcode(
                                 emit_video_frame(frame)
 
                     elif packet.stream.type == "audio" and out_audio is not None:
-                        for frame in packet.decode():
+                        try:
+                            decoded_frames = packet.decode()
+                        except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                            logger.warning(
+                                "Skipping unparseable audio packet in transcode: %s",
+                                exc,
+                            )
+                            continue
+                        for frame in decoded_frames:
                             time_base = (
                                 float(frame.time_base)
                                 if frame.time_base is not None

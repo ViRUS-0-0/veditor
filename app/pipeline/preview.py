@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from fractions import Fraction
 from pathlib import Path
 
@@ -7,6 +8,8 @@ import av
 
 from app.config import PreviewPreset
 from app.pipeline.loudness import _mux_packet_with_monotonic_dts, rescale_pts
+
+logger = logging.getLogger(__name__)
 
 
 def generate_preview(
@@ -114,7 +117,14 @@ def generate_preview(
                 continue
 
             if packet.stream.type == "video" and out_video:
-                for frame in packet.decode():
+                try:
+                    decoded_frames = packet.decode()
+                except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                    logger.warning(
+                        "Skipping unparseable video packet in preview: %s", exc
+                    )
+                    continue
+                for frame in decoded_frames:
                     time_base = (
                         float(frame.time_base)
                         if frame.time_base is not None
@@ -181,7 +191,14 @@ def generate_preview(
                         out_container, packet, out_audio.index, last_dts
                     )
                 else:
-                    for frame in packet.decode():
+                    try:
+                        decoded_frames = packet.decode()
+                    except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                        logger.warning(
+                            "Skipping unparseable audio packet in preview: %s", exc
+                        )
+                        continue
+                    for frame in decoded_frames:
                         time_base = (
                             float(frame.time_base)
                             if frame.time_base is not None
