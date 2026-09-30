@@ -309,7 +309,12 @@ def test_cut_reencode_uses_ultrafast_preset(tmp_path: Path):
 
 
 def test_smart_cut_frame_accurate(tmp_path: Path):
-    """Verify smart cut performs frame-accurate trimming without extra lead-in footage."""
+    """Verify smart cut performs frame-accurate trimming and decodes completely without bitstream errors."""
+    import av
+
+    from app.config import PREVIEW_PRESETS
+    from app.pipeline.preview import generate_preview
+
     source_clip = generate_clip(8.0, output_dir=tmp_path)
     output_clip = tmp_path / "smart_cut.mp4"
 
@@ -323,6 +328,24 @@ def test_smart_cut_frame_accurate(tmp_path: Path):
     assert strategy == CutStrategy.SMART_CUT
     assert output_clip.is_file()
     assert_playable(output_clip)
+
+    # Exhaustively decode ALL video and audio packets across GOP boundary transitions
+    with av.open(str(output_clip)) as c:
+        v = c.streams.video[0]
+        v_decoded = sum(len(list(p.decode())) for p in c.demux(v))
+        assert v_decoded > 0
+
+    with av.open(str(output_clip)) as c:
+        a = c.streams.audio[0]
+        a_decoded = sum(len(list(p.decode())) for p in c.demux(a))
+        assert a_decoded > 0
+
+    # Ensure downstream preview generation consumes the smart-cut file without error
+    preview_clip = tmp_path / "smart_cut_preview.mp4"
+    preset = PREVIEW_PRESETS["big_video"]
+    generate_preview(output_clip, preview_clip, preset)
+    assert preview_clip.is_file()
+    assert_playable(preview_clip)
 
     info = open_and_inspect(output_clip)
     assert info.duration is not None
