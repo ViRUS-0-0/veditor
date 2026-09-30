@@ -112,18 +112,34 @@ def cut(
 
     if not force_reencode:
         try:
-            return _cut_smart(
+            strategy = _cut_smart(
                 str(in_path), str(out_path), start_seconds, end_seconds, threads=threads
             )
+            logger.info(
+                "Cut completed for %s [%.2fs -> %.2fs] using strategy: %s",
+                in_path.name,
+                start_seconds,
+                end_seconds,
+                strategy.value,
+            )
+            return strategy
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Smart cut failed (%s); falling back to full re-encode.",
                 exc,
             )
 
-    return _cut_reencode(
+    strategy = _cut_reencode(
         str(in_path), str(out_path), start_seconds, end_seconds, threads=threads
     )
+    logger.info(
+        "Cut completed for %s [%.2fs -> %.2fs] using strategy: %s",
+        in_path.name,
+        start_seconds,
+        end_seconds,
+        strategy.value,
+    )
+    return strategy
 
 
 def _cut_smart(

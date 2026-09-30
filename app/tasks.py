@@ -298,12 +298,24 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
                 if settings.encoder_threads is not None
                 else {}
             )
-            cut(
+            cut_strategy = cut(
                 raw_path,
                 tmp_out,
                 start_seconds,
                 end_seconds,
                 **cut_kwargs,
+            )
+            strat_label = (
+                getattr(cut_strategy, "value", str(cut_strategy))
+                if cut_strategy is not None
+                else "unknown"
+            )
+            logger.info(
+                "Talk %s cut complete using strategy '%s' (bounds: %.2fs - %.2fs)",
+                talk_id,
+                strat_label,
+                start_seconds,
+                end_seconds,
             )
             _cache_waveform(storage, cut_key, tmp_out)
             storage.put(cut_key, tmp_out)
