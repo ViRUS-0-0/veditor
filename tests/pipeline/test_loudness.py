@@ -141,16 +141,19 @@ def test_normalize_invalid_arguments(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         normalize(tmp_path / "nonexistent.mp4", output_clip)
 
-    with pytest.raises(ValueError, match="target_lufs must be between"):
+    with pytest.raises(ValueError, match="target_lufs must be between -70.0 and -5.0"):
+        normalize(valid_clip, output_clip, target_lufs=-4.0)
+
+    with pytest.raises(ValueError, match="target_lufs must be between -70.0 and -5.0"):
         normalize(valid_clip, output_clip, target_lufs=5.0)
 
-    with pytest.raises(ValueError, match="target_lufs must be between"):
+    with pytest.raises(ValueError, match="target_lufs must be between -70.0 and -5.0"):
         normalize(valid_clip, output_clip, target_lufs=-80.0)
 
-    with pytest.raises(ValueError, match="target_lufs must be between"):
+    with pytest.raises(ValueError, match="target_lufs must be between -70.0 and -5.0"):
         normalize(valid_clip, output_clip, target_lufs=float("nan"))
 
-    with pytest.raises(ValueError, match="target_lufs must be between"):
+    with pytest.raises(ValueError, match="target_lufs must be between -70.0 and -5.0"):
         normalize(valid_clip, output_clip, target_lufs=float("inf"))
 
     with pytest.raises(ValueError, match="Input and output paths must be different"):

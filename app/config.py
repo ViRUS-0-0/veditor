@@ -172,6 +172,8 @@ SYSTEM_SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
         description="Standardized loudness level for speech so all recorded talks have even, balanced audio.",
         default_value=-16.0,
         value_type=float,
+        min_value=-70.0,
+        max_value=-5.0,
         options=(
             ("-14.0", "Loud (-14 LUFS - for noisy venues or mobile)"),
             ("-16.0", "Standard Web (-16 LUFS - Recommended / Default)"),

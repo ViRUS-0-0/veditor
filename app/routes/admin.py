@@ -377,7 +377,7 @@ def _validate_system_setting(key: str, value: str) -> None:
                 raise ValueError
         elif norm == "loudness_target_lufs":
             v = float(value)
-            if not math.isfinite(v) or not (-70.0 <= v <= 0.0):
+            if not math.isfinite(v) or not (-70.0 <= v <= -5.0):
                 raise ValueError
         elif norm == "default_preview_preset":
             valid = set(settings.preview_presets.keys()) | set(PREVIEW_PRESETS.keys())
@@ -398,7 +398,7 @@ def _validate_system_setting(key: str, value: str) -> None:
         detail = (
             f"detect_duration_tolerance_seconds must be a finite number between {defn.min_value} and {defn.max_value}"
             if norm == "detect_duration_tolerance_seconds"
-            else "loudness_target_lufs must be a finite float between -70.0 and 0.0"
+            else "loudness_target_lufs must be a finite float between -70.0 and -5.0"
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 

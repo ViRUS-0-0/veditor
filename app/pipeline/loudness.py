@@ -56,9 +56,9 @@ def normalize(
             f"Input and output paths must be different to prevent file truncation: {in_path}"
         )
 
-    if not math.isfinite(target_lufs) or target_lufs > 0 or target_lufs < -70.0:
+    if not math.isfinite(target_lufs) or target_lufs > -5.0 or target_lufs < -70.0:
         raise ValueError(
-            f"target_lufs must be between -70.0 and 0.0, got: {target_lufs}"
+            f"target_lufs must be between -70.0 and -5.0, got: {target_lufs}"
         )
 
     # storage-boundary-exempt: creating parent directory for pipeline output

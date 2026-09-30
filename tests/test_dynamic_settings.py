@@ -191,11 +191,11 @@ def test_validate_system_setting():
         with pytest.raises(HTTPException):
             _validate_system_setting("detect_duration_tolerance_seconds", bad_tol)
 
-    # Invalid LUFS (outside -70 to 0)
-    with pytest.raises(HTTPException):
-        _validate_system_setting("loudness_target_lufs", "5.0")
-    with pytest.raises(HTTPException):
-        _validate_system_setting("loudness_target_lufs", "-80.0")
+    # Invalid LUFS (outside -70.0 to -5.0)
+    for bad_lufs in ("-4.9", "-4.0", "0.0", "5.0", "-70.1", "-80.0"):
+        with pytest.raises(HTTPException) as exc_info:
+            _validate_system_setting("loudness_target_lufs", bad_lufs)
+        assert "-70.0 and -5.0" in exc_info.value.detail
 
     # Invalid presets
     with pytest.raises(HTTPException):
@@ -353,3 +353,116 @@ def test_pipeline_job_loudness_dynamic_lufs():
 
     mock_normalize.assert_called_once()
     assert mock_normalize.call_args.kwargs.get("target_lufs") == -23.0
+
+
+def test_pipeline_job_preview_dynamic_preset():
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from app.config import PREVIEW_PRESETS
+    from app.tasks import job_preview
+
+    override = models.SystemSetting(
+        key="default_preview_preset",
+        value="big_video",
+        description="custom preview preset",
+        updated_at=datetime.now(UTC),
+    )
+
+    talk = models.Talk(
+        id=999,
+        event_id=1,
+        title="Dynamic Preview Talk",
+        start=datetime(2026, 3, 20, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 3, 20, 11, 0, tzinfo=UTC),
+        status="generating_previews",
+    )
+    job = models.Job(id=103, talk_id=999, kind="preview", status="running")
+
+    mock_preview = MagicMock()
+    mock_storage = MagicMock()
+    mock_storage.get.return_value = Path("/fake/path.mp4")
+    mock_storage.exists.return_value = False
+
+    session = MagicMock()
+    session.__enter__.return_value = session
+    session.query.return_value.filter.return_value.all.return_value = []
+
+    def mock_get(model, ident):
+        if model is models.Talk:
+            return talk
+        if model is models.Job:
+            return job
+        if model is models.SystemSetting and ident == override.key:
+            return override
+        return None
+
+    session.get.side_effect = mock_get
+
+    with (
+        patch("app.tasks.SessionLocal", return_value=session),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.generate_preview", mock_preview),
+        patch("app.tasks._cache_waveform"),
+    ):
+        job_preview(999, "999/cut/cut.mp4")
+
+    mock_preview.assert_called_once()
+    assert mock_preview.call_args.kwargs.get("preset") == PREVIEW_PRESETS["big_video"]
+    assert talk.status == "preview"
+    assert job.status == "done"
+
+
+def test_pipeline_job_transcode_dynamic_preset():
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from app.tasks import TRANSCODE_PRESETS, job_transcode
+
+    override = models.SystemSetting(
+        key="default_transcode_preset",
+        value="720p",
+        description="custom transcode preset",
+        updated_at=datetime.now(UTC),
+    )
+
+    talk = models.Talk(
+        id=999,
+        event_id=1,
+        title="Dynamic Transcode Talk",
+        start=datetime(2026, 3, 20, 10, 0, tzinfo=UTC),
+        end=datetime(2026, 3, 20, 11, 0, tzinfo=UTC),
+        status="transcoding",
+    )
+    job = models.Job(id=104, talk_id=999, kind="transcode", status="running")
+
+    mock_transcode = MagicMock()
+    mock_storage = MagicMock()
+    mock_storage.get.return_value = Path("/fake/path.mp4")
+
+    session = MagicMock()
+    session.__enter__.return_value = session
+
+    def mock_get(model, ident):
+        if model is models.Talk:
+            return talk
+        if model is models.Job:
+            return job
+        if model is models.SystemSetting and ident == override.key:
+            return override
+        return None
+
+    session.get.side_effect = mock_get
+
+    with (
+        patch("app.tasks.SessionLocal", return_value=session),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.transcode", mock_transcode),
+        patch("app.tasks.light_queue.enqueue"),
+    ):
+        job_transcode(999, "999/cut/cut_loud.mp4")
+
+    mock_transcode.assert_called_once()
+    assert mock_transcode.call_args.kwargs.get("preset") == TRANSCODE_PRESETS["720p"]
+    assert talk.status == "uploading"
+    assert job.status == "done"
