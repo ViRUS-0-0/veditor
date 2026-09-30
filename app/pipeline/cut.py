@@ -10,7 +10,6 @@ import logging
 from enum import Enum
 from fractions import Fraction
 from pathlib import Path
-from typing import Any
 
 import av
 
@@ -21,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 class CutStrategy(str, Enum):
     STREAM_COPY = "stream_copy"
-    RE_ENCODE = "re_encode"
     SMART_CUT = "smart_cut"
 
 
@@ -65,24 +63,27 @@ def cut(
     start_seconds: float,
     end_seconds: float,
     *,
-    force_reencode: bool = False,
     threads: int | None = None,
 ) -> CutStrategy:
     """Trim an input recording to the [start_seconds, end_seconds] window.
+
+    Attempts smart_cut (frame-accurate head/tail re-encode with interior stream copy).
+    If smart_cut fails, falls back to stream_copy to the nearest keyframes.
+    If stream_copy also fails, logs an error and raises RuntimeError.
 
     Args:
         input_path: Path to the raw source recording.
         output_path: Destination path for the trimmed output.
         start_seconds: Start timestamp in seconds (non-negative).
         end_seconds: End timestamp in seconds (greater than start_seconds).
-        force_reencode: If True, bypass stream-copy and perform full re-encode.
-        threads: Optional thread limit for video re-encoding fallback.
+        threads: Optional thread limit for video head/tail encoding.
 
     Returns:
-        CutStrategy: CutStrategy.STREAM_COPY, CutStrategy.RE_ENCODE, or CutStrategy.SMART_CUT.
+        CutStrategy: CutStrategy.SMART_CUT or CutStrategy.STREAM_COPY.
 
     Raises:
         ValueError: If timestamps or input paths are invalid.
+        RuntimeError: If both smart cut and stream copy fallback fail.
         FileNotFoundError: If input_path does not exist.
     """
     in_path = Path(input_path)
@@ -110,36 +111,53 @@ def cut(
     # storage-boundary-exempt: creating parent directory for pipeline output
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if not force_reencode:
-        try:
-            strategy = _cut_smart(
-                str(in_path), str(out_path), start_seconds, end_seconds, threads=threads
-            )
-            logger.info(
-                "Cut completed for %s [%.2fs -> %.2fs] using strategy: %s",
-                in_path.name,
-                start_seconds,
-                end_seconds,
-                strategy.value,
-            )
-            return strategy
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Smart cut failed (%s); falling back to full re-encode.",
-                exc,
-            )
+    smart_err: str | None = None
+    try:
+        strategy = _cut_smart(
+            str(in_path), str(out_path), start_seconds, end_seconds, threads=threads
+        )
+        logger.info(
+            "Cut completed for %s [%.2fs -> %.2fs] using strategy: %s",
+            in_path.name,
+            start_seconds,
+            end_seconds,
+            strategy.value,
+        )
+        return strategy
+    except Exception as smart_exc:  # noqa: BLE001
+        smart_err = str(smart_exc)
+        logger.warning(
+            "Smart cut failed for %s [%.2fs -> %.2fs] (%s); falling back to stream copy at nearest keyframes.",
+            in_path.name,
+            start_seconds,
+            end_seconds,
+            smart_exc,
+        )
 
-    strategy = _cut_reencode(
-        str(in_path), str(out_path), start_seconds, end_seconds, threads=threads
-    )
-    logger.info(
-        "Cut completed for %s [%.2fs -> %.2fs] using strategy: %s",
-        in_path.name,
-        start_seconds,
-        end_seconds,
-        strategy.value,
-    )
-    return strategy
+    try:
+        strategy = _cut_stream_copy(
+            str(in_path), str(out_path), start_seconds, end_seconds
+        )
+        logger.info(
+            "Cut completed for %s [%.2fs -> %.2fs] using fallback strategy: %s",
+            in_path.name,
+            start_seconds,
+            end_seconds,
+            strategy.value,
+        )
+        return strategy
+    except Exception as stream_exc:
+        logger.error(
+            "Both smart cut and stream copy fallback failed for %s [%.2fs -> %.2fs]: %s",
+            in_path.name,
+            start_seconds,
+            end_seconds,
+            stream_exc,
+        )
+        raise RuntimeError(
+            f"Trimming failed for {in_path.name} [{start_seconds:.2f}s -> {end_seconds:.2f}s]: "
+            f"smart cut failed ({smart_err}), stream copy fallback failed ({stream_exc})"
+        ) from stream_exc
 
 
 def _cut_smart(
@@ -212,8 +230,9 @@ def _cut_smart(
             next_candidates = [k for k in keyframes if k > start_seconds + epsilon]
             K_next = min(next_candidates) if next_candidates else None
             if K_next is None or K_next >= end_seconds:
-                return _cut_reencode(
-                    input_path, output_path, start_seconds, end_seconds, threads=threads
+                raise RuntimeError(
+                    f"Smart cut cannot trim interval [{start_seconds:.2f}s, {end_seconds:.2f}s]: "
+                    "no interior keyframe found between start and end bounds."
                 )
             K_start_body = K_next
 
@@ -225,8 +244,9 @@ def _cut_smart(
             K_end_body = end_seconds
         else:
             if K_last is None or K_last <= K_start_body:
-                return _cut_reencode(
-                    input_path, output_path, start_seconds, end_seconds, threads=threads
+                raise RuntimeError(
+                    f"Smart cut cannot trim interval [{start_seconds:.2f}s, {end_seconds:.2f}s]: "
+                    "interval is smaller than a single GOP (no stream-copyable interior)."
                 )
             K_end_body = K_last
 
@@ -528,173 +548,3 @@ def _cut_stream_copy(
                 out_container.mux(packet)
 
     return CutStrategy.STREAM_COPY
-
-
-def _add_video_stream(
-    container: av.container.OutputContainer,
-    preferred_encoder: str,
-    rate: Any,
-    options: dict[str, str] | None = None,
-) -> av.stream.Stream:
-    """Add a video stream with preferred encoder, falling back to libx264 if incompatible."""
-    try:
-        return container.add_stream(preferred_encoder, rate=rate, options=options)
-    except (ValueError, av.FFmpegError) as exc:
-        logger.warning(
-            "Video encoder '%s' not supported by container (%s); falling back to 'libx264'.",
-            preferred_encoder,
-            exc,
-        )
-        fallback_options = dict(options) if options else {}
-        fallback_options.setdefault("preset", "veryfast")
-        return container.add_stream("libx264", rate=rate, options=fallback_options)
-
-
-def _add_audio_stream(
-    container: av.container.OutputContainer,
-    preferred_encoder: str,
-    rate: int,
-) -> av.stream.Stream:
-    """Add an audio stream with preferred encoder, falling back to aac if incompatible."""
-    try:
-        return container.add_stream(preferred_encoder, rate=rate)
-    except (ValueError, av.FFmpegError) as exc:
-        logger.warning(
-            "Audio encoder '%s' not supported by container (%s); falling back to 'aac'.",
-            preferred_encoder,
-            exc,
-        )
-        return container.add_stream("aac", rate=rate)
-
-
-def _cut_reencode(
-    input_path: str,
-    output_path: str,
-    start_seconds: float,
-    end_seconds: float,
-    threads: int | None = None,
-) -> CutStrategy:
-    """Full frame decode and re-encode fallback."""
-    with av.open(input_path) as in_container:
-        video_streams = list(in_container.streams.video)
-        audio_streams = list(in_container.streams.audio)
-
-        if not video_streams and not audio_streams:
-            raise ValueError(f"No audio or video streams found in {input_path}")
-
-        # Seek to start
-        seek_target = int(start_seconds * av.time_base)
-        in_container.seek(seek_target, backward=True, any_frame=False)
-
-        with av.open(output_path, mode="w") as out_container:
-            out_video = None
-            out_audio = None
-            video_time_base = Fraction(1, 24)
-            sample_rate = 44100
-
-            if video_streams:
-                in_v = video_streams[0]
-                encoder_name = _resolve_video_encoder(in_v.codec_context.name)
-                fps = in_v.average_rate or in_v.guessed_rate or 24
-                video_options: dict[str, str] = {}
-                if encoder_name == "libx264":
-                    video_options["preset"] = "ultrafast"
-                if threads is not None:
-                    video_options["threads"] = str(threads)
-                out_video = _add_video_stream(
-                    out_container,
-                    encoder_name,
-                    rate=fps,
-                    options=video_options or None,
-                )
-                out_video.width = in_v.codec_context.width
-                out_video.height = in_v.codec_context.height
-                out_video.pix_fmt = in_v.codec_context.pix_fmt or "yuv420p"
-                video_time_base = (
-                    Fraction(1, 1) / Fraction(fps) if fps else Fraction(1, 24)
-                )
-
-            if audio_streams:
-                in_a = audio_streams[0]
-                encoder_name = _resolve_audio_encoder(in_a.codec_context.name)
-                sample_rate = in_a.codec_context.sample_rate or 44100
-                channels = in_a.codec_context.channels or 1
-                out_audio = _add_audio_stream(
-                    out_container, encoder_name, rate=sample_rate
-                )
-                if in_a.codec_context.layout:
-                    out_audio.layout = in_a.codec_context.layout.name
-                elif channels == 2:
-                    out_audio.layout = "stereo"
-                else:
-                    out_audio.layout = "mono"
-
-            streams_to_demux = [
-                s for s in (video_streams[:1] + audio_streams[:1]) if s is not None
-            ]
-
-            video_frame_count = 0
-            audio_sample_count = 0
-            streams_past_end: set[int] = set()
-
-            for packet in in_container.demux(*streams_to_demux):
-                if len(streams_past_end) >= len(streams_to_demux):
-                    break
-
-                try:
-                    decoded_frames = packet.decode()
-                except (av.error.InvalidDataError, av.FFmpegError) as exc:
-                    logger.warning(
-                        "Skipping unparseable packet in cut reencode: %s", exc
-                    )
-                    continue
-                for frame in decoded_frames:
-                    time_base = (
-                        float(frame.time_base) if frame.time_base is not None else 1.0
-                    )
-                    frame_time_s = (
-                        float(frame.pts * time_base)
-                        if frame.pts is not None
-                        else (frame.time if frame.time is not None else 0.0)
-                    )
-
-                    if frame_time_s > end_seconds:
-                        streams_past_end.add(packet.stream.index)
-                        if len(streams_past_end) >= len(streams_to_demux):
-                            break
-                        continue
-
-                    if frame_time_s < start_seconds:
-                        continue
-
-                    if isinstance(frame, av.VideoFrame) and out_video is not None:
-                        if frame.format.name != out_video.pix_fmt:
-                            try:
-                                frame = frame.reformat(format=out_video.pix_fmt)
-                            except (av.FFmpegError, ValueError) as exc:
-                                logger.warning(
-                                    "Frame reformat failed (%s), proceeding without reformat.",
-                                    exc,
-                                )
-                        frame.pts = video_frame_count
-                        frame.time_base = video_time_base
-                        video_frame_count += 1
-                        for enc_packet in out_video.encode(frame):
-                            out_container.mux(enc_packet)
-
-                    elif isinstance(frame, av.AudioFrame) and out_audio is not None:
-                        frame.pts = audio_sample_count
-                        frame.time_base = Fraction(1, sample_rate)
-                        audio_sample_count += frame.samples
-                        for enc_packet in out_audio.encode(frame):
-                            out_container.mux(enc_packet)
-
-            # Flush encoders
-            if out_video is not None:
-                for enc_packet in out_video.encode():
-                    out_container.mux(enc_packet)
-            if out_audio is not None:
-                for enc_packet in out_audio.encode():
-                    out_container.mux(enc_packet)
-
-    return CutStrategy.RE_ENCODE
