@@ -346,3 +346,31 @@ def test_transcode_invalid_start_end_bounds(tmp_path: Path):
         ValueError, match="end_seconds .* must be greater than start_seconds"
     ):
         transcode(source_clip, output_clip, start_seconds=2.0, end_seconds=2.0)
+
+
+def test_transcode_unified_intro_outro_loudness(tmp_path: Path):
+    """Verify single-pass transcode integrates intro, main talk, outro, and loudness."""
+    intro_clip = generate_clip(1.0, has_video=True, has_audio=True, output_dir=tmp_path)
+    main_clip = generate_clip(2.0, has_video=True, has_audio=True, output_dir=tmp_path)
+    outro_clip = generate_clip(1.0, has_video=True, has_audio=True, output_dir=tmp_path)
+    output_clip = tmp_path / "unified_final.mp4"
+
+    transcode(
+        main_clip,
+        output_clip,
+        intro_path=intro_clip,
+        outro_path=outro_clip,
+        target_lufs=-16.0,
+    )
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+    info = open_and_inspect(output_clip)
+    assert info.has_video is True
+    assert info.has_audio is True
+    assert info.duration is not None
+    # 1.0 + 2.0 + 1.0 = 4.0s
+    assert abs(info.duration - 4.0) <= 0.6
+    assert "h264" in info.codec_names
+    assert "aac" in info.codec_names

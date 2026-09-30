@@ -200,6 +200,7 @@ def test_generate_preview_with_threads_and_preset_speed(tmp_path: Path):
     assert len(libx264_calls) == 1
     encoder_options = libx264_calls[0].get("options", {})
     assert encoder_options.get("preset") == "ultrafast"
+    assert encoder_options.get("tune") == "fastdecode,zerolatency"
     assert encoder_options.get("threads") == "1"
 
     assert output_clip.is_file()
@@ -280,3 +281,24 @@ def test_generate_preview_invalid_start_end_bounds(tmp_path: Path):
         generate_preview(
             input_clip, output_clip, preset, start_seconds=2.0, end_seconds=2.0
         )
+
+
+def test_generate_preview_audio_stream_copy_vs_reencode(tmp_path: Path):
+    """Verify audio is stream-copied when start_seconds==0, but re-encoded when windowed."""
+    clip = generate_clip(3.0, has_video=True, has_audio=True, output_dir=tmp_path)
+    out_copy = tmp_path / "preview_copy.mp4"
+    out_windowed = tmp_path / "preview_windowed.mp4"
+
+    generate_preview(clip, out_copy, PREVIEW_PRESETS["small_video"], start_seconds=0.0)
+    assert out_copy.is_file()
+    assert_playable(out_copy)
+    info_copy = open_and_inspect(out_copy)
+    assert info_copy.has_audio is True
+
+    generate_preview(
+        clip, out_windowed, PREVIEW_PRESETS["small_video"], start_seconds=1.0
+    )
+    assert out_windowed.is_file()
+    assert_playable(out_windowed)
+    info_win = open_and_inspect(out_windowed)
+    assert info_win.has_audio is True

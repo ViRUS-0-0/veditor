@@ -14,12 +14,15 @@ from typing import Any
 
 import av
 
+from app.pipeline.loudness import _mux_packet_with_monotonic_dts, rescale_pts
+
 logger = logging.getLogger(__name__)
 
 
 class CutStrategy(str, Enum):
     STREAM_COPY = "stream_copy"
     RE_ENCODE = "re_encode"
+    SMART_CUT = "smart_cut"
 
 
 DECODER_TO_ENCODER_VIDEO: dict[str, str] = {
@@ -76,7 +79,7 @@ def cut(
         threads: Optional thread limit for video re-encoding fallback.
 
     Returns:
-        CutStrategy: Either CutStrategy.STREAM_COPY or CutStrategy.RE_ENCODE.
+        CutStrategy: CutStrategy.STREAM_COPY, CutStrategy.RE_ENCODE, or CutStrategy.SMART_CUT.
 
     Raises:
         ValueError: If timestamps or input paths are invalid.
@@ -109,18 +112,296 @@ def cut(
 
     if not force_reencode:
         try:
-            return _cut_stream_copy(
-                str(in_path), str(out_path), start_seconds, end_seconds
+            return _cut_smart(
+                str(in_path), str(out_path), start_seconds, end_seconds, threads=threads
             )
-        except (av.FFmpegError, ValueError, RuntimeError, OSError) as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Stream-copy cut failed (%s); falling back to full re-encode.",
+                "Smart cut failed (%s); falling back to full re-encode.",
                 exc,
             )
 
     return _cut_reencode(
         str(in_path), str(out_path), start_seconds, end_seconds, threads=threads
     )
+
+
+def _cut_smart(
+    input_path: str,
+    output_path: str,
+    start_seconds: float,
+    end_seconds: float,
+    threads: int | None = None,
+) -> CutStrategy:
+    """Frame-accurate smart / hybrid cut with stream copy of interior GOPs."""
+    with av.open(input_path) as in_container:
+        video_streams = list(in_container.streams.video)
+        audio_streams = list(in_container.streams.audio)
+
+        if not video_streams and not audio_streams:
+            raise ValueError(f"No audio or video streams found in {input_path}")
+
+        # If no video stream (e.g. audio-only), fallback to stream copy
+        if not video_streams:
+            return _cut_stream_copy(input_path, output_path, start_seconds, end_seconds)
+
+        in_v = video_streams[0]
+        in_a = audio_streams[0] if audio_streams else None
+
+        fps_val = float(in_v.average_rate or in_v.guessed_rate or 24)
+        fps = round(fps_val) if fps_val > 0 else 24
+        epsilon = 0.5 / fps
+
+        # Collect keyframe timestamps
+        keyframes: list[float] = []
+        for packet in in_container.demux(in_v):
+            if packet.is_keyframe and packet.pts is not None:
+                ts = float(packet.pts * in_v.time_base)
+                keyframes.append(ts)
+                if ts > end_seconds + 5.0:
+                    break
+
+        if not keyframes:
+            keyframes = [0.0]
+
+        # Identify keyframe before start (K_pre)
+        pre_candidates = [k for k in keyframes if k <= start_seconds + epsilon]
+        K_pre = max(pre_candidates) if pre_candidates else 0.0
+
+        # First keyframe strictly after start (K_next)
+        next_candidates = [k for k in keyframes if k > start_seconds + epsilon]
+        K_next = min(next_candidates) if next_candidates else None
+
+        # Last keyframe before or at end (K_last)
+        last_candidates = [k for k in keyframes if k <= end_seconds + epsilon]
+        K_last = max(last_candidates) if last_candidates else None
+
+        video_duration = (
+            float(in_v.duration * in_v.time_base)
+            if in_v.duration
+            else (
+                float(in_container.duration / av.time_base)
+                if in_container.duration
+                else None
+            )
+        )
+
+        is_start_on_keyframe = abs(start_seconds - K_pre) <= epsilon
+        nearest_k_end = (
+            min((abs(end_seconds - k), k) for k in keyframes)[1] if keyframes else None
+        )
+        is_end_on_keyframe = (
+            nearest_k_end is not None and abs(end_seconds - nearest_k_end) <= epsilon
+        ) or (video_duration is not None and end_seconds >= video_duration - epsilon)
+
+        # Exact keyframe bounds allow pure stream-copy
+        if is_start_on_keyframe and is_end_on_keyframe:
+            return _cut_stream_copy(input_path, output_path, start_seconds, end_seconds)
+
+        # Single GOP or no interior stream-copy GOP available -> fallback to single-pass re-encode
+        if (
+            K_next is None
+            or K_last is None
+            or K_next >= end_seconds
+            or K_next >= K_last
+        ):
+            return _cut_reencode(
+                input_path, output_path, start_seconds, end_seconds, threads=threads
+            )
+
+    # General Hybrid / Smart Cut:
+    # Head: decode from K_pre, re-encode frames in [start_seconds, K_next)
+    head_frames: list[av.VideoFrame] = []
+    with av.open(input_path) as container:
+        v = container.streams.video[0]
+        container.seek(int(K_pre * av.time_base), backward=True, any_frame=False)
+        for pkt in container.demux(v):
+            for frame in pkt.decode():
+                t = (
+                    float(frame.pts * v.time_base)
+                    if frame.pts is not None
+                    else (float(frame.time) if frame.time is not None else 0.0)
+                )
+                if t >= K_next - epsilon:
+                    break
+                if t >= start_seconds - epsilon:
+                    head_frames.append(frame)
+            if head_frames and t >= K_next - epsilon:
+                break
+
+    # Tail: decode from K_last, re-encode frames in [K_last, end_seconds]
+    tail_frames: list[av.VideoFrame] = []
+    with av.open(input_path) as container:
+        v = container.streams.video[0]
+        container.seek(int(K_last * av.time_base), backward=True, any_frame=False)
+        for pkt in container.demux(v):
+            for frame in pkt.decode():
+                t = (
+                    float(frame.pts * v.time_base)
+                    if frame.pts is not None
+                    else (float(frame.time) if frame.time is not None else 0.0)
+                )
+                if t > end_seconds + epsilon:
+                    break
+                if t >= K_last - epsilon:
+                    tail_frames.append(frame)
+            if tail_frames and t > end_seconds + epsilon:
+                break
+
+    # Audio: decode continuously across [start_seconds, end_seconds]
+    audio_frames: list[av.AudioFrame] = []
+    if in_a:
+        with av.open(input_path) as container:
+            a = container.streams.audio[0]
+            if start_seconds > 0:
+                container.seek(
+                    int(start_seconds * av.time_base),
+                    backward=True,
+                    any_frame=False,
+                )
+            for pkt in container.demux(a):
+                for frame in pkt.decode():
+                    t = (
+                        float(frame.pts * a.time_base)
+                        if frame.pts is not None
+                        else (float(frame.time) if frame.time is not None else 0.0)
+                    )
+                    if t > end_seconds:
+                        break
+                    if t < start_seconds:
+                        continue
+                    audio_frames.append(frame)
+                if audio_frames and t > end_seconds:
+                    break
+
+    container_options = (
+        {"movflags": "faststart"}
+        if output_path.lower().endswith((".mp4", ".mov", ".m4v"))
+        else {}
+    )
+    with (
+        av.open(input_path) as in_container,
+        av.open(output_path, mode="w", options=container_options) as out_container,
+    ):
+        in_v = in_container.streams.video[0]
+        in_a = in_container.streams.audio[0] if in_container.streams.audio else None
+        out_v = out_container.add_stream_from_template(in_v)
+        out_a = None
+        if in_a:
+            sample_rate = in_a.codec_context.sample_rate or 44100
+            channels = in_a.codec_context.channels or 1
+            out_a = out_container.add_stream("aac", rate=sample_rate)
+            if in_a.codec_context.layout:
+                out_a.layout = in_a.codec_context.layout.name
+            elif channels == 2:
+                out_a.layout = "stereo"
+            else:
+                out_a.layout = "mono"
+
+        last_dts: dict[int, int] = {}
+
+        # 1. Encode & Mux Audio
+        if out_a and audio_frames:
+            sample_rate = in_a.codec_context.sample_rate or 44100
+            audio_sample_count = 0
+            for a_frame in audio_frames:
+                a_frame.pts = audio_sample_count
+                a_frame.time_base = Fraction(1, sample_rate)
+                audio_sample_count += a_frame.samples
+                for a_pkt in out_a.encode(a_frame):
+                    _mux_packet_with_monotonic_dts(
+                        out_container, a_pkt, out_a.index, last_dts
+                    )
+            for a_pkt in out_a.encode():
+                _mux_packet_with_monotonic_dts(
+                    out_container, a_pkt, out_a.index, last_dts
+                )
+
+        # 2. Encode & Mux Video Head [start_seconds, K_next)
+        head_options = {"preset": "ultrafast"}
+        if threads is not None:
+            head_options["threads"] = str(threads)
+        head_ctx = av.CodecContext.create(av.Codec("libx264", "w"))
+        head_ctx.width = in_v.codec_context.width
+        head_ctx.height = in_v.codec_context.height
+        head_ctx.pix_fmt = in_v.codec_context.pix_fmt or "yuv420p"
+        head_ctx.time_base = Fraction(1, fps)
+        head_ctx.framerate = Fraction(fps, 1)
+        head_ctx.options = head_options
+        head_ctx.open()
+
+        for i, h_frame in enumerate(head_frames):
+            if h_frame.format.name != head_ctx.pix_fmt:
+                h_frame = h_frame.reformat(format=head_ctx.pix_fmt)
+            h_frame.pts = i
+            h_frame.time_base = head_ctx.time_base
+            for p in head_ctx.encode(h_frame):
+                rescale_pts(p, head_ctx.time_base, out_v.time_base)
+                p.stream = out_v
+                _mux_packet_with_monotonic_dts(out_container, p, out_v.index, last_dts)
+        for p in head_ctx.encode():
+            rescale_pts(p, head_ctx.time_base, out_v.time_base)
+            p.stream = out_v
+            _mux_packet_with_monotonic_dts(out_container, p, out_v.index, last_dts)
+
+        pts_per_frame = round(Fraction(1, fps) / in_v.time_base)
+        body_start_pts = len(head_frames) * pts_per_frame
+
+        # 3. Stream-copy Video Body [K_next, K_last)
+        body_first_dts = None
+        body_first_pts = None
+        in_container.seek(int(K_next * av.time_base), backward=True, any_frame=False)
+        for p in in_container.demux(in_v):
+            if p.pts is None:
+                continue
+            t = float(p.pts * in_v.time_base)
+            if t >= K_last - epsilon:
+                break
+            if t >= K_next - epsilon:
+                if body_first_dts is None:
+                    body_first_dts = p.dts if p.dts is not None else p.pts
+                    body_first_pts = p.pts
+                p.pts = p.pts - body_first_pts + body_start_pts
+                p.dts = (
+                    (p.dts if p.dts is not None else p.pts)
+                    - body_first_dts
+                    + body_start_pts
+                )
+                rescale_pts(p, in_v.time_base, out_v.time_base)
+                p.stream = out_v
+                _mux_packet_with_monotonic_dts(out_container, p, out_v.index, last_dts)
+
+        # 4. Encode & Mux Video Tail [K_last, end_seconds]
+        body_frames = max(0, round((K_last - K_next) * fps))
+        tail_start_frame = len(head_frames) + body_frames
+
+        tail_options = {"preset": "ultrafast"}
+        if threads is not None:
+            tail_options["threads"] = str(threads)
+        tail_ctx = av.CodecContext.create(av.Codec("libx264", "w"))
+        tail_ctx.width = in_v.codec_context.width
+        tail_ctx.height = in_v.codec_context.height
+        tail_ctx.pix_fmt = in_v.codec_context.pix_fmt or "yuv420p"
+        tail_ctx.time_base = Fraction(1, fps)
+        tail_ctx.framerate = Fraction(fps, 1)
+        tail_ctx.options = tail_options
+        tail_ctx.open()
+
+        for j, t_frame in enumerate(tail_frames):
+            if t_frame.format.name != tail_ctx.pix_fmt:
+                t_frame = t_frame.reformat(format=tail_ctx.pix_fmt)
+            t_frame.pts = tail_start_frame + j
+            t_frame.time_base = tail_ctx.time_base
+            for p in tail_ctx.encode(t_frame):
+                rescale_pts(p, tail_ctx.time_base, out_v.time_base)
+                p.stream = out_v
+                _mux_packet_with_monotonic_dts(out_container, p, out_v.index, last_dts)
+        for p in tail_ctx.encode():
+            rescale_pts(p, tail_ctx.time_base, out_v.time_base)
+            p.stream = out_v
+            _mux_packet_with_monotonic_dts(out_container, p, out_v.index, last_dts)
+
+    return CutStrategy.SMART_CUT
 
 
 def _cut_stream_copy(

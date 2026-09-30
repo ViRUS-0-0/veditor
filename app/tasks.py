@@ -878,6 +878,8 @@ def job_transcode(
     loud_key: str,
     final_key: str | None = None,
     progress_throttle_s: float = 5.0,
+    intro_key: str | None = None,
+    outro_key: str | None = None,
 ) -> None:
     final_key = final_key or f"{talk_id}/final/final.mp4"
     job_id = None
@@ -901,6 +903,13 @@ def job_transcode(
             job_id = job.id
 
         loud_path = storage.get(loud_key)
+        intro_path = (
+            storage.get(intro_key) if intro_key and storage.exists(intro_key) else None
+        )
+        outro_path = (
+            storage.get(outro_key) if outro_key and storage.exists(outro_key) else None
+        )
+        target_lufs = None if "_loud" in loud_key else -16.0
         last_update_time = [0.0]
 
         def _on_progress(pct: float) -> None:
@@ -930,6 +939,9 @@ def job_transcode(
             transcode(
                 loud_path,
                 tmp_out,
+                intro_path=intro_path,
+                outro_path=outro_path,
+                target_lufs=target_lufs,
                 on_progress=_on_progress,
                 **transcode_kwargs,
             )

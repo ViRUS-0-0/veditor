@@ -53,7 +53,7 @@ def test_cut_video_only(tmp_path: Path):
         end_seconds=4.0,
     )
 
-    assert strategy == CutStrategy.STREAM_COPY
+    assert strategy in (CutStrategy.STREAM_COPY, CutStrategy.SMART_CUT)
     assert output_clip.is_file()
     info = open_and_inspect(output_clip)
     assert info.has_video is True
@@ -274,7 +274,7 @@ def test_cut_stream_copy_succeeds_without_fallback_when_keyframe_far(tmp_path: P
         end_seconds=6.0,
     )
 
-    assert strategy == CutStrategy.STREAM_COPY
+    assert strategy in (CutStrategy.STREAM_COPY, CutStrategy.SMART_CUT)
     assert output_clip.is_file()
     assert_playable(output_clip)
 
@@ -306,3 +306,25 @@ def test_cut_reencode_uses_ultrafast_preset(tmp_path: Path):
 
     assert strategy == CutStrategy.RE_ENCODE
     assert captured_options.get("preset") == "ultrafast"
+
+
+def test_smart_cut_frame_accurate(tmp_path: Path):
+    """Verify smart cut performs frame-accurate trimming without extra lead-in footage."""
+    source_clip = generate_clip(8.0, output_dir=tmp_path)
+    output_clip = tmp_path / "smart_cut.mp4"
+
+    strategy = cut(
+        source_clip,
+        output_clip,
+        start_seconds=1.2,
+        end_seconds=6.8,
+    )
+
+    assert strategy == CutStrategy.SMART_CUT
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+    info = open_and_inspect(output_clip)
+    assert info.duration is not None
+    # 6.8 - 1.2 = 5.6s window; smart cut must be frame-accurate within 0.15s
+    assert abs(info.duration - 5.6) <= 0.15
