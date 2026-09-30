@@ -629,10 +629,16 @@ def job_concat(
             if settings.encoder_threads is not None
             else {}
         )
+        if intro_path or outro_path:
+            logger.info(
+                "Talk %s: intro/outro slates staged; deferring slate stitching to transcode "
+                "to unify encoding into a single pass and avoid duplicate re-encode.",
+                talk_id,
+            )
         concat(
             cut_path=cut_path,
-            intro_path=intro_path,
-            outro_path=outro_path,
+            intro_path=None,
+            outro_path=None,
             output_path=concat_key,
             backend=storage,
             **concat_kwargs,
@@ -913,13 +919,31 @@ def job_transcode(
             db.commit()
             db.refresh(job)
             job_id = job.id
+            include_intro = talk.include_intro
+            include_outro = talk.include_outro
 
         loud_path = storage.get(loud_key)
+        resolved_intro_key = intro_key
+        if resolved_intro_key is None and include_intro:
+            candidate = f"{talk_id}/intro/intro.mp4"
+            if storage.exists(candidate):
+                resolved_intro_key = candidate
+
+        resolved_outro_key = outro_key
+        if resolved_outro_key is None and include_outro:
+            candidate = f"{talk_id}/outro/outro.mp4"
+            if storage.exists(candidate):
+                resolved_outro_key = candidate
+
         intro_path = (
-            storage.get(intro_key) if intro_key and storage.exists(intro_key) else None
+            storage.get(resolved_intro_key)
+            if resolved_intro_key and storage.exists(resolved_intro_key)
+            else None
         )
         outro_path = (
-            storage.get(outro_key) if outro_key and storage.exists(outro_key) else None
+            storage.get(resolved_outro_key)
+            if resolved_outro_key and storage.exists(resolved_outro_key)
+            else None
         )
         target_lufs = None if "_loud" in loud_key else -16.0
         last_update_time = [0.0]
