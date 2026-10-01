@@ -7,6 +7,7 @@ decode and re-encode if stream copy fails or is incompatible with the output con
 from __future__ import annotations
 
 import logging
+import struct
 from enum import Enum
 from fractions import Fraction
 from pathlib import Path
@@ -16,6 +17,73 @@ import av
 from app.pipeline.loudness import _mux_packet_with_monotonic_dts, rescale_pts
 
 logger = logging.getLogger(__name__)
+
+
+def _is_avcc(stream: av.video.stream.VideoStream) -> bool:
+    """Check if stream uses AVCC / HVCC length-prefixed packet format."""
+    extra = (
+        bytes(stream.codec_context.extradata) if stream.codec_context.extradata else b""
+    )
+    return len(extra) >= 7 and extra[0] == 1
+
+
+def _extract_sps_pps_from_avcc(extra: bytes) -> tuple[list[bytes], list[bytes]]:
+    """Extract SPS and PPS parameter sets from an avcC extradata buffer."""
+    if not extra or len(extra) < 7 or extra[0] != 1:
+        return [], []
+    sps_list: list[bytes] = []
+    pps_list: list[bytes] = []
+    num_sps = extra[5] & 0x1F
+    idx = 6
+    for _ in range(num_sps):
+        if idx + 2 > len(extra):
+            break
+        sps_len = struct.unpack(">H", extra[idx : idx + 2])[0]
+        idx += 2
+        sps_list.append(extra[idx : idx + sps_len])
+        idx += sps_len
+    if idx < len(extra):
+        num_pps = extra[idx]
+        idx += 1
+        for _ in range(num_pps):
+            if idx + 2 > len(extra):
+                break
+            pps_len = struct.unpack(">H", extra[idx : idx + 2])[0]
+            idx += 2
+            pps_list.append(extra[idx : idx + pps_len])
+            idx += pps_len
+    return sps_list, pps_list
+
+
+def _annexb_to_avcc(data: bytes) -> bytes:
+    """Convert Annex B (start-code-separated) NALUs to AVCC (length-prefixed)."""
+    nalus: list[bytes] = []
+    i = 0
+    n = len(data)
+    start = -1
+    while i < n:
+        if i + 4 <= n and data[i : i + 4] == b"\x00\x00\x00\x01":
+            if start != -1:
+                nalus.append(data[start:i])
+            i += 4
+            start = i
+        elif i + 3 <= n and data[i : i + 3] == b"\x00\x00\x01":
+            if start != -1:
+                nalus.append(data[start:i])
+            i += 3
+            start = i
+        else:
+            i += 1
+    if start != -1 and start < n:
+        nalus.append(data[start:n])
+
+    out = bytearray()
+    for nalu in nalus:
+        if not nalu:
+            continue
+        out.extend(struct.pack(">I", len(nalu)))
+        out.extend(nalu)
+    return bytes(out)
 
 
 class CutStrategy(str, Enum):
@@ -314,6 +382,11 @@ def _cut_smart(
         in_v = in_container.streams.video[0]
         in_a = in_container.streams.audio[0] if in_container.streams.audio else None
         out_v = out_container.add_stream_from_template(in_v)
+        is_avcc = _is_avcc(in_v)
+        extra = (
+            bytes(in_v.codec_context.extradata) if in_v.codec_context.extradata else b""
+        )
+        sps_list, pps_list = _extract_sps_pps_from_avcc(extra)
         out_a = None
         if in_a:
             try:
@@ -364,6 +437,8 @@ def _cut_smart(
             head_options = {"preset": "ultrafast"}
             if threads is not None:
                 head_options["threads"] = str(threads)
+            if in_v.profile:
+                head_options["profile"] = in_v.profile.lower().split()[0]
             encoder_name = _resolve_video_encoder(in_v.codec_context.name)
             head_ctx = av.CodecContext.create(av.Codec(encoder_name, "w"))
             head_ctx.width = in_v.codec_context.width
@@ -380,12 +455,26 @@ def _cut_smart(
                 h_frame.pts = i
                 h_frame.time_base = head_ctx.time_base
                 for p in head_ctx.encode(h_frame):
+                    if is_avcc:
+                        avcc_bytes = _annexb_to_avcc(bytes(p))
+                        npkt = av.Packet(avcc_bytes)
+                        npkt.pts = p.pts
+                        npkt.dts = p.dts
+                        npkt.time_base = head_ctx.time_base
+                        p = npkt
                     rescale_pts(p, head_ctx.time_base, out_v.time_base)
                     p.stream = out_v
                     _mux_packet_with_monotonic_dts(
                         out_container, p, out_v.index, last_dts
                     )
             for p in head_ctx.encode():
+                if is_avcc:
+                    avcc_bytes = _annexb_to_avcc(bytes(p))
+                    npkt = av.Packet(avcc_bytes)
+                    npkt.pts = p.pts
+                    npkt.dts = p.dts
+                    npkt.time_base = head_ctx.time_base
+                    p = npkt
                 rescale_pts(p, head_ctx.time_base, out_v.time_base)
                 p.stream = out_v
                 _mux_packet_with_monotonic_dts(out_container, p, out_v.index, last_dts)
@@ -393,19 +482,7 @@ def _cut_smart(
         body_start_pts = len(head_frames) * pts_per_frame
         max_body_pts = body_start_pts
 
-        # 3. Stream-copy Video Body [K_start_body, K_end_body) with Annex B bitstream filter
-        bsf = None
-        if (
-            in_v.codec_context.name == "h264"
-            and "h264_mp4toannexb" in av.bitstream_filters_available
-        ):
-            bsf = av.BitStreamFilterContext("h264_mp4toannexb", in_stream=in_v)
-        elif (
-            in_v.codec_context.name in ("hevc", "h265")
-            and "hevc_mp4toannexb" in av.bitstream_filters_available
-        ):
-            bsf = av.BitStreamFilterContext("hevc_mp4toannexb", in_stream=in_v)
-
+        # 3. Stream-copy Video Body [K_start_body, K_end_body)
         in_container.seek(
             int(K_start_body * av.time_base), backward=True, any_frame=False
         )
@@ -419,8 +496,24 @@ def _cut_smart(
                 break
             if t >= K_start_body - epsilon:
                 if body_first_dts is None:
+                    if not p.is_keyframe:
+                        continue
                     body_first_dts = p.dts if p.dts is not None else p.pts
                     body_first_pts = p.pts
+                    if is_avcc and sps_list and pps_list:
+                        prefix = bytearray()
+                        for s in sps_list:
+                            prefix.extend(struct.pack(">I", len(s)))
+                            prefix.extend(s)
+                        for pp in pps_list:
+                            prefix.extend(struct.pack(">I", len(pp)))
+                            prefix.extend(pp)
+                        prefix.extend(bytes(p))
+                        npkt = av.Packet(bytes(prefix))
+                        npkt.pts = p.pts
+                        npkt.dts = p.dts
+                        npkt.time_base = p.time_base
+                        p = npkt
                 p.pts = p.pts - body_first_pts
                 p.dts = (p.dts if p.dts is not None else p.pts) - body_first_dts
                 rescale_pts(p, in_v.time_base, out_v.time_base)
@@ -428,21 +521,8 @@ def _cut_smart(
                 p.dts += body_start_pts
                 dur = p.duration if p.duration else pts_per_frame
                 max_body_pts = max(max_body_pts, p.pts + dur)
-                if bsf is not None:
-                    for fp in bsf.filter(p):
-                        fp.stream = out_v
-                        _mux_packet_with_monotonic_dts(
-                            out_container, fp, out_v.index, last_dts
-                        )
-                else:
-                    p.stream = out_v
-                    _mux_packet_with_monotonic_dts(
-                        out_container, p, out_v.index, last_dts
-                    )
-        if bsf is not None:
-            for fp in bsf.filter(None):
-                fp.stream = out_v
-                _mux_packet_with_monotonic_dts(out_container, fp, out_v.index, last_dts)
+                p.stream = out_v
+                _mux_packet_with_monotonic_dts(out_container, p, out_v.index, last_dts)
 
         tail_start_pts = max(body_start_pts, max_body_pts)
 
@@ -451,6 +531,8 @@ def _cut_smart(
             tail_options = {"preset": "ultrafast"}
             if threads is not None:
                 tail_options["threads"] = str(threads)
+            if in_v.profile:
+                tail_options["profile"] = in_v.profile.lower().split()[0]
             encoder_name = _resolve_video_encoder(in_v.codec_context.name)
             tail_ctx = av.CodecContext.create(av.Codec(encoder_name, "w"))
             tail_ctx.width = in_v.codec_context.width
@@ -467,6 +549,13 @@ def _cut_smart(
                 t_frame.pts = j
                 t_frame.time_base = tail_ctx.time_base
                 for p in tail_ctx.encode(t_frame):
+                    if is_avcc:
+                        avcc_bytes = _annexb_to_avcc(bytes(p))
+                        npkt = av.Packet(avcc_bytes)
+                        npkt.pts = p.pts
+                        npkt.dts = p.dts
+                        npkt.time_base = tail_ctx.time_base
+                        p = npkt
                     rescale_pts(p, tail_ctx.time_base, out_v.time_base)
                     p.pts += tail_start_pts
                     if p.dts is not None:
@@ -476,6 +565,13 @@ def _cut_smart(
                         out_container, p, out_v.index, last_dts
                     )
             for p in tail_ctx.encode():
+                if is_avcc:
+                    avcc_bytes = _annexb_to_avcc(bytes(p))
+                    npkt = av.Packet(avcc_bytes)
+                    npkt.pts = p.pts
+                    npkt.dts = p.dts
+                    npkt.time_base = tail_ctx.time_base
+                    p = npkt
                 rescale_pts(p, tail_ctx.time_base, out_v.time_base)
                 p.pts += tail_start_pts
                 if p.dts is not None:
@@ -534,6 +630,13 @@ def _cut_stream_copy(
                     continue
 
                 if not in_container.streams.video and packet_time_s < start_seconds:
+                    continue
+
+                if (
+                    stream.type == "video"
+                    and stream.index not in offset_map
+                    and not packet.is_keyframe
+                ):
                     continue
 
                 if stream.index not in offset_map:
