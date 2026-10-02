@@ -18,11 +18,20 @@ x-app-base: &app-base
       condition: service_healthy
     redis:
       condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
 
 services:
+  migrate:
+    <<: *app-base
+    restart: "no"
+    command: uv run alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     <<: *app-base
-    command: sh -c "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
     healthcheck:
