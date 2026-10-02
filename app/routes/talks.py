@@ -41,7 +41,12 @@ from app.ingest import (
     stage_custom_clip,
     stage_recording,
 )
-from app.queue import heavy_queue, light_queue
+from app.queue import (
+    heavy_queue,
+    light_queue,
+    priority_heavy_queue,
+    priority_light_queue,
+)
 from app.security import create_sso_token
 from app.states import advance
 from app.storage import StorageBackend, cleanup_intermediates, get_storage_backend
@@ -290,12 +295,21 @@ def ingest_recording(
     db.commit()
     db.refresh(talk)
 
-    light_queue.enqueue(
-        job_detect,
-        talk.id,
-        raw_key,
-        job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
-    )
+    if talk.priority_rank is not None:
+        priority_light_queue.enqueue(
+            job_detect,
+            talk.id,
+            raw_key,
+            job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
+            at_front=True,
+        )
+    else:
+        light_queue.enqueue(
+            job_detect,
+            talk.id,
+            raw_key,
+            job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
+        )
 
     return schemas.TalkRead.model_validate(talk)
 
@@ -494,12 +508,21 @@ def submit_cut_bounds(
     db.commit()
     db.refresh(talk)
 
-    light_queue.enqueue(
-        job_cut,
-        talk.id,
-        raw_key,
-        job_timeout=STAGE_CONFIG["cut"]["job_timeout"],
-    )
+    if talk.priority_rank is not None:
+        priority_light_queue.enqueue(
+            job_cut,
+            talk.id,
+            raw_key,
+            job_timeout=STAGE_CONFIG["cut"]["job_timeout"],
+            at_front=True,
+        )
+    else:
+        light_queue.enqueue(
+            job_cut,
+            talk.id,
+            raw_key,
+            job_timeout=STAGE_CONFIG["cut"]["job_timeout"],
+        )
 
     return schemas.TalkRead.model_validate(talk)
 
@@ -752,7 +775,7 @@ def _cancel_talk_jobs(talk_id: int, storage: StorageBackend | None = None) -> No
     try:
         from rq.registry import StartedJobRegistry
 
-        for q in (light_queue, heavy_queue):
+        for q in (priority_light_queue, priority_heavy_queue, light_queue, heavy_queue):
             # 1. Cancel queued jobs
             for job_id in list(q.job_ids):
                 try:
@@ -844,6 +867,7 @@ def abort_talk(
 
     # Reset talk state and bounds back to waiting_for_files
     talk.status = "waiting_for_files"
+    talk.priority_rank = None
     talk.raw_duration_seconds = None
     talk.cut_start = None
     talk.cut_end = None
@@ -1077,13 +1101,23 @@ async def upload_recording(
             while chunk := await file.read(1024 * 1024):
                 f_out.write(chunk)
 
-        light_queue.enqueue(
-            job_ingest,
-            talk.id,
-            str(staged_path),
-            raw_key,
-            job_timeout=STAGE_CONFIG["ingest"]["job_timeout"],
-        )
+        if talk.priority_rank is not None:
+            priority_light_queue.enqueue(
+                job_ingest,
+                talk.id,
+                str(staged_path),
+                raw_key,
+                job_timeout=STAGE_CONFIG["ingest"]["job_timeout"],
+                at_front=True,
+            )
+        else:
+            light_queue.enqueue(
+                job_ingest,
+                talk.id,
+                str(staged_path),
+                raw_key,
+                job_timeout=STAGE_CONFIG["ingest"]["job_timeout"],
+            )
     except Exception:
         # storage-boundary-exempt: upload staging cleanup
         staged_path.unlink(missing_ok=True)
