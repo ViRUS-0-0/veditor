@@ -107,6 +107,7 @@ def test_health_check_database_failure():
     try:
         response = fail_client.get("/health")
         assert 500 <= response.status_code < 600
+        mock_db.execute.assert_called_once()
     finally:
         app.dependency_overrides.pop(get_db, None)
 
