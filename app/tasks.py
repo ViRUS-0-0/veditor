@@ -1225,8 +1225,11 @@ def job_send_verification_email(user_id: int, email: str, token: str) -> bool:
         settings.base_url.rstrip("/") if settings.base_url else "http://localhost:8000"
     )
     verify_url = f"{base}/verify-email?token={token}"
-    return send_verification_email(
+    success = send_verification_email(
         recipient=email,
         verify_url=verify_url,
         expire_hours=settings.email_verification_expire_hours,
     )
+    if not success:
+        raise RuntimeError(f"Failed to deliver verification email to {email}")
+    return True

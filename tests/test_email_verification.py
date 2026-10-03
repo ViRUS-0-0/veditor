@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import models
@@ -198,6 +199,16 @@ def test_job_send_verification_email():
             res = job_send_verification_email(user.id, user.email, "fake_token")
             assert res is True
             mock_send.assert_not_called()
+
+        # Delivery failure raises RuntimeError so RQ records the job as failed
+        user.is_verified = False
+        db.commit()
+
+        with (
+            patch("app.email.send_verification_email", return_value=False),
+            pytest.raises(RuntimeError, match="Failed to deliver"),
+        ):
+            job_send_verification_email(user.id, user.email, "fake_token")
     finally:
         db.query(models.User).filter(models.User.id == user.id).delete()
         db.commit()

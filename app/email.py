@@ -9,6 +9,7 @@ from __future__ import annotations
 import html
 import logging
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 from app.config import settings
@@ -78,12 +79,14 @@ def send_verification_email(
 </html>"""
     msg.add_alternative(html_body, subtype="html")
 
+    ssl_context = ssl.create_default_context()
     try:
         if settings.smtp_ssl:
             with smtplib.SMTP_SSL(
                 settings.smtp_host,
                 settings.smtp_port,
                 timeout=settings.smtp_timeout_seconds,
+                context=ssl_context,
             ) as server:
                 if settings.smtp_user:
                     server.login(settings.smtp_user, settings.smtp_password)
@@ -95,7 +98,7 @@ def send_verification_email(
                 timeout=settings.smtp_timeout_seconds,
             ) as server:
                 if settings.smtp_tls:
-                    server.starttls()
+                    server.starttls(context=ssl_context)
                 if settings.smtp_user:
                     server.login(settings.smtp_user, settings.smtp_password)
                 server.send_message(msg)
