@@ -1201,3 +1201,32 @@ def job_deliver_webhook(
         webhook_url,
     )
     return False
+
+
+def job_send_verification_email(user_id: int, email: str, token: str) -> bool:
+    """Send an account verification email via RQ background worker.
+
+    Checks user state in DB, generates the verification URL, dispatches via
+    send_verification_email, and exits.
+    """
+    from app.email import send_verification_email
+    from app.models import User
+
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if not user or user.is_verified:
+            logger.info(
+                "Skipping verification email: user %s not found or already verified",
+                user_id,
+            )
+            return True
+
+    base = (
+        settings.base_url.rstrip("/") if settings.base_url else "http://localhost:8000"
+    )
+    verify_url = f"{base}/verify-email?token={token}"
+    return send_verification_email(
+        recipient=email,
+        verify_url=verify_url,
+        expire_hours=settings.email_verification_expire_hours,
+    )
