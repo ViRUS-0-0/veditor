@@ -1221,6 +1221,11 @@ def job_send_verification_email(user_id: int, email: str, token: str) -> bool:
             )
             return True
 
+    if settings.smtp_host and not settings.base_url:
+        raise RuntimeError(
+            "BASE_URL must be configured when SMTP is enabled for email delivery"
+        )
+
     base = (
         settings.base_url.rstrip("/") if settings.base_url else "http://localhost:8000"
     )

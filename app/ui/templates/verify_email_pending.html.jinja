@@ -24,6 +24,12 @@
       <p class="auth-subtitle">We sent a verification link to your inbox</p>
     </div>
 
+    {% if error %}
+      <div class="alert alert-warning" role="alert">
+        <span>{{ error }}</span>
+      </div>
+    {% endif %}
+
     <div class="auth-info-box">
       {% if email %}
         <p class="auth-info-text">A verification email has been sent to:</p>

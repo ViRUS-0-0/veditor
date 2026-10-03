@@ -183,19 +183,26 @@ def test_job_send_verification_email():
     db.refresh(user)
 
     try:
-        with patch("app.email.send_verification_email", return_value=True) as mock_send:
+        with (
+            patch.object(settings, "base_url", "https://veditor.example.com"),
+            patch("app.email.send_verification_email", return_value=True) as mock_send,
+        ):
             res = job_send_verification_email(user.id, user.email, "fake_token")
             assert res is True
             mock_send.assert_called_once()
             _, kwargs = mock_send.call_args
             assert kwargs["recipient"] == user.email
             assert "fake_token" in kwargs["verify_url"]
+            assert "https://veditor.example.com/verify-email" in kwargs["verify_url"]
 
         # If user is already verified, worker skips quietly
         user.is_verified = True
         db.commit()
 
-        with patch("app.email.send_verification_email") as mock_send:
+        with (
+            patch.object(settings, "base_url", "https://veditor.example.com"),
+            patch("app.email.send_verification_email") as mock_send,
+        ):
             res = job_send_verification_email(user.id, user.email, "fake_token")
             assert res is True
             mock_send.assert_not_called()
@@ -205,8 +212,17 @@ def test_job_send_verification_email():
         db.commit()
 
         with (
+            patch.object(settings, "base_url", "https://veditor.example.com"),
             patch("app.email.send_verification_email", return_value=False),
             pytest.raises(RuntimeError, match="Failed to deliver"),
+        ):
+            job_send_verification_email(user.id, user.email, "fake_token")
+
+        # Missing BASE_URL when SMTP is enabled raises RuntimeError
+        with (
+            patch.object(settings, "smtp_host", "smtp.example.com"),
+            patch.object(settings, "base_url", ""),
+            pytest.raises(RuntimeError, match="BASE_URL must be configured"),
         ):
             job_send_verification_email(user.id, user.email, "fake_token")
     finally:
@@ -259,9 +275,9 @@ def test_signup_creates_unverified_user_and_enqueues_email():
         db.close()
 
 
-def test_signup_enqueue_failure_rolls_back_user():
+def test_signup_enqueue_failure_retains_user_and_shows_recovery_state():
     client = TestClient(app)
-    unique_email = f"signup_fail_{uuid.uuid4().hex[:6]}@example.com"
+    unique_email = f"signup_retry_{uuid.uuid4().hex[:6]}@example.com"
 
     with patch(
         "app.routes.auth.light_queue.enqueue",
@@ -277,15 +293,26 @@ def test_signup_enqueue_failure_rolls_back_user():
             follow_redirects=False,
         )
 
-        assert resp.status_code == 503
-        assert "Failed to send verification email" in resp.text
+        assert resp.status_code == 303
+        assert "/verify-email/pending" in resp.headers["location"]
+        assert "error=delivery_failed" in resp.headers["location"]
 
-    # User should NOT exist in database due to transactional rollback
+        # Follow redirect and verify recovery alert message is shown
+        resp_pending = client.get(resp.headers["location"])
+        assert resp_pending.status_code == 200
+        assert "unable to deliver the verification email" in resp_pending.text
+        assert "Resend Verification Email" in resp_pending.text
+
+    # User remains created in DB as unverified so they can retry without losing their account
     db = SessionLocal()
     try:
         user = db.query(models.User).filter(models.User.email == unique_email).first()
-        assert user is None
+        assert user is not None
+        assert user.is_verified is False
     finally:
+        if user:
+            db.delete(user)
+            db.commit()
         db.close()
 
 
@@ -346,7 +373,18 @@ def test_verify_email_flow_success():
     token = create_email_verification_token(user.id, user.email)
 
     try:
-        resp = client.get(f"/verify-email?token={token}", follow_redirects=False)
+        # GET renders confirmation page safely without mutating state (scanner defense)
+        resp_get = client.get(f"/verify-email?token={token}")
+        assert resp_get.status_code == 200
+        assert "Confirm Verification" in resp_get.text
+        assert "veditor_session" not in resp_get.cookies
+        db.refresh(user)
+        assert user.is_verified is False
+
+        # POST performs atomic verification and establishes session
+        resp = client.post(
+            "/verify-email", data={"token": token}, follow_redirects=False
+        )
         assert resp.status_code == 303
         assert resp.headers["location"] == "/studio?verified=1"
         assert "veditor_session" in resp.cookies
@@ -357,9 +395,17 @@ def test_verify_email_flow_success():
         assert user.verified_at is not None
 
         # Re-using the same verification link is rejected (single-use token defense)
-        resp_reuse = client.get(f"/verify-email?token={token}", follow_redirects=False)
-        assert resp_reuse.status_code == 400
-        assert "already been verified" in resp_reuse.text
+        resp_reuse_get = client.get(
+            f"/verify-email?token={token}", follow_redirects=False
+        )
+        assert resp_reuse_get.status_code == 400
+        assert "already been verified" in resp_reuse_get.text
+
+        resp_reuse_post = client.post(
+            "/verify-email", data={"token": token}, follow_redirects=False
+        )
+        assert resp_reuse_post.status_code == 400
+        assert "already been verified" in resp_reuse_post.text
     finally:
         db.query(models.User).filter(models.User.id == user.id).delete()
         db.commit()
@@ -484,7 +530,9 @@ def test_verify_email_concurrent_update_rejected():
             return orig_execute(self, statement, *args, **kwargs)
 
         with patch("sqlalchemy.orm.Session.execute", new=mock_execute):
-            resp = client.get(f"/verify-email?token={token}", follow_redirects=False)
+            resp = client.post(
+                "/verify-email", data={"token": token}, follow_redirects=False
+            )
             assert resp.status_code == 400
             assert "already been verified" in resp.text
             assert "veditor_session" not in resp.cookies
@@ -508,8 +556,8 @@ def test_verify_email_resend_redis_failure_fails_closed():
         assert "temporarily unavailable" in resp.text
 
 
-def test_verify_email_resend_enqueue_failure_returns_503():
-    """Verify that when enqueuing a resend verification email fails, it returns HTTP 503 and deletes rate key."""
+def test_verify_email_resend_enqueue_failure_clears_rate_key_and_returns_uniform_response():
+    """Verify that when enqueuing a resend verification email fails, rate key is cleared and uniform response is returned."""
     db = SessionLocal()
     unique_email = f"resend_enq_fail_{uuid.uuid4().hex[:6]}@example.com"
     user = models.User(
@@ -537,8 +585,10 @@ def test_verify_email_resend_enqueue_failure_returns_503():
                 "/verify-email/resend",
                 data={"email": unique_email},
             )
-            assert resp.status_code == 503
-            assert "Failed to send verification email" in resp.text
+            # Uniform 200 response to prevent email enumeration
+            assert resp.status_code == 200
+            assert "a new verification link has been sent" in resp.text
+            # But rate key was cleared so legitimate user can immediately retry
             mock_delete.assert_called_once_with(
                 f"rate:resend_verification:{unique_email}"
             )
