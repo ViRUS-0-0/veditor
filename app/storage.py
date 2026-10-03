@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Protocol
 
@@ -26,6 +27,13 @@ class StorageBackend(Protocol):
         """
         Store a file at the given key.
         If the key already exists, it is overwritten silently.
+        """
+        ...
+
+    def link_or_copy(self, key: str, source: Path) -> None:
+        """
+        Store a file at the given key using a filesystem hardlink if possible,
+        falling back to atomic copy if cross-filesystem or unsupported.
         """
         ...
 
@@ -126,6 +134,38 @@ class LocalDiskBackend(StorageBackend):
                 else:
                     with open(source, "rb") as f_in:
                         shutil.copyfileobj(f_in, tmp)
+            except Exception:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
+                raise
+
+        try:
+            os.replace(tmp.name, target_path)
+        except Exception:
+            Path(tmp.name).unlink(missing_ok=True)
+            raise
+
+    def link_or_copy(self, key: str, source: Path) -> None:
+        """
+        Store a file at the given key using a filesystem hardlink if possible,
+        falling back to atomic copy if cross-filesystem or unsupported.
+        """
+        target_path = self._get_path(key)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target_path.parent / f".tmp.{uuid.uuid4().hex}"
+
+        try:
+            os.link(source, tmp_path)
+            os.replace(tmp_path, target_path)
+            return
+        except OSError:
+            tmp_path.unlink(missing_ok=True)
+
+        # Fallback: atomic copy preserving source
+        with tempfile.NamedTemporaryFile(delete=False, dir=target_path.parent) as tmp:
+            try:
+                with open(source, "rb") as f_in:
+                    shutil.copyfileobj(f_in, tmp)
             except Exception:
                 tmp.close()
                 Path(tmp.name).unlink(missing_ok=True)

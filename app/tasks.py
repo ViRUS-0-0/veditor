@@ -221,7 +221,12 @@ def job_ingest(talk_id: int, staged_path: str, raw_key: str | None = None) -> No
         staged.unlink(missing_ok=True)
 
 
-def job_detect(talk_id: int, raw_key: str) -> None:
+def job_detect(
+    talk_id: int,
+    raw_key: str,
+    *,
+    tolerance_seconds: float | None = None,
+) -> None:
     job_id = None
     storage = get_storage_backend()
     try:
@@ -246,9 +251,10 @@ def job_detect(talk_id: int, raw_key: str) -> None:
             job_id = job.id
             scheduled_start = talk.start
             scheduled_end = talk.end
-            tolerance_seconds = float(
-                get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
-            )
+            if tolerance_seconds is None:
+                tolerance_seconds = float(
+                    get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
+                )
 
         # Omit parameter when default to preserve pipeline default and mock compatibility
         detect_kwargs = (
