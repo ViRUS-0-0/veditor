@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -280,7 +281,7 @@ def signup_submit(
     )
     db.add(user)
     try:
-        db.commit()
+        db.flush()
     except IntegrityError:
         db.rollback()
         return templates.TemplateResponse(
@@ -292,7 +293,6 @@ def signup_submit(
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
-    db.refresh(user)
 
     verification_token = create_email_verification_token(
         user_id=user.id,
@@ -306,9 +306,18 @@ def signup_submit(
             user.email,
             verification_token,
         )
+        db.commit()
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "Failed to enqueue verification email for %s: %s", user.email, exc
+        db.rollback()
+        logger.error("Failed to enqueue verification email for %s: %s", user.email, exc)
+        return templates.TemplateResponse(
+            request,
+            "signup.html.jinja",
+            {
+                "error": "Failed to send verification email. Please try again later.",
+                "email": clean_email,
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
     encoded_email = urllib.parse.quote(clean_email)
@@ -466,7 +475,19 @@ def verify_email(
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    if user.is_verified:
+    stmt = (
+        update(models.User)
+        .where(
+            models.User.id == user.id,
+            models.User.is_verified.is_(False),
+            models.User.is_active.is_(True),
+        )
+        .values(is_verified=True, verified_at=datetime.now(UTC))
+    )
+    result = db.execute(stmt)
+    db.commit()
+
+    if result.rowcount == 0:
         return templates.TemplateResponse(
             request,
             "verify_email_error.html.jinja",
@@ -477,9 +498,6 @@ def verify_email(
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
-    user.is_verified = True
-    user.verified_at = datetime.now(UTC)
-    db.commit()
     db.refresh(user)
 
     _sync_speaker_role(user, db, user.email)
@@ -488,9 +506,7 @@ def verify_email(
     response = RedirectResponse(
         url="/studio?verified=1", status_code=status.HTTP_303_SEE_OTHER
     )
-    is_secure = (request.url.scheme == "https") or (
-        settings.environment.lower() in ("production", "prod")
-    )
+    is_secure = (request.url.scheme == "https") or settings.is_production
     response.set_cookie(
         key="veditor_session",
         value=session_token,
@@ -552,7 +568,17 @@ def verify_email_resend_submit(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             )
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Redis rate check error for %s: %s", clean_email, exc)
+        logger.error("Redis rate limit check failed for %s: %s", clean_email, exc)
+        return templates.TemplateResponse(
+            request,
+            "verify_email_resend.html.jinja",
+            {
+                "error": "The service is temporarily unavailable. Please try again later.",
+                "message": None,
+                "email": clean_email,
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     user = db.query(models.User).filter(models.User.email == clean_email).first()
     if user and user.is_active and not user.is_verified:
@@ -569,10 +595,28 @@ def verify_email_resend_submit(
                 token,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
+            logger.error(
                 "Failed to enqueue resend verification email for %s: %s",
                 user.email,
                 exc,
+            )
+            try:
+                redis_conn.delete(rate_key)
+            except Exception as del_exc:  # noqa: BLE001
+                logger.debug(
+                    "Failed to clear resend rate limit for %s: %s",
+                    clean_email,
+                    del_exc,
+                )
+            return templates.TemplateResponse(
+                request,
+                "verify_email_resend.html.jinja",
+                {
+                    "error": "Failed to send verification email. Please try again later.",
+                    "message": None,
+                    "email": clean_email,
+                },
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
     return templates.TemplateResponse(

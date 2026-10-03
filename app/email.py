@@ -29,6 +29,12 @@ def send_verification_email(
     clean_email = recipient.strip().lower()
 
     if not settings.smtp_host:
+        if settings.is_production:
+            logger.error(
+                "SMTP host is unconfigured in production; refusing verification email delivery to %s",
+                clean_email,
+            )
+            return False
         logger.info(
             "SMTP host is unconfigured. Verification email for %s: %s",
             clean_email,

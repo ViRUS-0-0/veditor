@@ -137,6 +137,10 @@ class Settings(BaseSettings):
         return [r.resolve() for r in roots]
 
     @property
+    def is_production(self) -> bool:
+        return self.environment.lower() in ("production", "prod")
+
+    @property
     def database_url(self) -> str:
         return f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 

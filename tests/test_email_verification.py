@@ -36,17 +36,15 @@ def test_verification_token_lifecycle():
 
 
 def test_verification_token_expired():
-    with patch("app.security.datetime") as mock_dt:
-        mock_now = datetime(2025, 1, 1, 12, 0, tzinfo=UTC)
-        mock_dt.now.return_value = mock_now
-        token = create_email_verification_token(
-            user_id=42, email="user@example.com", expires_in_hours=1
-        )
+    token = create_email_verification_token(
+        user_id=42, email="user@example.com", expires_in_hours=1
+    )
+    assert decode_email_verification_token(token) is not None
 
-    # Decode at time + 2 hours (expired)
-    future_time = datetime(2025, 1, 1, 14, 0, tzinfo=UTC)
-    with patch("app.security.datetime") as mock_dt:
-        mock_dt.now.return_value = future_time
+    # Advance time past token expiration in PyJWT's claim validator
+    future_time = datetime.now(UTC) + timedelta(hours=2)
+    with patch("jwt.api_jwt.datetime") as mock_jwt_dt:
+        mock_jwt_dt.now.return_value = future_time
         payload = decode_email_verification_token(token)
         assert payload is None
 
@@ -113,6 +111,23 @@ def test_send_verification_email_dev_mode():
             verify_url="http://localhost:8000/verify-email?token=xyz",
         )
         assert result is True
+
+
+def test_send_verification_email_production_mode_unset_smtp():
+    with (
+        patch.object(settings, "smtp_host", ""),
+        patch.object(settings, "environment", "production"),
+        patch("app.email.logger.error") as mock_log_err,
+    ):
+        result = send_verification_email(
+            recipient="test@example.com",
+            verify_url="http://localhost:8000/verify-email?token=xyz",
+        )
+        assert result is False
+        mock_log_err.assert_called_once()
+        # Verify bearer token/URL is never logged in production
+        logged_msg = mock_log_err.call_args[0][0]
+        assert "token=xyz" not in logged_msg
 
 
 def test_send_verification_email_smtp_success():
@@ -230,6 +245,36 @@ def test_signup_creates_unverified_user_and_enqueues_email():
         if user:
             db.delete(user)
             db.commit()
+        db.close()
+
+
+def test_signup_enqueue_failure_rolls_back_user():
+    client = TestClient(app)
+    unique_email = f"signup_fail_{uuid.uuid4().hex[:6]}@example.com"
+
+    with patch(
+        "app.routes.auth.light_queue.enqueue",
+        side_effect=RuntimeError("Redis connection failed"),
+    ):
+        resp = client.post(
+            "/signup",
+            data={
+                "email": unique_email,
+                "password": "Password123!",
+                "password_confirm": "Password123!",
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 503
+        assert "Failed to send verification email" in resp.text
+
+    # User should NOT exist in database due to transactional rollback
+    db = SessionLocal()
+    try:
+        user = db.query(models.User).filter(models.User.email == unique_email).first()
+        assert user is None
+    finally:
         db.close()
 
 
@@ -391,6 +436,101 @@ def test_verify_email_resend_endpoints():
             )
             assert resp_rate_limited.status_code == 429
             assert "Please wait" in resp_rate_limited.text
+    finally:
+        db.query(models.User).filter(models.User.id == user.id).delete()
+        db.commit()
+        db.close()
+
+
+def test_verify_email_concurrent_update_rejected():
+    """Verify that when an update matches 0 rows (concurrency race), verification is rejected."""
+    db = SessionLocal()
+    unique_email = f"concurrent_{uuid.uuid4().hex[:6]}@example.com"
+    user = models.User(
+        email=unique_email,
+        hashed_password=hash_password("Password123!"),
+        role="user",
+        is_active=True,
+        is_verified=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    client = TestClient(app)
+    token = create_email_verification_token(user.id, user.email)
+
+    try:
+        from sqlalchemy.orm import Session
+
+        orig_execute = Session.execute
+
+        def mock_execute(self, statement, *args, **kwargs):
+            if getattr(statement, "is_update", False):
+                fake_result = MagicMock()
+                fake_result.rowcount = 0
+                return fake_result
+            return orig_execute(self, statement, *args, **kwargs)
+
+        with patch("sqlalchemy.orm.Session.execute", new=mock_execute):
+            resp = client.get(f"/verify-email?token={token}", follow_redirects=False)
+            assert resp.status_code == 400
+            assert "already been verified" in resp.text
+            assert "veditor_session" not in resp.cookies
+    finally:
+        db.query(models.User).filter(models.User.id == user.id).delete()
+        db.commit()
+        db.close()
+
+
+def test_verify_email_resend_redis_failure_fails_closed():
+    """Verify that when Redis is unreachable, resend fails closed with HTTP 503 instead of bypassing cooldown."""
+    client = TestClient(app)
+    with patch(
+        "app.routes.auth.redis_conn.set", side_effect=ConnectionError("Redis down")
+    ):
+        resp = client.post(
+            "/verify-email/resend",
+            data={"email": "resend_redis_fail@example.com"},
+        )
+        assert resp.status_code == 503
+        assert "temporarily unavailable" in resp.text
+
+
+def test_verify_email_resend_enqueue_failure_returns_503():
+    """Verify that when enqueuing a resend verification email fails, it returns HTTP 503 and deletes rate key."""
+    db = SessionLocal()
+    unique_email = f"resend_enq_fail_{uuid.uuid4().hex[:6]}@example.com"
+    user = models.User(
+        email=unique_email,
+        hashed_password=hash_password("Password123!"),
+        role="user",
+        is_active=True,
+        is_verified=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    client = TestClient(app)
+    try:
+        with (
+            patch("app.routes.auth.redis_conn.set", return_value=True),
+            patch("app.routes.auth.redis_conn.delete") as mock_delete,
+            patch(
+                "app.routes.auth.light_queue.enqueue",
+                side_effect=RuntimeError("Queue unavailable"),
+            ),
+        ):
+            resp = client.post(
+                "/verify-email/resend",
+                data={"email": unique_email},
+            )
+            assert resp.status_code == 503
+            assert "Failed to send verification email" in resp.text
+            mock_delete.assert_called_once_with(
+                f"rate:resend_verification:{unique_email}"
+            )
     finally:
         db.query(models.User).filter(models.User.id == user.id).delete()
         db.commit()
