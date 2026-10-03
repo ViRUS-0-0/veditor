@@ -262,7 +262,11 @@ def get_setting(key: str, default: Any = None, db: Any = None) -> Any:
 
             with SessionLocal() as session:
                 row = session.get(SystemSetting, normalized_key)
-        if row is not None:
+        if (
+            row is not None
+            and isinstance(row, SystemSetting)
+            and isinstance(getattr(row, "value", None), str)
+        ):
             return _cast_setting_value(normalized_key, row.value, default)
     except Exception as exc:  # noqa: BLE001
         logger.warning(

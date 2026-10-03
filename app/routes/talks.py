@@ -1,12 +1,16 @@
 import json
 import logging
 import math
+import shutil
 import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 from typing import Annotated
 
+import anyio.to_thread
+import av
 from fastapi import (
     APIRouter,
     Depends,
@@ -18,6 +22,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from redis.exceptions import RedisError
 from rq.command import send_stop_job_command
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -40,7 +45,9 @@ from app.ingest import (
     get_upload_staging_dir,
     stage_custom_clip,
     stage_recording,
+    validate_media_file,
 )
+from app.pipeline.detect import container_duration_seconds
 from app.queue import heavy_queue, light_queue
 from app.security import create_sso_token
 from app.states import advance
@@ -1711,4 +1718,406 @@ def create_talk_sso_token(
         role="speaker",
         expires_in_seconds=settings.sso_token_expire_seconds,
         url=f"/studio/talks/{talk.id}?sso_token={token}",
+    )
+
+
+@router.post(
+    "/room/attach-recording",
+    response_model=schemas.RoomRecordingAttachResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def attach_room_recording(
+    request: Request,
+    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    db: Annotated[Session, Depends(get_db)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+    room: Annotated[str | None, Form()] = None,
+    event_id: Annotated[int | None, Form()] = None,
+    file: Annotated[UploadFile | None, File()] = None,
+    relative_key: Annotated[str | None, Form()] = None,
+    source_path: Annotated[str | None, Form()] = None,
+    recording_start: Annotated[datetime | None, Form()] = None,
+):
+    """Attach a continuous room recording to all scheduled sessions in that room."""
+    # Support JSON requests as well as multipart/form-data
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                room = body.get("room", room)
+                event_id = body.get("event_id", event_id)
+                relative_key = body.get("relative_key", relative_key)
+                source_path = body.get("source_path", source_path)
+                rec_start_str = body.get("recording_start")
+                if rec_start_str and not recording_start:
+                    try:
+                        recording_start = datetime.fromisoformat(rec_start_str)
+                    except ValueError:
+                        pass
+        except ValueError, TypeError, UnicodeDecodeError:
+            pass
+
+    if not room or not room.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Room name is required",
+        )
+    room = room.strip()
+
+    # Resolve and authorize event
+    if event_id is not None:
+        check_event_access(event_id, user, db)
+    else:
+        query = (
+            db.query(models.Event)
+            .join(models.Talk, models.Talk.event_id == models.Event.id)
+            .filter(models.Talk.room == room)
+            .distinct()
+        )
+        if user.is_platform or user.is_human_admin:
+            pass
+        elif user.source in ("api_key", "sso"):
+            query = query.filter(models.Event.id.in_(user.event_ids))
+        elif user.role != "admin":
+            query = query.filter(models.Event.created_by_user_id == user.user_id)
+
+        matching_events = query.all()
+        if not matching_events:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No accessible event found with room '{room}'",
+            )
+        if len(matching_events) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Multiple events found with room '{room}'. Please specify event_id.",
+            )
+        event_id = matching_events[0].id
+
+    # Query talks in this room and event
+    all_room_talks = (
+        db.query(models.Talk)
+        .filter(models.Talk.event_id == event_id, models.Talk.room == room)
+        .order_by(models.Talk.start)
+        .all()
+    )
+    if not all_room_talks:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No talks found in room '{room}' for event {event_id}",
+        )
+
+    eligible_talks = [
+        t
+        for t in all_room_talks
+        if t.status in ("waiting_for_files", "detecting", "broken")
+    ]
+    if not eligible_talks:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"No talks in room '{room}' are currently waiting for files (sessions may already be in review or published)",
+        )
+
+    # Stage media
+    staged_path: Path | None = None
+    is_ephemeral_upload = False
+
+    if file and file.filename:
+        is_ephemeral_upload = True
+        ext = Path(file.filename).suffix or ".mp4"
+        staged_path = get_upload_staging_dir() / f"room_upload_{uuid.uuid4().hex}{ext}"
+        try:
+
+            def _write_upload() -> None:
+                # storage-boundary-exempt: upload staging
+                with open(staged_path, "wb") as f_out:
+                    # storage-boundary-exempt: upload staging
+                    shutil.copyfileobj(file.file, f_out)
+
+            await anyio.to_thread.run_sync(_write_upload)
+        except Exception:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+            raise
+
+        if staged_path.stat().st_size == 0:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded file is empty",
+            )
+    elif relative_key or source_path:
+        target_path_str = source_path or relative_key
+        if "\x00" in target_path_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid path string",
+            )
+        roots = [Path(r).resolve() for r in settings.ingest_roots]
+        target_path = Path(target_path_str)
+        resolved_path = None
+        if source_path:
+            if not target_path.is_absolute():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="source_path must be absolute",
+                )
+            try:
+                candidate = target_path.resolve(strict=True)
+                for root in roots:
+                    if candidate.is_relative_to(root):
+                        resolved_path = candidate
+                        break
+            except OSError, RuntimeError:
+                pass
+        else:
+            if target_path.is_absolute():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="relative_key must be relative",
+                )
+            for root in roots:
+                try:
+                    candidate = (root / target_path).resolve(strict=True)
+                    if candidate.is_relative_to(root):
+                        resolved_path = candidate
+                        break
+                except OSError, RuntimeError:
+                    pass
+
+        if not resolved_path or not resolved_path.is_file():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ingest file not found or path rejected outside ingest roots",
+            )
+        staged_path = resolved_path
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either a video file upload or relative_key/source_path must be provided",
+        )
+
+    # Validate media file & probe duration
+    try:
+
+        def _probe_media(p: Path) -> tuple[float | None, str | None]:
+            validate_media_file(p)
+            with av.open(str(p)) as container:
+                dur = container_duration_seconds(container)
+                c_time = container.metadata.get("creation_time")
+                if not c_time and container.streams.video:
+                    c_time = container.streams.video[0].metadata.get("creation_time")
+                return dur, c_time
+
+        duration, creation_time_str = await anyio.to_thread.run_sync(
+            _probe_media, staged_path
+        )
+    except IngestPathRejectedError as exc:
+        if is_ephemeral_upload:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        if is_ephemeral_upload:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to inspect media file: {exc}",
+        ) from exc
+
+    if duration is None or duration <= 0:
+        if is_ephemeral_upload:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not determine video duration from file",
+        )
+
+    # Storage space check
+    file_size = staged_path.stat().st_size
+    required_bytes = int(
+        (
+            Decimal(file_size) * Decimal(str(settings.disk_guard_multiplier))
+        ).to_integral_value(rounding=ROUND_CEILING)
+    )
+    available_bytes = storage.free_bytes()
+    if available_bytes < required_bytes:
+        if is_ephemeral_upload:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
+            detail=f"Insufficient storage: required {required_bytes} bytes, but only {available_bytes} bytes available",
+        )
+
+    # Filter talks by schedule window if recording_start is specified
+    rec_start = recording_start
+    if rec_start is None and creation_time_str:
+        try:
+            parsed_dt = datetime.fromisoformat(creation_time_str)
+            if parsed_dt.tzinfo is None:
+                parsed_dt = parsed_dt.replace(tzinfo=UTC)
+            cand_end = parsed_dt + timedelta(seconds=duration)
+            if any(
+                (t.start.replace(tzinfo=UTC) if t.start.tzinfo is None else t.start)
+                < cand_end
+                and (t.end.replace(tzinfo=UTC) if t.end.tzinfo is None else t.end)
+                > parsed_dt
+                for t in eligible_talks
+            ):
+                rec_start = parsed_dt
+        except ValueError, TypeError:
+            pass
+
+    if rec_start is None:
+        rec_start = min(
+            t.start.replace(tzinfo=UTC) if t.start.tzinfo is None else t.start
+            for t in eligible_talks
+        )
+
+    if rec_start.tzinfo is None:
+        rec_start = rec_start.replace(tzinfo=UTC)
+
+    rec_end = rec_start + timedelta(seconds=duration)
+    matched_talks = [
+        t
+        for t in eligible_talks
+        if (t.start.replace(tzinfo=UTC) if t.start.tzinfo is None else t.start)
+        < rec_end
+        and (t.end.replace(tzinfo=UTC) if t.end.tzinfo is None else t.end) > rec_start
+    ]
+    if not matched_talks:
+        if is_ephemeral_upload:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No scheduled talks in room '{room}' match recording window ({rec_start} to {rec_end})",
+        )
+
+    # Zero-copy stage into each talk's storage & advance state
+    talk_ids = []
+    staged_keys = []
+    replaced_backups: dict[str, str] = {}
+    talks_to_cancel = [t.id for t in matched_talks if t.status == "detecting"]
+
+    # Cancel previous detection jobs before modifying or overwriting storage assets
+    for tid in talks_to_cancel:
+        _cancel_talk_jobs(tid)
+
+    try:
+        for talk in matched_talks:
+            raw_key = f"{talk.id}/raw/raw.mp4"
+            if storage.exists(raw_key):
+                backup_key = f"{raw_key}.orig_{uuid.uuid4().hex}"
+                await anyio.to_thread.run_sync(
+                    storage.link_or_copy, backup_key, storage.get(raw_key)
+                )
+                replaced_backups[raw_key] = backup_key
+
+            await anyio.to_thread.run_sync(storage.link_or_copy, raw_key, staged_path)
+            staged_keys.append(raw_key)
+
+            talk.status = "detecting"
+            talk.raw_duration_seconds = duration
+
+            talk_start_utc = (
+                talk.start.replace(tzinfo=UTC)
+                if talk.start.tzinfo is None
+                else talk.start
+            )
+            talk_end_utc = (
+                talk.end.replace(tzinfo=UTC) if talk.end.tzinfo is None else talk.end
+            )
+            offset_start = max(0.0, (talk_start_utc - rec_start).total_seconds())
+            offset_end = min(duration, (talk_end_utc - rec_start).total_seconds())
+            if offset_end > offset_start:
+                talk.cut_start = offset_start
+                talk.cut_end = offset_end
+
+            talk_ids.append(talk.id)
+
+        db.commit()
+
+        # Success: clean up temporary backup files
+        for b_key in replaced_backups.values():
+            try:
+                storage.delete(b_key)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed removing backup %s: %s", b_key, exc)
+    except Exception:
+        db.rollback()
+        for key in staged_keys:
+            if key in replaced_backups:
+                b_key = replaced_backups[key]
+                try:
+                    await anyio.to_thread.run_sync(
+                        storage.link_or_copy, key, storage.get(b_key)
+                    )
+                    storage.delete(b_key)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Failed restoring %s from backup %s: %s", key, b_key, exc
+                    )
+            else:
+                try:
+                    storage.delete(key)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed cleaning up staged key %s: %s", key, exc)
+
+        for raw_k, b_key in replaced_backups.items():
+            if raw_k not in staged_keys:
+                try:
+                    storage.delete(b_key)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Failed deleting dangling backup %s: %s", b_key, exc)
+        raise
+    finally:
+        if is_ephemeral_upload:
+            # storage-boundary-exempt: upload staging cleanup
+            staged_path.unlink(missing_ok=True)
+
+    # Enqueue detection jobs on the light queue
+    for index, tid in enumerate(talk_ids):
+        try:
+            light_queue.enqueue(
+                job_detect,
+                tid,
+                f"{tid}/raw/raw.mp4",
+                tolerance_seconds=float("inf"),
+                job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
+            )
+        except (OSError, RedisError, RuntimeError) as exc:
+            for failed_tid in talk_ids[index:]:
+                failed_talk = db.get(models.Talk, failed_tid)
+                if failed_talk and failed_talk.status == "detecting":
+                    advance(failed_talk, "broken")
+            db.commit()
+            logger.exception("Failed to enqueue detection jobs")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Detection queue is unavailable",
+            ) from exc
+
+    logger.info(
+        "Attached room recording to %d talks in room '%s' (event %d): %s",
+        len(talk_ids),
+        room,
+        event_id,
+        talk_ids,
+    )
+
+    return schemas.RoomRecordingAttachResponse(
+        attached_count=len(talk_ids),
+        room=room,
+        event_id=event_id,
+        talk_ids=talk_ids,
+        recording_duration_seconds=duration,
     )
