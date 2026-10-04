@@ -9,7 +9,7 @@ x-app-base: &app-base
     POSTGRES_DB: veditor
     REDIS_URL: redis://redis:6379/0
     INGEST_ROOTS: '["/app/ingest"]'
-    ENCODER_THREADS: 1
+    ENCODER_THREADS: 2
   volumes:
     - veditor_data:/app/data
     - veditor_ingest:/app/ingest
@@ -43,11 +43,11 @@ services:
 
   worker-light:
     <<: *app-base
-    command: uv run python scripts/run_worker.py light --concurrency 2 --with-scheduler --nice 10
+    command: uv run python scripts/run_worker.py light --concurrency 1 --with-scheduler --nice 10
 
   worker-heavy:
     <<: *app-base
-    command: uv run python scripts/run_worker.py heavy --concurrency 1 --nice 10
+    command: uv run python scripts/run_worker.py heavy --concurrency 1 --nice 15
 
   postgres:
     image: postgres:18-alpine

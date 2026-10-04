@@ -19,6 +19,7 @@ import logging
 import math
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
 import av
 
@@ -27,6 +28,46 @@ logger = logging.getLogger(__name__)
 DEFAULT_TARGET_LUFS = -16.0
 DEFAULT_TRUE_PEAK = -1.5
 DEFAULT_LRA = 11.0
+
+
+def rescale_pts(packet: av.Packet, src_tb: Any, dst_tb: Any) -> None:
+    """Rescale packet PTS, DTS, and duration from src_tb to dst_tb."""
+    if src_tb is not None and dst_tb is not None and src_tb != dst_tb:
+        factor = Fraction(src_tb) / Fraction(dst_tb)
+        if packet.pts is not None:
+            packet.pts = int(packet.pts * factor)
+        if packet.dts is not None:
+            packet.dts = int(packet.dts * factor)
+        if packet.duration is not None:
+            packet.duration = int(packet.duration * factor)
+    if dst_tb is not None:
+        packet.time_base = dst_tb
+
+
+if not hasattr(av.Packet, "rescale_pts"):
+    av.Packet.rescale_pts = rescale_pts
+
+
+def _mux_packet_with_monotonic_dts(
+    out_container: av.container.OutputContainer,
+    packet: av.Packet,
+    out_stream_idx: int,
+    last_dts: dict[int, int],
+) -> None:
+    """Mux a packet while enforcing strictly monotonic DTS per stream."""
+    if packet.dts is None:
+        packet.dts = (
+            packet.pts
+            if packet.pts is not None
+            else last_dts.get(out_stream_idx, -1) + 1
+        )
+    prev_dts = last_dts.get(out_stream_idx, -1)
+    if packet.dts <= prev_dts:
+        packet.dts = prev_dts + 1
+    if packet.pts is not None:
+        packet.pts = max(packet.pts, packet.dts)
+    last_dts[out_stream_idx] = packet.dts
+    out_container.mux(packet)
 
 
 def normalize(
@@ -112,17 +153,28 @@ def normalize(
             ]
 
             audio_sample_count = 0
+            last_dts: dict[int, int] = {}
 
             # Single interleaved demuxing pass without seeking
             for packet in in_container.demux(*streams_to_demux):
                 if packet.stream.type == "video" and out_video is not None:
-                    if packet.dts is None:
+                    if packet.dts is None and packet.pts is None:
                         continue
+                    packet.rescale_pts(video_streams[0].time_base, out_video.time_base)
                     packet.stream = out_video
-                    out_container.mux(packet)
+                    _mux_packet_with_monotonic_dts(
+                        out_container, packet, out_video.index, last_dts
+                    )
 
                 elif packet.stream.type == "audio":
-                    for frame in packet.decode():
+                    try:
+                        decoded_frames = packet.decode()
+                    except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                        logger.warning(
+                            "Skipping unparseable audio packet in loudness: %s", exc
+                        )
+                        continue
+                    for frame in decoded_frames:
                         graph.push(frame)
                         while True:
                             try:
@@ -134,7 +186,9 @@ def normalize(
                             out_frame.time_base = Fraction(1, sample_rate)
                             audio_sample_count += out_frame.samples
                             for enc_packet in out_audio.encode(out_frame):
-                                out_container.mux(enc_packet)
+                                _mux_packet_with_monotonic_dts(
+                                    out_container, enc_packet, out_audio.index, last_dts
+                                )
 
             # Flush filter graph
             graph.push(None)
@@ -148,8 +202,12 @@ def normalize(
                 out_frame.time_base = Fraction(1, sample_rate)
                 audio_sample_count += out_frame.samples
                 for enc_packet in out_audio.encode(out_frame):
-                    out_container.mux(enc_packet)
+                    _mux_packet_with_monotonic_dts(
+                        out_container, enc_packet, out_audio.index, last_dts
+                    )
 
             # Flush audio encoder
             for enc_packet in out_audio.encode():
-                out_container.mux(enc_packet)
+                _mux_packet_with_monotonic_dts(
+                    out_container, enc_packet, out_audio.index, last_dts
+                )

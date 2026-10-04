@@ -1,11 +1,9 @@
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from app.pipeline.cut import (
     CutStrategy,
-    _add_video_stream,
     _resolve_audio_encoder,
     _resolve_video_encoder,
     cut,
@@ -53,7 +51,7 @@ def test_cut_video_only(tmp_path: Path):
         end_seconds=4.0,
     )
 
-    assert strategy == CutStrategy.STREAM_COPY
+    assert strategy in (CutStrategy.STREAM_COPY, CutStrategy.SMART_CUT)
     assert output_clip.is_file()
     info = open_and_inspect(output_clip)
     assert info.has_video is True
@@ -87,25 +85,26 @@ def test_cut_audio_only(tmp_path: Path):
     assert_playable(output_clip)
 
 
-def test_cut_reencode_fallback(tmp_path: Path):
-    """Verify that forced re-encoding produces a valid, playable cut."""
+from unittest import mock
+
+
+def test_cut_smart_fallback_to_stream_copy(tmp_path: Path):
+    """Verify that when smart cut fails, cut falls back to stream copy."""
     source_clip = generate_clip(4.0, output_dir=tmp_path)
-    output_clip = tmp_path / "cut_reencode.mp4"
+    output_clip = tmp_path / "cut_fallback.mp4"
 
-    strategy = cut(
-        source_clip,
-        output_clip,
-        start_seconds=1.0,
-        end_seconds=3.0,
-        force_reencode=True,
-    )
+    with mock.patch(
+        "app.pipeline.cut._cut_smart", side_effect=RuntimeError("GOP analysis error")
+    ):
+        strategy = cut(
+            source_clip,
+            output_clip,
+            start_seconds=1.0,
+            end_seconds=3.0,
+        )
 
-    assert strategy == CutStrategy.RE_ENCODE
+    assert strategy == CutStrategy.STREAM_COPY
     assert output_clip.is_file()
-
-    info = open_and_inspect(output_clip)
-    assert info.duration is not None
-    assert abs(info.duration - 2.0) <= 0.5
     assert_playable(output_clip)
 
 
@@ -155,28 +154,27 @@ def test_resolve_encoders():
 
 
 def test_cut_reencode_video_and_audio(tmp_path: Path):
-    """Verify forced re-encode path handles both video and audio streams seamlessly."""
+    """Verify smart cut handles both video and audio streams seamlessly."""
     source_clip = generate_clip(
-        5.0, has_video=True, has_audio=True, output_dir=tmp_path
+        8.0, has_video=True, has_audio=True, output_dir=tmp_path
     )
-    output_clip = tmp_path / "cut_reencode_both.mp4"
+    output_clip = tmp_path / "cut_both.mp4"
 
     strategy = cut(
         source_clip,
         output_clip,
-        start_seconds=1.0,
-        end_seconds=4.0,
-        force_reencode=True,
+        start_seconds=1.5,
+        end_seconds=6.5,
     )
 
-    assert strategy == CutStrategy.RE_ENCODE
+    assert strategy in (CutStrategy.STREAM_COPY, CutStrategy.SMART_CUT)
     assert output_clip.is_file()
 
     info = open_and_inspect(output_clip)
     assert info.has_video is True
     assert info.has_audio is True
     assert info.duration is not None
-    assert abs(info.duration - 3.0) <= 0.5
+    assert abs(info.duration - 5.0) <= 0.8
     assert_playable(output_clip)
 
 
@@ -192,70 +190,116 @@ def test_cut_rejects_identical_paths(tmp_path: Path):
     assert_playable(source_clip)
 
 
-def test_cut_reencode_container_codec_fallback(tmp_path: Path):
-    """Verify fallback encoder handles container incompatibilities without crashing."""
-    # Create an input clip
-    source_clip = generate_clip(3.0, output_dir=tmp_path)
-    output_clip = tmp_path / "cut_fallback.mp4"
+def test_cut_falls_back_to_stream_copy_when_no_interior_keyframes(tmp_path: Path):
+    """Verify cutting an interval smaller than a GOP falls back to stream copy."""
+    # Synthetic clip with keyframes every ~2s
+    source_clip = generate_clip(4.0, output_dir=tmp_path)
+    output_clip = tmp_path / "cut_tiny.mp4"
 
-    # Cutting into MP4 will resolve libx264/aac even if input codecs or fallbacks are invoked
-    strategy = cut(
-        source_clip,
-        output_clip,
-        start_seconds=0.5,
-        end_seconds=2.5,
-        force_reencode=True,
-    )
-
-    assert strategy == CutStrategy.RE_ENCODE
-    assert output_clip.is_file()
-    assert_playable(output_clip)
-
-
-def test_cut_reencode_with_threads(tmp_path: Path):
-    """Verify cut re-encode works with explicit thread constraints."""
-    source_clip = generate_clip(2.0, output_dir=tmp_path)
-    output_clip = tmp_path / "cut_threads.mp4"
+    # Interval 0.2 to 0.4 has no interior keyframe for smart cut, falls back to stream copy
     strategy = cut(
         source_clip,
         output_clip,
         start_seconds=0.2,
-        end_seconds=1.2,
-        force_reencode=True,
-        threads=1,
+        end_seconds=0.4,
     )
-    assert strategy == CutStrategy.RE_ENCODE
+    assert strategy == CutStrategy.STREAM_COPY
     assert output_clip.is_file()
     assert_playable(output_clip)
 
 
-def test_add_video_stream_fallback_preserves_options_and_defaults_preset():
-    """Verify fallback to libx264 preserves options and defaults preset to veryfast."""
-    # Scenario 1: options is None -> defaults to {"preset": "veryfast"}
-    container_1 = MagicMock()
-    container_1.add_stream.side_effect = [ValueError("unsupported"), MagicMock()]
-    _add_video_stream(container_1, "unknown_codec", rate=24, options=None)
-    container_1.add_stream.assert_called_with(
-        "libx264", rate=24, options={"preset": "veryfast"}
+def test_cut_fails_and_logs_error_when_both_fail(tmp_path: Path):
+    """Verify cut raises RuntimeError when both smart cut and stream copy fail."""
+    source_clip = generate_clip(4.0, output_dir=tmp_path)
+    output_clip = tmp_path / "cut_fail.mp4"
+
+    with (
+        mock.patch(
+            "app.pipeline.cut._cut_smart", side_effect=RuntimeError("Smart cut error")
+        ),
+        mock.patch(
+            "app.pipeline.cut._cut_stream_copy",
+            side_effect=RuntimeError("Stream copy error"),
+        ),
+        pytest.raises(RuntimeError, match="Trimming failed"),
+    ):
+        cut(source_clip, output_clip, start_seconds=1.0, end_seconds=3.0)
+
+
+def test_cut_with_threads(tmp_path: Path):
+    """Verify cut works with explicit thread constraints."""
+    source_clip = generate_clip(8.0, output_dir=tmp_path)
+    output_clip = tmp_path / "cut_threads.mp4"
+    strategy = cut(
+        source_clip,
+        output_clip,
+        start_seconds=1.5,
+        end_seconds=6.5,
+        threads=1,
+    )
+    assert strategy in (CutStrategy.STREAM_COPY, CutStrategy.SMART_CUT)
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+
+def test_cut_stream_copy_succeeds_without_fallback_when_keyframe_far(tmp_path: Path):
+    """Verify stream copy succeeds even when keyframe distance from start > 0.5s."""
+    # Synthetic clips have keyframes at ~2s intervals
+    source_clip = generate_clip(8.0, output_dir=tmp_path)
+    output_clip = tmp_path / "cut_stream_copy_distant.mp4"
+
+    strategy = cut(
+        source_clip,
+        output_clip,
+        start_seconds=3.0,
+        end_seconds=6.0,
     )
 
-    # Scenario 2: options with threads -> preserves threads and adds preset="veryfast"
-    container_2 = MagicMock()
-    container_2.add_stream.side_effect = [ValueError("unsupported"), MagicMock()]
-    _add_video_stream(container_2, "unknown_codec", rate=24, options={"threads": "2"})
-    container_2.add_stream.assert_called_with(
-        "libx264", rate=24, options={"threads": "2", "preset": "veryfast"}
+    assert strategy in (CutStrategy.STREAM_COPY, CutStrategy.SMART_CUT)
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+
+def test_smart_cut_frame_accurate(tmp_path: Path):
+    """Verify smart cut performs frame-accurate trimming and decodes completely without bitstream errors."""
+    import av
+
+    from app.config import PREVIEW_PRESETS
+    from app.pipeline.preview import generate_preview
+
+    source_clip = generate_clip(8.0, output_dir=tmp_path)
+    output_clip = tmp_path / "smart_cut.mp4"
+
+    strategy = cut(
+        source_clip,
+        output_clip,
+        start_seconds=1.2,
+        end_seconds=6.8,
     )
 
-    # Scenario 3: explicit preset provided -> preserves existing preset
-    container_3 = MagicMock()
-    container_3.add_stream.side_effect = [ValueError("unsupported"), MagicMock()]
-    _add_video_stream(
-        container_3,
-        "unknown_codec",
-        rate=24,
-        options={"preset": "medium", "threads": "1"},
-    )
-    container_3.add_stream.assert_called_with(
-        "libx264", rate=24, options={"preset": "medium", "threads": "1"}
-    )
+    assert strategy == CutStrategy.SMART_CUT
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+
+    # Exhaustively decode ALL video and audio packets across GOP boundary transitions
+    with av.open(str(output_clip)) as c:
+        v = c.streams.video[0]
+        v_decoded = sum(len(list(p.decode())) for p in c.demux(v))
+        assert v_decoded > 0
+
+    with av.open(str(output_clip)) as c:
+        a = c.streams.audio[0]
+        a_decoded = sum(len(list(p.decode())) for p in c.demux(a))
+        assert a_decoded > 0
+
+    # Ensure downstream preview generation consumes the smart-cut file without error
+    preview_clip = tmp_path / "smart_cut_preview.mp4"
+    preset = PREVIEW_PRESETS["big_video"]
+    generate_preview(output_clip, preview_clip, preset)
+    assert preview_clip.is_file()
+    assert_playable(preview_clip)
+
+    info = open_and_inspect(output_clip)
+    assert info.duration is not None
+    # 6.8 - 1.2 = 5.6s window; smart cut must be frame-accurate within 0.15s
+    assert abs(info.duration - 5.6) <= 0.15

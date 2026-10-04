@@ -221,7 +221,12 @@ def job_ingest(talk_id: int, staged_path: str, raw_key: str | None = None) -> No
         staged.unlink(missing_ok=True)
 
 
-def job_detect(talk_id: int, raw_key: str) -> None:
+def job_detect(
+    talk_id: int,
+    raw_key: str,
+    *,
+    tolerance_seconds: float | None = None,
+) -> None:
     job_id = None
     storage = get_storage_backend()
     try:
@@ -246,9 +251,10 @@ def job_detect(talk_id: int, raw_key: str) -> None:
             job_id = job.id
             scheduled_start = talk.start
             scheduled_end = talk.end
-            tolerance_seconds = float(
-                get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
-            )
+            if tolerance_seconds is None:
+                tolerance_seconds = float(
+                    get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
+                )
 
         # Omit parameter when default to preserve pipeline default and mock compatibility
         detect_kwargs = (
@@ -324,12 +330,24 @@ def job_cut(talk_id: int, raw_key: str, cut_key: str | None = None) -> None:
                 if settings.encoder_threads is not None
                 else {}
             )
-            cut(
+            cut_strategy = cut(
                 raw_path,
                 tmp_out,
                 start_seconds,
                 end_seconds,
                 **cut_kwargs,
+            )
+            strat_label = (
+                getattr(cut_strategy, "value", str(cut_strategy))
+                if cut_strategy is not None
+                else "unknown"
+            )
+            logger.info(
+                "Talk %s cut complete using strategy '%s' (bounds: %.2fs - %.2fs)",
+                talk_id,
+                strat_label,
+                start_seconds,
+                end_seconds,
             )
             _cache_waveform(storage, cut_key, tmp_out)
             storage.put(cut_key, tmp_out)
@@ -643,10 +661,16 @@ def job_concat(
             if settings.encoder_threads is not None
             else {}
         )
+        if intro_path or outro_path:
+            logger.info(
+                "Talk %s: intro/outro slates staged; deferring slate stitching to transcode "
+                "to unify encoding into a single pass and avoid duplicate re-encode.",
+                talk_id,
+            )
         concat(
             cut_path=cut_path,
-            intro_path=intro_path,
-            outro_path=outro_path,
+            intro_path=None,
+            outro_path=None,
             output_path=concat_key,
             backend=storage,
             **concat_kwargs,
@@ -918,6 +942,8 @@ def job_transcode(
     loud_key: str,
     final_key: str | None = None,
     progress_throttle_s: float = 5.0,
+    intro_key: str | None = None,
+    outro_key: str | None = None,
 ) -> None:
     final_key = final_key or f"{talk_id}/final/final.mp4"
     job_id = None
@@ -939,12 +965,37 @@ def job_transcode(
             db.commit()
             db.refresh(job)
             job_id = job.id
+            include_intro = talk.include_intro
+            include_outro = talk.include_outro
             preset_name = str(
                 get_setting("default_transcode_preset", "1080p_default", db=db)
             )
 
         loud_path = storage.get(loud_key)
         transcode_preset = TRANSCODE_PRESETS.get(preset_name, PRESET_1080P_DEFAULT)
+        resolved_intro_key = intro_key
+        if resolved_intro_key is None and include_intro:
+            candidate = f"{talk_id}/intro/intro.mp4"
+            if storage.exists(candidate):
+                resolved_intro_key = candidate
+
+        resolved_outro_key = outro_key
+        if resolved_outro_key is None and include_outro:
+            candidate = f"{talk_id}/outro/outro.mp4"
+            if storage.exists(candidate):
+                resolved_outro_key = candidate
+
+        intro_path = (
+            storage.get(resolved_intro_key)
+            if resolved_intro_key and storage.exists(resolved_intro_key)
+            else None
+        )
+        outro_path = (
+            storage.get(resolved_outro_key)
+            if resolved_outro_key and storage.exists(resolved_outro_key)
+            else None
+        )
+        target_lufs = None if "_loud" in loud_key else -16.0
         last_update_time = [0.0]
 
         def _on_progress(pct: float) -> None:
@@ -975,6 +1026,9 @@ def job_transcode(
             transcode(
                 loud_path,
                 tmp_out,
+                intro_path=intro_path,
+                outro_path=outro_path,
+                target_lufs=target_lufs,
                 on_progress=_on_progress,
                 **transcode_kwargs,
             )
