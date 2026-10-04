@@ -200,6 +200,7 @@ def test_generate_preview_with_threads_and_preset_speed(tmp_path: Path):
     assert len(libx264_calls) == 1
     encoder_options = libx264_calls[0].get("options", {})
     assert encoder_options.get("preset") == "ultrafast"
+    assert encoder_options.get("tune") == "fastdecode,zerolatency"
     assert encoder_options.get("threads") == "1"
 
     assert output_clip.is_file()
@@ -235,3 +236,69 @@ def test_generate_preview_high_framerate_decimation(tmp_path: Path):
         v = c.streams.video[0]
         avg_rate = float(v.average_rate or v.guessed_rate)
         assert avg_rate <= 30.0
+
+
+def test_generate_preview_start_and_end_seconds(tmp_path: Path):
+    """Verify generate_preview correctly windows using start_seconds and end_seconds."""
+    input_clip = generate_clip(6.0, resolution=(640, 360), output_dir=tmp_path)
+    output_clip = tmp_path / "windowed_preview.mp4"
+
+    generate_preview(
+        input_clip,
+        output_clip,
+        PREVIEW_PRESETS["small_video"],
+        start_seconds=1.5,
+        end_seconds=4.5,
+    )
+
+    assert output_clip.is_file()
+    assert_playable(output_clip)
+    info = open_and_inspect(output_clip)
+    assert info.duration is not None
+    # 4.5 - 1.5 = 3.0s window
+    assert abs(info.duration - 3.0) <= 0.8
+
+
+def test_generate_preview_invalid_start_end_bounds(tmp_path: Path):
+    """Verify negative start_seconds and inverted bounds raise ValueError."""
+    input_clip = generate_clip(2.0, output_dir=tmp_path)
+    output_clip = tmp_path / "out.mp4"
+    preset = PREVIEW_PRESETS["small_video"]
+
+    with pytest.raises(ValueError, match="start_seconds must be non-negative"):
+        generate_preview(input_clip, output_clip, preset, start_seconds=-1.0)
+
+    with pytest.raises(
+        ValueError, match="end_seconds .* must be greater than start_seconds"
+    ):
+        generate_preview(
+            input_clip, output_clip, preset, start_seconds=2.0, end_seconds=1.0
+        )
+
+    with pytest.raises(
+        ValueError, match="end_seconds .* must be greater than start_seconds"
+    ):
+        generate_preview(
+            input_clip, output_clip, preset, start_seconds=2.0, end_seconds=2.0
+        )
+
+
+def test_generate_preview_audio_stream_copy_vs_reencode(tmp_path: Path):
+    """Verify audio is stream-copied when start_seconds==0, but re-encoded when windowed."""
+    clip = generate_clip(3.0, has_video=True, has_audio=True, output_dir=tmp_path)
+    out_copy = tmp_path / "preview_copy.mp4"
+    out_windowed = tmp_path / "preview_windowed.mp4"
+
+    generate_preview(clip, out_copy, PREVIEW_PRESETS["small_video"], start_seconds=0.0)
+    assert out_copy.is_file()
+    assert_playable(out_copy)
+    info_copy = open_and_inspect(out_copy)
+    assert info_copy.has_audio is True
+
+    generate_preview(
+        clip, out_windowed, PREVIEW_PRESETS["small_video"], start_seconds=1.0
+    )
+    assert out_windowed.is_file()
+    assert_playable(out_windowed)
+    info_win = open_and_inspect(out_windowed)
+    assert info_win.has_audio is True

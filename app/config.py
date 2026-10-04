@@ -26,14 +26,14 @@ PREVIEW_PRESETS: dict[str, PreviewPreset] = {
         resolution=(320, 180),
         video_bitrate=150_000,
         audio_bitrate=32_000,
-        preset_speed="veryfast",
+        preset_speed="ultrafast",
     ),
     "big_video": PreviewPreset(
         name="big_video",
         resolution=(640, 360),
         video_bitrate=500_000,
         audio_bitrate=64_000,
-        preset_speed="veryfast",
+        preset_speed="ultrafast",
     ),
 }
 
@@ -262,7 +262,11 @@ def get_setting(key: str, default: Any = None, db: Any = None) -> Any:
 
             with SessionLocal() as session:
                 row = session.get(SystemSetting, normalized_key)
-        if row is not None:
+        if (
+            row is not None
+            and isinstance(row, SystemSetting)
+            and isinstance(getattr(row, "value", None), str)
+        ):
             return _cast_setting_value(normalized_key, row.value, default)
     except Exception as exc:  # noqa: BLE001
         logger.warning(

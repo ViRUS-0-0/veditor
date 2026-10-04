@@ -1356,7 +1356,7 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
         )
 
     # 7. Simulate job_preview running in worker
-    def fake_preview(inp, out, preset):
+    def fake_preview(inp, out, preset, *args, **kwargs):
         Path(out).write_bytes(b"preview media")
 
     with (

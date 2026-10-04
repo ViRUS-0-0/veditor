@@ -952,3 +952,20 @@ def test_multi_client_isolation_on_webhook_dispatch():
         assert len(calls_made) == 2
         assert calls_made[0][1][0] == "https://subscriber-1.example/hook"
         assert calls_made[1][1][0] == "https://subscriber-2.example/hook"
+
+
+def test_get_event_client_prioritizes_configured_webhook():
+    from app.routes.events import _get_event_client
+
+    mock_db = MagicMock()
+    c1 = models.Client(id=1, event_ids=[10], webhook_url=None, webhook_secret=None)
+    c2 = models.Client(
+        id=2,
+        event_ids=[10],
+        webhook_url="https://example.com/webhook",
+        webhook_secret="sec",
+    )
+    mock_db.query.return_value.filter.return_value.all.return_value = [c1, c2]
+
+    chosen = _get_event_client(10, mock_db)
+    assert chosen.id == 2

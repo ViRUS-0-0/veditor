@@ -1,11 +1,12 @@
 import math
+from fractions import Fraction
 from pathlib import Path
 
 import av
 import numpy as np
 import pytest
 
-from app.pipeline.loudness import normalize
+from app.pipeline.loudness import normalize, rescale_pts
 from tests.conftest import (
     assert_playable,
     generate_clip,
@@ -158,3 +159,45 @@ def test_normalize_invalid_arguments(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Input and output paths must be different"):
         normalize(valid_clip, valid_clip)
+
+
+def test_rescale_pts_and_monotonic_dts():
+    """Verify rescale_pts rescales packet timestamps and monkey patches av.Packet."""
+    p = av.Packet()
+    p.pts = 100
+    p.dts = 50
+    p.duration = 20
+    rescale_pts(p, Fraction(1, 1000), Fraction(1, 10000))
+    assert p.pts == 1000
+    assert p.dts == 500
+    assert p.duration == 200
+    assert p.time_base == Fraction(1, 10000)
+
+    # Method call via monkey-patched Packet
+    p.rescale_pts(Fraction(1, 10000), Fraction(1, 20000))
+    assert p.pts == 2000
+    assert p.dts == 1000
+
+
+def test_normalize_enforces_monotonic_dts(tmp_path: Path):
+    """Verify that normalized output streams have strictly non-decreasing DTS."""
+    source_clip = generate_clip(
+        2.0,
+        has_video=True,
+        has_audio=True,
+        output_dir=tmp_path,
+    )
+    output_clip = tmp_path / "normalized_monotonic.mp4"
+
+    normalize(source_clip, output_clip)
+    assert output_clip.is_file()
+
+    with av.open(str(output_clip)) as c:
+        for stream in c.streams:
+            last_dts = -float("inf")
+            for packet in c.demux(stream):
+                if packet.dts is not None:
+                    assert packet.dts > last_dts, (
+                        f"Non-monotonic DTS in stream {stream.type}: {packet.dts} <= {last_dts}"
+                    )
+                    last_dts = packet.dts
