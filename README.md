@@ -25,6 +25,28 @@ To run the entire stack (API, Worker, Postgres, Redis) in Docker:
    curl http://localhost:8000/health
    ```
 
+#### Upgrading Existing Deployments (PostgreSQL Volume Migration)
+
+Earlier versions did not declare a named volume for PostgreSQL, storing database files in an anonymous volume. To retain existing data when upgrading to the named `postgres_data` volume:
+
+- **Option A (Backup & Restore - Recommended)**:
+  ```bash
+  # 1. Back up database before upgrading:
+  docker compose exec -T postgres pg_dump -U veditor -d veditor > veditor_backup.sql
+
+  # 2. Start PostgreSQL with the new volume:
+  docker compose up -d postgres
+
+  # 3. Restore data into the named volume:
+  docker compose exec -T postgres psql -U veditor -d veditor < veditor_backup.sql
+  ```
+
+- **Option B (Direct Volume Copy)**:
+  Copy the database directory from the old anonymous volume into the named volume before starting:
+  ```bash
+  docker run --rm -v <old_anonymous_volume>:/from -v veditor_postgres_data:/to alpine cp -a /from/. /to/
+  ```
+
 ### Option 2: Full Native Setup (Recommended for Dev)
 
 If you prefer to run the entire stack locally without Docker (for faster reloading and easier debugging), you must install the application, `ffmpeg`, Postgres, and Redis directly on your host machine.

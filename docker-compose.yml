@@ -59,6 +59,13 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
+      # One-time migration for existing deployments upgrading from anonymous volumes:
+      # Option 1 (backup & restore - recommended):
+      #   1. Back up: docker compose exec -T postgres pg_dump -U veditor -d veditor > backup.sql
+      #   2. Start new postgres: docker compose up -d postgres
+      #   3. Restore: docker compose exec -T postgres psql -U veditor -d veditor < backup.sql
+      # Option 2 (direct volume copy before startup):
+      #   docker run --rm -v <old_anon_volume>:/from -v veditor_postgres_data:/to alpine cp -a /from/. /to/
       - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U veditor -d veditor"]
