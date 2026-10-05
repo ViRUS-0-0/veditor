@@ -208,10 +208,10 @@
       {% endif %}
 
       <!-- Pipeline Loader Screen for Active Processing States -->
-      <div class="player-viewport-loader{% if is_processing %} is-active{% endif %}" id="studio-viewport-loader" aria-live="polite">
+      <div class="player-viewport-loader{% if is_processing %} is-active{% endif %}" id="studio-viewport-loader" role="status" aria-live="polite" aria-label="Video processing status">
         <div class="viewport-loader-content">
           <div class="viewport-loader-spinner-wrap">
-            <span class="spinner spinner-lg"></span>
+            <span class="spinner spinner-lg" aria-hidden="true"></span>
           </div>
           <div class="viewport-loader-header">
             <h3 class="viewport-loader-title" id="viewport-loader-title">{{ default_title }}</h3>

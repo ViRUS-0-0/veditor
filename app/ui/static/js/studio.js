@@ -343,7 +343,7 @@ function updateStudioLoader(talkStatus, activeJob) {
   const loader = document.getElementById('studio-viewport-loader');
   if (!loader) return;
 
-  const isProc = ACTIVE_PROCESSING_STATES.includes(talkStatus) || Boolean(activeJob);
+  const isProc = ACTIVE_PROCESSING_STATES.includes(talkStatus);
   if (isProc) {
     if (panel) panel.classList.add('is-processing');
     loader.classList.add('is-active');
@@ -354,6 +354,9 @@ function updateStudioLoader(talkStatus, activeJob) {
   } else {
     if (panel) panel.classList.remove('is-processing');
     loader.classList.remove('is-active');
+    if (video && video.src) {
+      video.style.display = 'block';
+    }
     return;
   }
 
@@ -899,6 +902,7 @@ window.approveTalk = async function(id) {
     alert(`Pipeline action failed: ${err.message}`);
     if (progressWrap) progressWrap.style.display = 'none';
     setBtnBusy(btn, false);
+    updateStudioLoader(talkStatus, null);
   }
 };
 
@@ -1442,12 +1446,10 @@ async function pollStudioJobs() {
       return;
     }
 
-    const activeJob = jobs.findLast ? jobs.findLast(j => j.status === 'running') : [...jobs].reverse().find(j => j.status === 'running');
+    const activeJob = jobs.find(j => j.status === 'running');
     const talkStatus = data.status || currentStatus;
 
-    if (ACTIVE_PROCESSING_STATES.includes(talkStatus) || Boolean(activeJob)) {
-      updateStudioLoader(talkStatus, activeJob);
-    }
+    updateStudioLoader(talkStatus, activeJob);
 
     const hasRunningJob = Boolean(activeJob);
     const isTerminal = ['done', 'failed', 'rejected', 'broken'].includes(talkStatus);
