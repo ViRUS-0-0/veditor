@@ -992,7 +992,7 @@ def test_studio_viewport_loader_states_and_dashboard_clean_status(
     assert "is-active" in res.text
     assert 'role="status"' in res.text
     assert 'aria-label="Video processing status"' in res.text
-    assert 'aria-hidden="true"' in res.text
+    assert '<span class="spinner spinner-lg" aria-hidden="true"></span>' in res.text
     assert "Cutting Recording Bounds" in res.text
     assert "45%" in res.text
     assert "seconds remaining" in res.text or "seconds elapsed" in res.text
