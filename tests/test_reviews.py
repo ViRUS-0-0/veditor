@@ -850,7 +850,7 @@ def test_needs_work_subsequent_cut_overwrites_outputs():
         ),
         patch(
             "app.tasks.generate_preview",
-            side_effect=lambda inp, out, preset: Path(out).write_bytes(
+            side_effect=lambda inp, out, *args, **kwargs: Path(out).write_bytes(
                 b"new preview content v2"
             ),
         ),

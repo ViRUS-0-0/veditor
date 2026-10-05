@@ -1374,3 +1374,62 @@ def test_job_detect_room_recording_tolerance_override(dummy_talk, mock_storage):
         )
         assert dummy_talk.status == "pending_approval"
         assert dummy_talk.raw_duration_seconds == 12600.0
+
+
+def test_unified_transcode_resolves_staged_slates_and_bypasses_concat_reencode(
+    dummy_talk, mock_storage
+):
+    """Verify job_concat avoids re-encoding slates on light worker and job_transcode resolves them for single pass."""
+    dummy_talk.status = "assembling"
+    dummy_talk.include_intro = True
+    dummy_talk.include_outro = True
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    captured_concat_kwargs = {}
+
+    def fake_concat(cut_path, intro_path, outro_path, output_path, **kwargs):
+        captured_concat_kwargs["cut_path"] = cut_path
+        captured_concat_kwargs["intro_path"] = intro_path
+        captured_concat_kwargs["outro_path"] = outro_path
+        captured_concat_kwargs["output_path"] = output_path
+
+    captured_transcode_kwargs = {}
+
+    def fake_transcode(input_path, output_path, **kwargs):
+        captured_transcode_kwargs["input_path"] = input_path
+        captured_transcode_kwargs["output_path"] = output_path
+        captured_transcode_kwargs.update(kwargs)
+
+    # 1. job_concat: validates slates but passes cut alone to concat()
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.concat", side_effect=fake_concat),
+        patch("app.tasks.light_queue.enqueue"),
+    ):
+        job_concat(
+            1,
+            cut_key="1/cut/cut.mp4",
+            intro_key="1/intro/intro.mp4",
+            outro_key="1/outro/outro.mp4",
+            concat_key="1/assemble/assemble.mp4",
+        )
+
+    assert captured_concat_kwargs["intro_path"] is None
+    assert captured_concat_kwargs["outro_path"] is None
+    assert captured_concat_kwargs["output_path"] == "1/assemble/assemble.mp4"
+
+    # 2. job_transcode: resolves staged slates and unifies them in single transcode pass
+    dummy_talk.status = "transcoding"
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.transcode", side_effect=fake_transcode),
+        patch("app.tasks.light_queue.enqueue"),
+    ):
+        job_transcode(1, "1/assemble/assemble_loud.mp4", "1/final/final.mp4")
+
+    assert captured_transcode_kwargs["intro_path"] == Path("/tmp/fake_media.mp4")
+    assert captured_transcode_kwargs["outro_path"] == Path("/tmp/fake_media.mp4")
+    assert captured_transcode_kwargs["target_lufs"] is None

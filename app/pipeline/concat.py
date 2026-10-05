@@ -51,7 +51,6 @@ def _can_stream_copy(segments: list[Path]) -> bool:
                             ctx.height,
                             ctx.pix_fmt,
                             fps_val,
-                            v.time_base,
                             bytes(ctx.extradata or b""),
                         )
                     )
@@ -66,7 +65,6 @@ def _can_stream_copy(segments: list[Path]) -> bool:
                             ctx.sample_rate,
                             ctx.channels,
                             fmt_name,
-                            a.time_base,
                             bytes(ctx.extradata or b""),
                         )
                     )
@@ -230,7 +228,7 @@ def _concat_reencode(
     ) as out_container:
         out_video = None
         if has_video:
-            video_options: dict[str, str] = {"crf": "22", "preset": "veryfast"}
+            video_options: dict[str, str] = {"crf": "22", "preset": "ultrafast"}
             if threads is not None:
                 video_options["threads"] = str(threads)
             out_video = out_container.add_stream(
@@ -301,7 +299,12 @@ def _concat_reencode(
 
                 streams = [s for s in (v_stream, a_stream) if s is not None]
                 for packet in in_c.demux(*streams):
-                    for frame in packet.decode():
+                    try:
+                        decoded_frames = packet.decode()
+                    except (av.error.InvalidDataError, av.FFmpegError) as exc:
+                        logger.warning("Skipping unparseable packet in concat: %s", exc)
+                        continue
+                    for frame in decoded_frames:
                         if isinstance(frame, av.VideoFrame) and out_video is not None:
                             seg_had_video = True
                             if fps_graph is not None:

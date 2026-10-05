@@ -381,3 +381,31 @@ def test_concat_rejects_invalid_threads(tmp_path: Path):
 
     with pytest.raises(ValueError, match="threads must be positive"):
         concat(cut_path, intro_path=intro_path, output_path=output_path, threads=-2)
+
+
+def test_concat_mismatched_extradata_reencodes_successfully(tmp_path: Path):
+    """Verify that concatenating clips with mismatched extradata falls back to re-encoding and decodes cleanly."""
+    from app.pipeline.intro import generate_intro_clip
+
+    cut_path = generate_clip(2.0, output_dir=tmp_path, fps=24, resolution=(1920, 1080))
+    intro_path = tmp_path / "intro.mp4"
+    generate_intro_clip(
+        intro_path,
+        title="Talk",
+        event_name="Event",
+        duration_seconds=1.0,
+        fps=24,
+        resolution=(1920, 1080),
+    )
+    out_path = tmp_path / "out_reencoded.mp4"
+
+    result = concat(cut_path, intro_path=intro_path, output_path=out_path)
+    assert Path(result).is_file()
+
+    with av.open(str(result)) as container:
+        v = container.streams.video[0]
+        decoded_frames = 0
+        for packet in container.demux(v):
+            for _ in packet.decode():
+                decoded_frames += 1
+        assert decoded_frames > 0
