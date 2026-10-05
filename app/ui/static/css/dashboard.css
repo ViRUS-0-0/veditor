@@ -90,35 +90,6 @@
   padding-right: 16px;
 }
 
-.job-progress-col {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 110px;
-}
-
-.job-progress-info {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.job-progress-pct {
-  font-size: 0.65rem;
-  padding: 1px 4px;
-}
-
-.job-progress-track-sm {
-  height: 3px;
-  margin: 0;
-}
-
-.job-progress-time {
-  font-size: 0.65rem;
-  color: var(--v-text-muted);
-  font-variant-numeric: tabular-nums;
-}
 
 .row-actions-group {
   display: inline-flex;

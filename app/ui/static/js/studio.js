@@ -259,9 +259,153 @@ function initWaveformListeners() {
   }
 }
 
+// ── Background Processing States & Viewport Loader ───────────────
+const ACTIVE_PROCESSING_STATES = [
+  'detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'
+];
+
+const STAGE_DETAILS = {
+  detecting: {
+    title: 'Detecting Recording Metadata',
+    desc: 'Analyzing container format, video streams, and audio loudness...',
+  },
+  cutting: {
+    title: 'Cutting Recording Bounds',
+    desc: 'Trimming video streams to selected start and end timestamps...',
+  },
+  generating_previews: {
+    title: 'Generating Preview Video',
+    desc: 'Rendering low-resolution web preview and audio waveform...',
+  },
+  assembling: {
+    title: 'Assembling Talk Media',
+    desc: 'Attaching bumpers, title cards, and combining video segments...',
+  },
+  transcoding: {
+    title: 'Transcoding Broadcast Master',
+    desc: 'Encoding high-definition broadcast video and leveling audio...',
+  },
+  uploading: {
+    title: 'Publishing & Uploading Media',
+    desc: 'Finalizing broadcast master files and updating asset storage...',
+  },
+};
+
+const JOB_KIND_DETAILS = {
+  detect: {
+    title: 'Detecting Recording Metadata',
+    desc: 'Analyzing container format, video streams, and audio loudness...',
+  },
+  ingest: {
+    title: 'Ingesting Video Recording',
+    desc: 'Validating media container and preparing video streams...',
+  },
+  cut: {
+    title: 'Cutting Recording Bounds',
+    desc: 'Trimming video streams to selected start and end timestamps...',
+  },
+  preview: {
+    title: 'Generating Preview Video',
+    desc: 'Rendering low-resolution web preview and audio waveform...',
+  },
+  loudness: {
+    title: 'Normalizing Audio Loudness',
+    desc: 'Measuring and leveling loudness to EBU R128 broadcast standards...',
+  },
+  intro: {
+    title: 'Generating Intro Bumper',
+    desc: 'Rendering talk title card and speaker introduction slate...',
+  },
+  outro: {
+    title: 'Generating Outro Bumper',
+    desc: 'Rendering closing credits and conference card...',
+  },
+  concat: {
+    title: 'Concatenating Video Segments',
+    desc: 'Joining intro bumper, talk footage, and outro bumper...',
+  },
+  assembly: {
+    title: 'Assembling Talk Media',
+    desc: 'Attaching bumpers, title cards, and combining video segments...',
+  },
+  transcode: {
+    title: 'Transcoding Broadcast Master',
+    desc: 'Encoding high-definition broadcast video and leveling audio...',
+  },
+  publish: {
+    title: 'Publishing & Uploading Media',
+    desc: 'Finalizing broadcast master files and updating asset storage...',
+  },
+};
+
+function updateStudioLoader(talkStatus, activeJob) {
+  const panel = document.getElementById('player-panel');
+  const loader = document.getElementById('studio-viewport-loader');
+  if (!loader) return;
+
+  const isProc = ACTIVE_PROCESSING_STATES.includes(talkStatus) || Boolean(activeJob);
+  if (isProc) {
+    if (panel) panel.classList.add('is-processing');
+    loader.classList.add('is-active');
+    if (video) {
+      video.pause();
+      video.style.display = 'none';
+    }
+  } else {
+    if (panel) panel.classList.remove('is-processing');
+    loader.classList.remove('is-active');
+    return;
+  }
+
+  const details = (activeJob && JOB_KIND_DETAILS[activeJob.kind]) ||
+    STAGE_DETAILS[talkStatus] ||
+    { title: 'Processing Video Pipeline', desc: 'Background video processing job in progress...' };
+
+  const titleEl = document.getElementById('viewport-loader-title');
+  const descEl = document.getElementById('viewport-loader-desc');
+  const statusLabel = document.getElementById('viewport-loader-status-label');
+  const pctBadge = document.getElementById('viewport-loader-pct');
+  const fill = document.getElementById('viewport-loader-fill');
+  const timingEl = document.getElementById('viewport-loader-timing');
+
+  if (titleEl) titleEl.textContent = details.title;
+  if (descEl) descEl.textContent = details.desc;
+  if (statusLabel) statusLabel.textContent = (talkStatus || (activeJob && activeJob.kind) || 'Processing').replace(/_/g, ' ');
+
+  const pct = (activeJob && activeJob.progress_pct !== null && activeJob.progress_pct !== undefined)
+    ? Math.round(activeJob.progress_pct)
+    : 0;
+
+  if (pctBadge) pctBadge.textContent = `${pct}%`;
+  if (fill) fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+
+  if (timingEl) {
+    if (activeJob && activeJob.estimated_remaining !== null && activeJob.estimated_remaining !== undefined && activeJob.estimated_remaining > 0) {
+      timingEl.textContent = `~${Math.round(activeJob.estimated_remaining)} seconds remaining`;
+    } else if (activeJob && activeJob.elapsed_time !== null && activeJob.elapsed_time !== undefined) {
+      timingEl.textContent = `${Math.round(activeJob.elapsed_time)} seconds elapsed`;
+    } else {
+      timingEl.textContent = '';
+    }
+  }
+}
+
+function showStudioLoader(stageOrStatus) {
+  const panel = document.getElementById('player-panel');
+  const loader = document.getElementById('studio-viewport-loader');
+  if (panel) panel.classList.add('is-processing');
+  if (loader) loader.classList.add('is-active');
+  if (video) {
+    video.pause();
+    video.style.display = 'none';
+  }
+  updateStudioLoader(stageOrStatus || getTalkStatus(), null);
+}
+
 // ── Video Loading ───────────────────────────────────────────────
 window.loadVideoSrc = function(url) {
   if (!video) return;
+  if (ACTIVE_PROCESSING_STATES.includes(getTalkStatus())) return;
   video.pause();
   boundsEdited = false;
   video.src = url;
@@ -283,6 +427,15 @@ window.loadVideoSrc = function(url) {
 };
 
 function initInitialVideo() {
+  const currentTalkStatus = getTalkStatus();
+  if (ACTIVE_PROCESSING_STATES.includes(currentTalkStatus)) {
+    if (video) {
+      video.pause();
+      video.style.display = 'none';
+    }
+    updateStudioLoader(currentTalkStatus, null);
+    return;
+  }
   const sourceSelect = document.getElementById('media-source-select');
   if (sourceSelect && sourceSelect.value) {
     window.loadVideoSrc(sourceSelect.value);
@@ -666,6 +819,9 @@ window.approveTalk = async function(id) {
   }
 
   setBtnBusy(btn, true, 'Processing...');
+
+  const targetStage = talkStatus === 'preview' ? 'transcoding' : (talkStatus === 'pending_bounds' || talkStatus === 'needs_work' ? 'cutting' : (talkStatus === 'pending_intro_outro' ? 'assembling' : talkStatus));
+  showStudioLoader(targetStage);
 
   const progressWrap = document.getElementById('pipeline-progress-wrap');
   const progressFill = document.getElementById('pipeline-progress-fill');
@@ -1286,8 +1442,14 @@ async function pollStudioJobs() {
       return;
     }
 
-    const hasRunningJob = jobs.some(j => j.status === 'running');
-    const talkStatus = data.status;
+    const activeJob = jobs.findLast ? jobs.findLast(j => j.status === 'running') : [...jobs].reverse().find(j => j.status === 'running');
+    const talkStatus = data.status || currentStatus;
+
+    if (ACTIVE_PROCESSING_STATES.includes(talkStatus) || Boolean(activeJob)) {
+      updateStudioLoader(talkStatus, activeJob);
+    }
+
+    const hasRunningJob = Boolean(activeJob);
     const isTerminal = ['done', 'failed', 'rejected', 'broken'].includes(talkStatus);
     if (!hasRunningJob && isTerminal && studioPollInterval) {
       clearInterval(studioPollInterval);

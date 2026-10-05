@@ -229,25 +229,7 @@
             {% else %}—{% endif %}
           </td>
           <td class="status-cell" data-talk-id="{{ talk.id }}">
-            {% set active_job = (talk.jobs | selectattr('status', 'equalto', 'running') | list | first) if talk.jobs else none %}
-            {% if active_job and active_job.progress_pct is not none %}
-              <div class="job-progress-col">
-                <div class="job-progress-info">
-                  <span class="badge badge-blue badge-pulse"><span class="badge-dot"></span>{{ talk.status | replace('_', ' ') | title }}</span>
-                  <span class="badge badge-info job-progress-pct">{{ "%.0f"|format(active_job.progress_pct) }}%</span>
-                </div>
-                <div class="job-progress-track job-progress-track-sm">
-                  <div class="job-progress-fill animated" data-progress="{{ active_job.progress_pct }}"></div>
-                </div>
-                {% if active_job.estimated_remaining is not none %}
-                  <span class="job-progress-time">~{{ "%.0f"|format(active_job.estimated_remaining) }}s left</span>
-                {% elif active_job.elapsed_time is not none %}
-                  <span class="job-progress-time">{{ "%.0f"|format(active_job.elapsed_time) }}s elapsed</span>
-                {% endif %}
-              </div>
-            {% else %}
-              {{ status_badge(talk.status) }}
-            {% endif %}
+            {{ status_badge(talk.status) }}
           </td>
           <td class="col-actions">
             <div class="row-actions-group">
