@@ -264,78 +264,27 @@ const ACTIVE_PROCESSING_STATES = [
   'detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'
 ];
 
-const STAGE_DETAILS = {
-  detecting: {
-    title: 'Detecting Recording Metadata',
-    desc: 'Analyzing container format, video streams, and audio loudness...',
-  },
-  cutting: {
-    title: 'Cutting Recording Bounds',
-    desc: 'Trimming video streams to selected start and end timestamps...',
-  },
-  generating_previews: {
-    title: 'Generating Preview Video',
-    desc: 'Rendering low-resolution web preview and audio waveform...',
-  },
-  assembling: {
-    title: 'Assembling Talk Media',
-    desc: 'Attaching bumpers, title cards, and combining video segments...',
-  },
-  transcoding: {
-    title: 'Transcoding Broadcast Master',
-    desc: 'Encoding high-definition broadcast video and leveling audio...',
-  },
-  uploading: {
-    title: 'Publishing & Uploading Media',
-    desc: 'Finalizing broadcast master files and updating asset storage...',
-  },
+const STAGE_TITLES = {
+  detecting: 'Detecting Recording Metadata',
+  cutting: 'Cutting Recording Bounds',
+  generating_previews: 'Generating Preview Video',
+  assembling: 'Assembling Talk Media',
+  transcoding: 'Transcoding Broadcast Master',
+  uploading: 'Publishing & Uploading Media',
 };
 
-const JOB_KIND_DETAILS = {
-  detect: {
-    title: 'Detecting Recording Metadata',
-    desc: 'Analyzing container format, video streams, and audio loudness...',
-  },
-  ingest: {
-    title: 'Ingesting Video Recording',
-    desc: 'Validating media container and preparing video streams...',
-  },
-  cut: {
-    title: 'Cutting Recording Bounds',
-    desc: 'Trimming video streams to selected start and end timestamps...',
-  },
-  preview: {
-    title: 'Generating Preview Video',
-    desc: 'Rendering low-resolution web preview and audio waveform...',
-  },
-  loudness: {
-    title: 'Normalizing Audio Loudness',
-    desc: 'Measuring and leveling loudness to EBU R128 broadcast standards...',
-  },
-  intro: {
-    title: 'Generating Intro Bumper',
-    desc: 'Rendering talk title card and speaker introduction slate...',
-  },
-  outro: {
-    title: 'Generating Outro Bumper',
-    desc: 'Rendering closing credits and conference card...',
-  },
-  concat: {
-    title: 'Concatenating Video Segments',
-    desc: 'Joining intro bumper, talk footage, and outro bumper...',
-  },
-  assembly: {
-    title: 'Assembling Talk Media',
-    desc: 'Attaching bumpers, title cards, and combining video segments...',
-  },
-  transcode: {
-    title: 'Transcoding Broadcast Master',
-    desc: 'Encoding high-definition broadcast video and leveling audio...',
-  },
-  publish: {
-    title: 'Publishing & Uploading Media',
-    desc: 'Finalizing broadcast master files and updating asset storage...',
-  },
+const JOB_KIND_TITLES = {
+  detect: 'Detecting Recording Metadata',
+  ingest: 'Ingesting Video Recording',
+  cut: 'Cutting Recording Bounds',
+  preview: 'Generating Preview Video',
+  loudness: 'Normalizing Audio Loudness',
+  intro: 'Generating Intro Bumper',
+  outro: 'Generating Outro Bumper',
+  concat: 'Concatenating Video Segments',
+  assembly: 'Assembling Talk Media',
+  transcode: 'Transcoding Broadcast Master',
+  publish: 'Publishing & Uploading Media',
 };
 
 function updateStudioLoader(talkStatus, activeJob) {
@@ -360,19 +309,17 @@ function updateStudioLoader(talkStatus, activeJob) {
     return;
   }
 
-  const details = (activeJob && JOB_KIND_DETAILS[activeJob.kind]) ||
-    STAGE_DETAILS[talkStatus] ||
-    { title: 'Processing Video Pipeline', desc: 'Background video processing job in progress...' };
+  const title = (activeJob && JOB_KIND_TITLES[activeJob.kind]) ||
+    STAGE_TITLES[talkStatus] ||
+    'Processing Video Pipeline';
 
   const titleEl = document.getElementById('viewport-loader-title');
-  const descEl = document.getElementById('viewport-loader-desc');
   const statusLabel = document.getElementById('viewport-loader-status-label');
   const pctBadge = document.getElementById('viewport-loader-pct');
   const fill = document.getElementById('viewport-loader-fill');
   const timingEl = document.getElementById('viewport-loader-timing');
 
-  if (titleEl) titleEl.textContent = details.title;
-  if (descEl) descEl.textContent = details.desc;
+  if (titleEl) titleEl.textContent = title;
   if (statusLabel) statusLabel.textContent = (talkStatus || (activeJob && activeJob.kind) || 'Processing').replace(/_/g, ' ');
 
   const pct = (activeJob && activeJob.progress_pct !== null && activeJob.progress_pct !== undefined)

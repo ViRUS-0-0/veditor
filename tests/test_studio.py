@@ -942,6 +942,7 @@ def test_dashboard_and_studio_render_active_job_progress(
     assert "is-processing" in studio_res.text
     assert "Transcoding Broadcast Master" in studio_res.text
     assert "72%" in studio_res.text
+    assert "viewport-loader-desc" not in studio_res.text
     assert "stepper-timeline" in studio_res.text
     assert "Recent Jobs" not in studio_res.text
     assert "job-card" not in studio_res.text
@@ -994,6 +995,7 @@ def test_studio_viewport_loader_states_and_dashboard_clean_status(
     assert 'aria-label="Video processing status"' in res.text
     assert '<span class="spinner spinner-lg" aria-hidden="true"></span>' in res.text
     assert "Cutting Recording Bounds" in res.text
+    assert "viewport-loader-desc" not in res.text
     assert "45%" in res.text
     assert "seconds remaining" in res.text or "seconds elapsed" in res.text
 

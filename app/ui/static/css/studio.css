@@ -219,7 +219,6 @@ a.breadcrumb-event:hover {
 .viewport-loader-header {
   display: flex;
   flex-direction: column;
-  gap: 6px;
 }
 
 .viewport-loader-title {
@@ -228,13 +227,6 @@ a.breadcrumb-event:hover {
   color: var(--v-text-primary);
   margin: 0;
   letter-spacing: -0.01em;
-}
-
-.viewport-loader-desc {
-  font-size: 0.85rem;
-  color: var(--v-text-muted);
-  margin: 0;
-  line-height: 1.45;
 }
 
 .viewport-loader-progress-box {

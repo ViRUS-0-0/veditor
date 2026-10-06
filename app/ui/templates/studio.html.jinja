@@ -101,25 +101,18 @@
 {% set active_job = (talk.jobs | selectattr('status', 'equalto', 'running') | list | first) if talk.jobs else none %}
 {% if talk.status == 'detecting' %}
   {% set default_title = 'Detecting Recording Metadata' %}
-  {% set default_desc = 'Analyzing container format, video streams, and audio loudness...' %}
 {% elif talk.status == 'cutting' %}
   {% set default_title = 'Cutting Recording Bounds' %}
-  {% set default_desc = 'Trimming video streams to selected start and end timestamps...' %}
 {% elif talk.status == 'generating_previews' %}
   {% set default_title = 'Generating Preview Video' %}
-  {% set default_desc = 'Rendering low-resolution web preview and audio waveform...' %}
 {% elif talk.status == 'assembling' %}
   {% set default_title = 'Assembling Talk Media' %}
-  {% set default_desc = 'Attaching title cards, intros, and outros to recording...' %}
 {% elif talk.status == 'transcoding' %}
   {% set default_title = 'Transcoding Broadcast Master' %}
-  {% set default_desc = 'Encoding high-definition broadcast video and leveling audio...' %}
 {% elif talk.status == 'uploading' %}
   {% set default_title = 'Publishing & Uploading Media' %}
-  {% set default_desc = 'Finalizing broadcast master files and updating asset storage...' %}
 {% else %}
   {% set default_title = 'Processing Video Pipeline' %}
-  {% set default_desc = 'Background video processing job in progress...' %}
 {% endif %}
 {% set initial_pct = (active_job.progress_pct | round | int) if (active_job and active_job.progress_pct is not none) else 0 %}
 {% if active_job and active_job.estimated_remaining is not none and active_job.estimated_remaining > 0 %}
@@ -215,7 +208,6 @@
           </div>
           <div class="viewport-loader-header">
             <h3 class="viewport-loader-title" id="viewport-loader-title">{{ default_title }}</h3>
-            <p class="viewport-loader-desc" id="viewport-loader-desc">{{ default_desc }}</p>
           </div>
           <div class="viewport-loader-progress-box">
             <div class="viewport-loader-progress-header">
