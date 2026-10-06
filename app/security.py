@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -248,6 +250,90 @@ def decode_email_verification_token(token: str) -> dict | None:
         return payload
     except (jwt.PyJWTError, TypeError, ValueError, AttributeError) as _exc:
         return None
+
+
+def get_password_fingerprint(password_hash: str) -> str:
+    """Calculates a keyed HMAC-SHA256 fingerprint over the user's password hash."""
+    if not password_hash or not isinstance(password_hash, str):
+        return ""
+    return hmac.new(
+        get_session_secret().encode("utf-8"),
+        password_hash.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def create_password_reset_token(
+    user_id: int,
+    email: str,
+    password_hash: str,
+    expires_in_hours: int | None = None,
+) -> str:
+    """Generates a signed JWT for password reset carrying user_id, email, and password hash fingerprint."""
+    if expires_in_hours is None:
+        expires_in_hours = settings.password_reset_expire_hours
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user_id),
+        "user_id": user_id,
+        "email": email.strip().lower(),
+        "pwh": get_password_fingerprint(password_hash),
+        "type": "password_reset",
+        "iat": now,
+        "exp": now + timedelta(hours=expires_in_hours),
+    }
+    return jwt.encode(payload, get_session_secret(), algorithm=settings.jwt_algorithm)
+
+
+def decode_password_reset_token(token: str) -> dict | None:
+    """Decodes and validates a password reset token.
+
+    Returns the decoded payload dict if valid, or None if expired, tampered,
+    malformed, missing required claims, or not a password reset token.
+    """
+    if not token or not isinstance(token, str):
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            get_session_secret(),
+            algorithms=list(ALLOWED_JWT_ALGORITHMS),
+            options={"require": ["exp", "iat", "sub"]},
+        )
+        if payload.get("type") != "password_reset":
+            return None
+        user_id = payload.get("user_id")
+        email = payload.get("email")
+        pwh = payload.get("pwh")
+        sub = payload.get("sub")
+        if (
+            not isinstance(user_id, int)
+            or isinstance(user_id, bool)
+            or user_id <= 0
+            or not isinstance(email, str)
+            or not email.strip()
+            or not isinstance(pwh, str)
+            or not pwh.strip()
+            or not isinstance(sub, str)
+            or not sub.strip()
+        ):
+            return None
+        return payload
+    except jwt.PyJWTError, TypeError, ValueError, AttributeError:
+        return None
+
+
+def verify_password_reset_token(payload: dict, current_password_hash: str) -> bool:
+    """Verifies that the token's password fingerprint matches the user's current password hash."""
+    if not payload or not isinstance(payload, dict):
+        return False
+    token_pwh = payload.get("pwh")
+    if not token_pwh or not isinstance(token_pwh, str):
+        return False
+    current_pwh = get_password_fingerprint(current_password_hash)
+    if not current_pwh:
+        return False
+    return hmac.compare_digest(token_pwh, current_pwh)
 
 
 def is_valid_email(email: str) -> bool:

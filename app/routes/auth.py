@@ -17,14 +17,18 @@ from app.queue import light_queue, redis_conn
 from app.security import (
     create_access_token,
     create_email_verification_token,
+    create_password_reset_token,
     create_session_token,
     decode_email_verification_token,
+    decode_password_reset_token,
     decode_session_token,
+    get_password_fingerprint,
     hash_password,
     is_valid_email,
     verify_password,
+    verify_password_reset_token,
 )
-from app.tasks import job_send_verification_email
+from app.tasks import job_send_password_reset_email, job_send_verification_email
 from app.ui.templating import templates
 
 logger = logging.getLogger(__name__)
@@ -71,6 +75,8 @@ def _get_safe_redirect_target(target: str | None, default: str = "/studio") -> s
         "/verify-email",
         "/verify-email/pending",
         "/verify-email/resend",
+        "/forgot-password",
+        "/reset-password",
     ):
         return default
 
@@ -109,14 +115,18 @@ def login_page(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
     next: str | None = None,
+    reset: str | None = None,
 ):
     if _get_authenticated_user_from_cookie(request, db) is not None:
         target = _get_safe_redirect_target(next, default="/studio")
         return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
+    notice = None
+    if reset == "success":
+        notice = "Your password has been reset successfully. Please sign in with your new password."
     return templates.TemplateResponse(
         request,
         "login.html.jinja",
-        {"error": None, "email": "", "next": next or ""},
+        {"error": None, "email": "", "next": next or "", "notice": notice},
     )
 
 
@@ -137,6 +147,7 @@ def login_submit(
                 "error": "Invalid email or password.",
                 "email": clean_email,
                 "next": next or "",
+                "notice": None,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -153,6 +164,7 @@ def login_submit(
                 "error": "Invalid email or password.",
                 "email": clean_email,
                 "next": next or "",
+                "notice": None,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -166,6 +178,7 @@ def login_submit(
                 "email": clean_email,
                 "next": next or "",
                 "unverified": True,
+                "notice": None,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -688,3 +701,291 @@ def verify_email_resend_submit(
             "email": clean_email,
         },
     )
+
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_page(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+):
+    if _get_authenticated_user_from_cookie(request, db) is not None:
+        return RedirectResponse(url="/studio", status_code=status.HTTP_302_FOUND)
+    return templates.TemplateResponse(
+        request,
+        "forgot_password.html.jinja",
+        {"error": None, "message": None, "email": ""},
+    )
+
+
+@router.post("/forgot-password", response_class=HTMLResponse)
+def forgot_password_submit(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    email: Annotated[str, Form()] = "",
+):
+    clean_email = email.strip().lower()
+    if not clean_email or not is_valid_email(clean_email):
+        return templates.TemplateResponse(
+            request,
+            "forgot_password.html.jinja",
+            {
+                "error": "Please enter a valid email address.",
+                "message": None,
+                "email": clean_email,
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    rate_key = f"rate:forgot_password:{clean_email}"
+    try:
+        acquired = redis_conn.set(rate_key, "1", ex=60, nx=True)
+        if not acquired:
+            ttl = redis_conn.ttl(rate_key)
+            wait_seconds = max(1, ttl) if ttl > 0 else 60
+            return templates.TemplateResponse(
+                request,
+                "forgot_password.html.jinja",
+                {
+                    "error": f"Please wait {wait_seconds} seconds before requesting another password reset.",
+                    "message": None,
+                    "email": clean_email,
+                },
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Redis rate limit check failed for %s: %s", clean_email, exc)
+        return templates.TemplateResponse(
+            request,
+            "forgot_password.html.jinja",
+            {
+                "error": "The service is temporarily unavailable. Please try again later.",
+                "message": None,
+                "email": clean_email,
+            },
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    user = db.query(models.User).filter(models.User.email == clean_email).first()
+    if user and user.is_active:
+        token = create_password_reset_token(
+            user_id=user.id,
+            email=user.email,
+            password_hash=user.hashed_password,
+            expires_in_hours=settings.password_reset_expire_hours,
+        )
+        try:
+            light_queue.enqueue(
+                job_send_password_reset_email,
+                user.id,
+                user.email,
+                token,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to enqueue password reset email for %s: %s",
+                user.email,
+                exc,
+            )
+            try:
+                redis_conn.delete(rate_key)
+            except Exception as del_exc:  # noqa: BLE001
+                logger.debug(
+                    "Failed to clear password reset rate limit for %s: %s",
+                    clean_email,
+                    del_exc,
+                )
+    else:
+        # Dummy fingerprint calculation to balance non-Argon2 execution time
+        get_password_fingerprint(_DUMMY_HASH)
+
+    return templates.TemplateResponse(
+        request,
+        "forgot_password.html.jinja",
+        {
+            "error": None,
+            "message": "If an account exists with that email address, a password reset link has been sent. Please check your inbox.",
+            "email": clean_email,
+        },
+    )
+
+
+@router.get("/reset-password", response_class=HTMLResponse)
+def reset_password_page(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    token: str = "",
+):
+    """Render reset password form without mutating account state (scanner-safe)."""
+    clean_token = token.strip()
+    if not clean_token:
+        return templates.TemplateResponse(
+            request,
+            "reset_password_error.html.jinja",
+            {"error": "Password reset link is missing or invalid."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payload = decode_password_reset_token(clean_token)
+    if not payload:
+        return templates.TemplateResponse(
+            request,
+            "reset_password_error.html.jinja",
+            {"error": "Password reset link is invalid or has expired."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user_id = payload.get("user_id")
+    token_email = payload.get("email")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if (
+        not user
+        or not user.is_active
+        or user.email != token_email
+        or not verify_password_reset_token(payload, user.hashed_password)
+    ):
+        return templates.TemplateResponse(
+            request,
+            "reset_password_error.html.jinja",
+            {
+                "error": "Password reset link is invalid, expired, or has already been used."
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return templates.TemplateResponse(
+        request,
+        "reset_password.html.jinja",
+        {
+            "error": None,
+            "email": user.email,
+            "token": clean_token,
+        },
+    )
+
+
+@router.post("/reset-password", response_class=HTMLResponse)
+def reset_password_submit(
+    request: Request,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str, Form()] = "",
+    password: Annotated[str, Form()] = "",
+    password_confirm: Annotated[str, Form()] = "",
+):
+    clean_token = token.strip() or request.query_params.get("token", "").strip()
+    if not clean_token:
+        return templates.TemplateResponse(
+            request,
+            "reset_password_error.html.jinja",
+            {"error": "Password reset link is missing or invalid."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    payload = decode_password_reset_token(clean_token)
+    if not payload:
+        return templates.TemplateResponse(
+            request,
+            "reset_password_error.html.jinja",
+            {"error": "Password reset link is invalid or has expired."},
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user_id = payload.get("user_id")
+    token_email = payload.get("email")
+
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if (
+        not user
+        or not user.is_active
+        or user.email != token_email
+        or not verify_password_reset_token(payload, user.hashed_password)
+    ):
+        return templates.TemplateResponse(
+            request,
+            "reset_password_error.html.jinja",
+            {
+                "error": "Password reset link is invalid, expired, or has already been used."
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(password) < 8:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html.jinja",
+            {
+                "error": "Password must be at least 8 characters long.",
+                "email": user.email,
+                "token": clean_token,
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if len(password) > 256:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html.jinja",
+            {
+                "error": "Password must not exceed 256 characters.",
+                "email": user.email,
+                "token": clean_token,
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if password != password_confirm:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html.jinja",
+            {
+                "error": "Passwords do not match.",
+                "email": user.email,
+                "token": clean_token,
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    new_hashed = hash_password(password)
+    old_hashed = user.hashed_password
+
+    stmt = (
+        update(models.User)
+        .where(
+            models.User.id == user.id,
+            models.User.hashed_password == old_hashed,
+            models.User.is_active.is_(True),
+        )
+        .values(
+            hashed_password=new_hashed,
+            is_verified=True,
+            verified_at=user.verified_at or datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+    )
+    result = db.execute(stmt)
+    db.commit()
+
+    if result.rowcount == 0:
+        return templates.TemplateResponse(
+            request,
+            "reset_password_error.html.jinja",
+            {
+                "error": "Password reset link is invalid, expired, or has already been used."
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+        )
+
+    response = RedirectResponse(
+        url="/login?reset=success", status_code=status.HTTP_303_SEE_OTHER
+    )
+    is_secure = (request.url.scheme == "https") or (
+        settings.environment.lower() in ("production", "prod")
+    )
+    response.delete_cookie(
+        key="veditor_session",
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=is_secure,
+    )
+    return response

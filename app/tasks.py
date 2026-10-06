@@ -1286,3 +1286,40 @@ def job_send_verification_email(user_id: int, email: str, token: str) -> bool:
     if not success:
         raise RuntimeError(f"Failed to deliver verification email to {email}")
     return True
+
+
+def job_send_password_reset_email(user_id: int, email: str, token: str) -> bool:
+    """Send a password reset email via RQ background worker.
+
+    Checks user state in DB, generates the reset URL, dispatches via
+    send_password_reset_email, and exits.
+    """
+    from app.email import send_password_reset_email
+    from app.models import User
+
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if not user or not user.is_active:
+            logger.info(
+                "Skipping password reset email: user %s not found or inactive",
+                user_id,
+            )
+            return True
+
+    if settings.smtp_host and not settings.base_url:
+        raise RuntimeError(
+            "BASE_URL must be configured when SMTP is enabled for email delivery"
+        )
+
+    base = (
+        settings.base_url.rstrip("/") if settings.base_url else "http://localhost:8000"
+    )
+    reset_url = f"{base}/reset-password?token={token}"
+    success = send_password_reset_email(
+        recipient=email,
+        reset_url=reset_url,
+        expire_hours=settings.password_reset_expire_hours,
+    )
+    if not success:
+        raise RuntimeError(f"Failed to deliver password reset email to {email}")
+    return True
