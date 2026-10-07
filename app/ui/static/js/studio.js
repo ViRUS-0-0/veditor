@@ -342,7 +342,10 @@ function updateStudioLoader(talkStatus, activeJob) {
   }
 }
 
+let pendingApprovalStage = null;
+
 function showStudioLoader(stageOrStatus) {
+  pendingApprovalStage = stageOrStatus || getTalkStatus();
   const panel = document.getElementById('player-panel');
   const loader = document.getElementById('studio-viewport-loader');
   if (panel) panel.classList.add('is-processing');
@@ -351,7 +354,7 @@ function showStudioLoader(stageOrStatus) {
     video.pause();
     video.style.display = 'none';
   }
-  updateStudioLoader(stageOrStatus || getTalkStatus(), { progress_pct: 0 });
+  updateStudioLoader(pendingApprovalStage, { progress_pct: 0 });
 }
 
 // ── Video Loading ───────────────────────────────────────────────
@@ -851,6 +854,7 @@ window.approveTalk = async function(id) {
     alert(`Pipeline action failed: ${err.message}`);
     if (progressWrap) progressWrap.style.display = 'none';
     setBtnBusy(btn, false);
+    pendingApprovalStage = null;
     updateStudioLoader(talkStatus);
   }
 };
@@ -1391,8 +1395,17 @@ async function pollStudioJobs() {
 
     const currentStatus = getTalkStatus();
     if (data.status && data.status !== currentStatus) {
+      pendingApprovalStage = null;
       location.reload();
       return;
+    }
+
+    if (pendingApprovalStage) {
+      if (ACTIVE_PROCESSING_STATES.includes(data.status)) {
+        pendingApprovalStage = null;
+      } else {
+        return;
+      }
     }
 
     const activeJob = jobs.find(j => j.status === 'running');
