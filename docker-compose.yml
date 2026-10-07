@@ -8,6 +8,7 @@ services:
       - .env
     environment:
       - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
       - REDIS_URL=redis://redis:6379/0
       - INGEST_ROOTS=["/app/ingest"]
     volumes:
@@ -33,6 +34,7 @@ services:
       - .env
     environment:
       - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
       - REDIS_URL=redis://redis:6379/0
       - INGEST_ROOTS=["/app/ingest"]
       - ENCODER_THREADS=2
@@ -53,6 +55,7 @@ services:
       - .env
     environment:
       - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
       - REDIS_URL=redis://redis:6379/0
       - INGEST_ROOTS=["/app/ingest"]
       - ENCODER_THREADS=2
@@ -72,11 +75,11 @@ services:
     env_file:
       - .env
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U veditor -d veditor"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-veditor} -d ${POSTGRES_DB:-veditor}"]
       interval: 5s
       timeout: 5s
       retries: 5
