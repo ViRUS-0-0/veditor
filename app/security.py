@@ -127,36 +127,70 @@ def create_session_token(
 
 
 def verify_session_token_not_revoked(
-    payload: dict, current_password_hash: str | None = None
+    payload: dict,
+    current_password_hash: str | None = None,
+    user: object | None = None,
+    session_revoked_at: datetime | float | None = None,
 ) -> bool:
     """Verifies that a session token has not been revoked by password change or marker."""
     if not payload or not isinstance(payload, dict):
         return False
 
     token_pwh = payload.get("pwh")
-    if token_pwh and current_password_hash:
+    if token_pwh:
+        if not current_password_hash and user is not None:
+            current_password_hash = getattr(user, "hashed_password", None)
+        if not current_password_hash:
+            return False
         current_pwh = get_password_fingerprint(current_password_hash)
         return bool(current_pwh and hmac.compare_digest(token_pwh, current_pwh))
 
-    user_id = payload.get("user_id")
-    if user_id:
-        try:
-            from app.queue import redis_conn
+    # For tokens without pwh: consult persisted revocation state
+    if session_revoked_at is None and user is not None:
+        session_revoked_at = getattr(user, "session_revoked_at", None)
 
-            revoked_val = redis_conn.get(f"session_revoked:{user_id}")
-            if revoked_val:
-                revoked_ts = int(revoked_val)
-                iat = payload.get("iat")
-                if isinstance(iat, datetime):
-                    token_ts = int(iat.timestamp())
-                elif isinstance(iat, (int, float)):
-                    token_ts = int(iat)
-                else:
-                    token_ts = 0
-                if token_ts <= revoked_ts:
-                    return False
-        except Exception:  # noqa: BLE001, S110
-            pass
+    if session_revoked_at is None:
+        user_id = payload.get("user_id")
+        if user_id:
+            try:
+                from app.db import SessionLocal
+                from app.models import User
+
+                with SessionLocal() as db:
+                    db_user = db.get(User, user_id)
+                    if db_user:
+                        session_revoked_at = db_user.session_revoked_at
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+    # Ensure fingerprint-free tokens are rejected when their revocation status
+    # cannot be verified (e.g. marker is missing or unreadable), rather than accepted.
+    if session_revoked_at is None:
+        return False
+
+    iat = payload.get("iat")
+    if iat is None:
+        return False
+
+    try:
+        if isinstance(iat, datetime):
+            token_ts = int(iat.timestamp())
+        elif isinstance(iat, (int, float)):
+            token_ts = int(iat)
+        else:
+            return False
+
+        if isinstance(session_revoked_at, datetime):
+            revoked_ts = int(session_revoked_at.timestamp())
+        elif isinstance(session_revoked_at, (int, float)):
+            revoked_ts = int(session_revoked_at)
+        else:
+            return False
+
+        if token_ts <= revoked_ts:
+            return False
+    except Exception:  # noqa: BLE001
+        return False
 
     return True
 

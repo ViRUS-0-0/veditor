@@ -107,7 +107,7 @@ def _get_authenticated_user_from_cookie(
     if (
         user
         and user.is_active
-        and verify_session_token_not_revoked(payload, user.hashed_password)
+        and verify_session_token_not_revoked(payload, user.hashed_password, user=user)
     ):
         return user
     return None
@@ -957,6 +957,7 @@ def reset_password_submit(
     new_hashed = hash_password(password)
     old_hashed = user.hashed_password
 
+    now = datetime.now(UTC)
     stmt = (
         update(models.User)
         .where(
@@ -967,8 +968,9 @@ def reset_password_submit(
         .values(
             hashed_password=new_hashed,
             is_verified=True,
-            verified_at=user.verified_at or datetime.now(UTC),
-            updated_at=datetime.now(UTC),
+            verified_at=user.verified_at or now,
+            updated_at=now,
+            session_revoked_at=now,
         )
     )
     result = db.execute(stmt)

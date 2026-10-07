@@ -305,7 +305,7 @@ def get_current_user(
                     not user
                     or not user.is_active
                     or not verify_session_token_not_revoked(
-                        payload, user.hashed_password
+                        payload, user.hashed_password, user=user
                     )
                 ):
                     raise HTTPException(
@@ -383,7 +383,9 @@ def get_current_user(
             if (
                 not user
                 or not user.is_active
-                or not verify_session_token_not_revoked(payload, user.hashed_password)
+                or not verify_session_token_not_revoked(
+                    payload, user.hashed_password, user=user
+                )
             ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,

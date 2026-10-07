@@ -109,7 +109,7 @@ def auth_context_processor(request: Request) -> dict[str, Any]:
                             candidate is not None
                             and candidate.is_active is True
                             and verify_session_token_not_revoked(
-                                payload, candidate.hashed_password
+                                payload, candidate.hashed_password, user=candidate
                             )
                         ):
                             db.expunge(candidate)

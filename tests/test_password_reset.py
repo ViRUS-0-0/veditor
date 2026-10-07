@@ -16,6 +16,7 @@ from app.security import (
     create_access_token,
     create_password_reset_token,
     create_session_token,
+    decode_access_token,
     decode_password_reset_token,
     decode_session_token,
     hash_password,
@@ -763,7 +764,35 @@ def test_password_reset_revokes_existing_sessions():
         assert old_payload is not None
         db.refresh(user)
         assert (
-            verify_session_token_not_revoked(old_payload, user.hashed_password) is False
+            verify_session_token_not_revoked(
+                old_payload, user.hashed_password, user=user
+            )
+            is False
+        )
+
+        # Verification for fingerprint-free tokens:
+        legacy_payload = decode_access_token(access_token_legacy)
+        assert legacy_payload is not None
+        # Evaluated against user state: rejected because token predates password reset
+        assert (
+            verify_session_token_not_revoked(
+                legacy_payload, user.hashed_password, user=user
+            )
+            is False
+        )
+        # Evaluated with missing revocation state: must be rejected
+        assert (
+            verify_session_token_not_revoked(
+                legacy_payload, user.hashed_password, session_revoked_at=None
+            )
+            is False
+        )
+        # Evaluated with unreadable revocation state: must be rejected
+        assert (
+            verify_session_token_not_revoked(
+                legacy_payload, user.hashed_password, session_revoked_at="invalid-date"
+            )
+            is False
         )
 
         # New login with new password produces a working session
