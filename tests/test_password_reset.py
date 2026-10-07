@@ -703,15 +703,26 @@ def test_password_reset_revokes_existing_sessions():
 
     client = TestClient(app)
     try:
-        # Establish a valid session token on device A
+        # Establish a valid session token on device A and issue access tokens
         session_token = create_session_token(
             user.id, user.role, password_hash=user.hashed_password
         )
+        access_token = create_access_token(
+            user.id, user.email, user.role, password_hash=user.hashed_password
+        )
+        access_token_legacy = create_access_token(user.id, user.email, user.role)
         client.cookies.set("veditor_session", session_token)
 
         # Before reset: session is valid and accesses /studio without redirection
         resp_before = client.get("/studio", follow_redirects=False)
         assert resp_before.status_code == 200
+
+        # Before reset: bearer access tokens succeed
+        bearer_before = client.get(
+            "/events",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert bearer_before.status_code == 200
 
         # Device B initiates and completes password reset
         reset_token = create_password_reset_token(
@@ -734,12 +745,18 @@ def test_password_reset_revokes_existing_sessions():
         assert resp_after.status_code == 302
         assert "/login" in resp_after.headers["location"]
 
-        # API bearer auth with old token is also rejected with 401
+        # API bearer auth with old access tokens is rejected with 401
         api_resp = client.get(
             "/events",
-            headers={"Authorization": f"Bearer {session_token}"},
+            headers={"Authorization": f"Bearer {access_token}"},
         )
         assert api_resp.status_code == 401
+
+        api_resp_legacy = client.get(
+            "/events",
+            headers={"Authorization": f"Bearer {access_token_legacy}"},
+        )
+        assert api_resp_legacy.status_code == 401
 
         # Direct unit verification that session revocation detects the change
         old_payload = decode_session_token(session_token)

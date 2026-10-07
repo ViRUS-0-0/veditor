@@ -187,7 +187,11 @@ def decode_session_token(token: str) -> dict | None:
 
 
 def create_access_token(
-    user_id: int, email: str, role: str, expires_in_seconds: int | None = None
+    user_id: int,
+    email: str,
+    role: str,
+    expires_in_seconds: int | None = None,
+    password_hash: str | None = None,
 ) -> str:
     """
     Generates a signed JWT access token carrying user_id, email, and role,
@@ -208,6 +212,8 @@ def create_access_token(
         "iat": now,
         "exp": now + timedelta(seconds=expiry),
     }
+    if password_hash:
+        payload["pwh"] = get_password_fingerprint(password_hash)
     return jwt.encode(payload, get_session_secret(), algorithm=settings.jwt_algorithm)
 
 

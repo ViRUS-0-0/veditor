@@ -380,7 +380,11 @@ def get_current_user(
                 .filter(models.User.id == payload["user_id"])
                 .first()
             )
-            if not user or not user.is_active:
+            if (
+                not user
+                or not user.is_active
+                or not verify_session_token_not_revoked(payload, user.hashed_password)
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="User account not found or inactive",

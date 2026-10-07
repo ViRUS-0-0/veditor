@@ -426,6 +426,7 @@ async def api_auth_token(
         email=user.email,
         role=user.role,
         expires_in_seconds=settings.access_token_expire_seconds,
+        password_hash=user.hashed_password,
     )
     return schemas.TokenResponse(
         access_token=token,
