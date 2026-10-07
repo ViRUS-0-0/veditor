@@ -1,71 +1,79 @@
-x-app-base: &app-base
-  build: .
-  restart: unless-stopped
-  environment: &app-env
-    POSTGRES_USER: veditor
-    POSTGRES_PASSWORD: password
-    POSTGRES_HOST: postgres
-    POSTGRES_PORT: 5432
-    POSTGRES_DB: veditor
-    REDIS_URL: redis://redis:6379/0
-    INGEST_ROOTS: '["/app/ingest"]'
-    ENCODER_THREADS: 2
-  volumes:
-    - veditor_data:/app/data
-    - veditor_ingest:/app/ingest
-  depends_on:
-    postgres:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
-    migrate:
-      condition: service_completed_successfully
-
 services:
-  migrate:
-    <<: *app-base
-    restart: "no"
-    command: uv run alembic upgrade head
+  api:
+    build: .
+    command: sh -c "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_URL=redis://redis:6379/0
+      - INGEST_ROOTS=["/app/ingest"]
+    volumes:
+      - veditor_data:/app/data
+      - veditor_ingest:/app/ingest
     depends_on:
       postgres:
         condition: service_healthy
-
-  api:
-    <<: *app-base
-    ports:
-      - "8000:8000"
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 5s
+    restart: unless-stopped
 
   worker-light:
-    <<: *app-base
+    build: .
     command: uv run python scripts/run_worker.py light --concurrency 1 --with-scheduler --nice 10
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_URL=redis://redis:6379/0
+      - INGEST_ROOTS=["/app/ingest"]
+      - ENCODER_THREADS=2
+    volumes:
+      - veditor_data:/app/data
+      - veditor_ingest:/app/ingest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   worker-heavy:
-    <<: *app-base
+    build: .
     command: uv run python scripts/run_worker.py heavy --concurrency 1 --nice 15
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - REDIS_URL=redis://redis:6379/0
+      - INGEST_ROOTS=["/app/ingest"]
+      - ENCODER_THREADS=2
+    volumes:
+      - veditor_data:/app/data
+      - veditor_ingest:/app/ingest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
-    environment:
-      - POSTGRES_USER=veditor
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=veditor
+    env_file:
+      - .env
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      # One-time migration for existing deployments upgrading from anonymous volumes:
-      # Option 1 (backup & restore - recommended):
-      #   1. Back up: docker compose exec -T postgres pg_dump -U veditor -d veditor > backup.sql
-      #   2. Start new postgres: docker compose up -d postgres
-      #   3. Restore: docker compose exec -T postgres psql -U veditor -d veditor < backup.sql
-      # Option 2 (direct volume copy before startup):
-      #   docker run --rm -v <old_anon_volume>:/from -v veditor_postgres_data:/to alpine cp -a /from/. /to/
       - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U veditor -d veditor"]
