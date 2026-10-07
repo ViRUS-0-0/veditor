@@ -322,20 +322,22 @@ function updateStudioLoader(talkStatus, activeJob) {
   if (titleEl) titleEl.textContent = title;
   if (statusLabel) statusLabel.textContent = (talkStatus || (activeJob && activeJob.kind) || 'Processing').replace(/_/g, ' ');
 
-  const pct = (activeJob && activeJob.progress_pct !== null && activeJob.progress_pct !== undefined)
-    ? Math.round(activeJob.progress_pct)
-    : 0;
+  if (activeJob) {
+    const pct = (activeJob.progress_pct !== null && activeJob.progress_pct !== undefined)
+      ? Math.round(activeJob.progress_pct)
+      : 0;
 
-  if (pctBadge) pctBadge.textContent = `${pct}%`;
-  if (fill) fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+    if (pctBadge) pctBadge.textContent = `${pct}%`;
+    if (fill) fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
 
-  if (timingEl) {
-    if (activeJob && activeJob.estimated_remaining !== null && activeJob.estimated_remaining !== undefined && activeJob.estimated_remaining > 0) {
-      timingEl.textContent = `~${Math.round(activeJob.estimated_remaining)} seconds remaining`;
-    } else if (activeJob && activeJob.elapsed_time !== null && activeJob.elapsed_time !== undefined) {
-      timingEl.textContent = `${Math.round(activeJob.elapsed_time)} seconds elapsed`;
-    } else {
-      timingEl.textContent = '';
+    if (timingEl) {
+      if (activeJob.estimated_remaining !== null && activeJob.estimated_remaining !== undefined && activeJob.estimated_remaining > 0) {
+        timingEl.textContent = `~${Math.round(activeJob.estimated_remaining)} seconds remaining`;
+      } else if (activeJob.elapsed_time !== null && activeJob.elapsed_time !== undefined) {
+        timingEl.textContent = `${Math.round(activeJob.elapsed_time)} seconds elapsed`;
+      } else {
+        timingEl.textContent = '';
+      }
     }
   }
 }
@@ -349,7 +351,7 @@ function showStudioLoader(stageOrStatus) {
     video.pause();
     video.style.display = 'none';
   }
-  updateStudioLoader(stageOrStatus || getTalkStatus(), null);
+  updateStudioLoader(stageOrStatus || getTalkStatus(), { progress_pct: 0 });
 }
 
 // ── Video Loading ───────────────────────────────────────────────
@@ -383,7 +385,7 @@ function initInitialVideo() {
       video.pause();
       video.style.display = 'none';
     }
-    updateStudioLoader(currentTalkStatus, null);
+    updateStudioLoader(currentTalkStatus);
     return;
   }
   const sourceSelect = document.getElementById('media-source-select');
@@ -849,7 +851,7 @@ window.approveTalk = async function(id) {
     alert(`Pipeline action failed: ${err.message}`);
     if (progressWrap) progressWrap.style.display = 'none';
     setBtnBusy(btn, false);
-    updateStudioLoader(talkStatus, null);
+    updateStudioLoader(talkStatus);
   }
 };
 
