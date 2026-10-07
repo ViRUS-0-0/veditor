@@ -15,10 +15,13 @@ from app.main import app
 from app.security import (
     create_access_token,
     create_password_reset_token,
+    create_session_token,
     decode_password_reset_token,
+    decode_session_token,
     hash_password,
     verify_password,
     verify_password_reset_token,
+    verify_session_token_not_revoked,
 )
 from app.tasks import job_send_password_reset_email
 
@@ -135,13 +138,17 @@ def test_password_reset_token_rejects_malformed_claims():
 # ── Email Service & Background Job Tests ────────────────────────────────────
 
 
-def test_send_password_reset_email_dev_mode():
-    with patch.object(settings, "smtp_host", ""):
+def test_send_password_reset_email_dev_mode(caplog):
+    import logging
+
+    with patch.object(settings, "smtp_host", ""), caplog.at_level(logging.INFO):
+        reset_url = "http://localhost:8000/reset-password?token=dev_token_123"
         result = send_password_reset_email(
             recipient="test@example.com",
-            reset_url="http://localhost:8000/reset-password?token=test",
+            reset_url=reset_url,
         )
         assert result is True
+        assert reset_url in caplog.text
 
 
 def test_send_password_reset_email_prod_mode_unset_smtp():
@@ -172,16 +179,14 @@ def test_job_send_password_reset_email():
 
     try:
         # User not found skips
-        res_nonexistent = job_send_password_reset_email(
-            9999999, "none@example.com", "token"
-        )
+        res_nonexistent = job_send_password_reset_email("none@example.com")
         assert res_nonexistent is True
 
         # Inactive user skips
         user.is_active = False
         db.commit()
         with patch("app.email.send_password_reset_email") as mock_send:
-            res_inactive = job_send_password_reset_email(user.id, user.email, "token")
+            res_inactive = job_send_password_reset_email(user.email)
             assert res_inactive is True
             mock_send.assert_not_called()
 
@@ -195,13 +200,22 @@ def test_job_send_password_reset_email():
                 "app.email.send_password_reset_email", return_value=True
             ) as mock_send,
         ):
-            res = job_send_password_reset_email(user.id, user.email, "valid_token")
+            res = job_send_password_reset_email(user.email)
             assert res is True
-            mock_send.assert_called_once_with(
-                recipient=user.email,
-                reset_url="https://veditor.example.com/reset-password?token=valid_token",
-                expire_hours=settings.password_reset_expire_hours,
-            )
+            mock_send.assert_called_once()
+            call_kw = mock_send.call_args[1]
+            assert call_kw["recipient"] == user.email
+            assert "/reset-password?token=" in call_kw["reset_url"]
+            assert call_kw["expire_hours"] == settings.password_reset_expire_hours
+
+        # Insecure HTTP base_url in production raises RuntimeError
+        with (
+            patch.object(settings, "environment", "production"),
+            patch.object(settings, "session_secret", "a" * 32),
+            patch.object(settings, "base_url", "http://insecure.example.com"),
+            pytest.raises(RuntimeError, match="BASE_URL must use HTTPS in production"),
+        ):
+            job_send_password_reset_email(user.email)
 
         # Delivery failure raises RuntimeError so RQ records failure
         with (
@@ -209,7 +223,7 @@ def test_job_send_password_reset_email():
             patch("app.email.send_password_reset_email", return_value=False),
             pytest.raises(RuntimeError, match="Failed to deliver"),
         ):
-            job_send_password_reset_email(user.id, user.email, "valid_token")
+            job_send_password_reset_email(user.email)
 
         # Missing base_url when SMTP enabled raises RuntimeError
         with (
@@ -217,7 +231,7 @@ def test_job_send_password_reset_email():
             patch.object(settings, "base_url", ""),
             pytest.raises(RuntimeError, match="BASE_URL must be configured"),
         ):
-            job_send_password_reset_email(user.id, user.email, "valid_token")
+            job_send_password_reset_email(user.email)
     finally:
         db.query(models.User).filter(models.User.id == user.id).delete()
         db.commit()
@@ -301,22 +315,115 @@ def test_forgot_password_anti_enumeration():
     db.commit()
     db.refresh(user)
 
+    inactive_email = f"inactive_{uuid.uuid4().hex[:6]}@example.com"
+    inactive_user = models.User(
+        email=inactive_email,
+        hashed_password=hash_password("Pass123!"),
+        role="user",
+        is_active=False,
+        is_verified=True,
+    )
+    db.add(inactive_user)
+    db.commit()
+    db.refresh(inactive_user)
+
     client = TestClient(app)
     try:
-        # Existing user
-        with patch("app.routes.auth.light_queue.enqueue") as mock_enqueue:
+        # 1. Existing active user
+        with patch("app.routes.auth.light_queue.enqueue") as mock_enqueue_exist:
             resp_exist = client.post("/forgot-password", data={"email": unique_email})
             assert resp_exist.status_code == 200
             assert "If an account exists with that email address" in resp_exist.text
-            mock_enqueue.assert_called_once()
+            mock_enqueue_exist.assert_called_once_with(
+                job_send_password_reset_email, unique_email
+            )
 
-        # Non-existent user
+        # 2. Inactive user
+        with patch("app.routes.auth.light_queue.enqueue") as mock_enqueue_inactive:
+            resp_inactive = client.post(
+                "/forgot-password", data={"email": inactive_email}
+            )
+            assert resp_inactive.status_code == 200
+            assert "If an account exists with that email address" in resp_inactive.text
+            mock_enqueue_inactive.assert_called_once_with(
+                job_send_password_reset_email, inactive_email
+            )
+
+        # 3. Non-existent user
         nonexistent = f"nonexistent_{uuid.uuid4().hex[:6]}@example.com"
-        with patch("app.routes.auth.light_queue.enqueue") as mock_enqueue:
+        with patch("app.routes.auth.light_queue.enqueue") as mock_enqueue_nonexist:
             resp_nonexist = client.post("/forgot-password", data={"email": nonexistent})
             assert resp_nonexist.status_code == 200
             assert "If an account exists with that email address" in resp_nonexist.text
-            mock_enqueue.assert_not_called()
+            mock_enqueue_nonexist.assert_called_once_with(
+                job_send_password_reset_email, nonexistent
+            )
+
+        # Compare responses after normalizing the submitted email
+        norm_exist = resp_exist.text.replace(unique_email, "EMAIL_PLACEHOLDER")
+        norm_inactive = resp_inactive.text.replace(inactive_email, "EMAIL_PLACEHOLDER")
+        norm_nonexist = resp_nonexist.text.replace(nonexistent, "EMAIL_PLACEHOLDER")
+        assert norm_exist == norm_inactive == norm_nonexist
+
+        # Assert neither response contains account-existence disclosures
+        for marker in [
+            "user found",
+            "account was found",
+            "user exists",
+            "not found",
+            "does not exist",
+            "unregistered",
+        ]:
+            assert marker not in norm_exist.lower()
+    finally:
+        db.query(models.User).filter(
+            models.User.id.in_([user.id, inactive_user.id])
+        ).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_forgot_password_retry_consistency_on_enqueue_failure():
+    """Enqueue failure clears rate-limit key equally for existing and unknown accounts."""
+    db = SessionLocal()
+    unique_email = f"retry_exist_{uuid.uuid4().hex[:6]}@example.com"
+    user = models.User(
+        email=unique_email,
+        hashed_password=hash_password("Pass123!"),
+        role="user",
+        is_active=True,
+        is_verified=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    client = TestClient(app)
+    try:
+        # Existing account: enqueue failure deletes rate key and allows retry
+        with patch(
+            "app.routes.auth.light_queue.enqueue",
+            side_effect=RuntimeError("Redis down"),
+        ):
+            resp1 = client.post("/forgot-password", data={"email": unique_email})
+            assert resp1.status_code == 200
+        # Immediate retry succeeds (not 429)
+        with patch("app.routes.auth.light_queue.enqueue"):
+            resp2 = client.post("/forgot-password", data={"email": unique_email})
+            assert resp2.status_code == 200
+
+        # Non-existent account: enqueue failure deletes rate key and allows retry identically
+        nonexistent = f"retry_nonexist_{uuid.uuid4().hex[:6]}@example.com"
+        with patch(
+            "app.routes.auth.light_queue.enqueue",
+            side_effect=RuntimeError("Redis down"),
+        ):
+            resp3 = client.post("/forgot-password", data={"email": nonexistent})
+            assert resp3.status_code == 200
+        # Immediate retry succeeds (not 429)
+        with patch("app.routes.auth.light_queue.enqueue"):
+            resp4 = client.post("/forgot-password", data={"email": nonexistent})
+            assert resp4.status_code == 200
     finally:
         db.query(models.User).filter(models.User.id == user.id).delete()
         db.commit()
@@ -577,3 +684,98 @@ def test_reset_password_rejects_deactivated_account():
         db.query(models.User).filter(models.User.id == user.id).delete()
         db.commit()
         db.close()
+
+
+def test_password_reset_revokes_existing_sessions():
+    """Resetting password revokes older sessions across all devices."""
+    db = SessionLocal()
+    unique_email = f"session_revoke_{uuid.uuid4().hex[:6]}@example.com"
+    user = models.User(
+        email=unique_email,
+        hashed_password=hash_password("OriginalPassword123!"),
+        role="admin",
+        is_active=True,
+        is_verified=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    client = TestClient(app)
+    try:
+        # Establish a valid session token on device A
+        session_token = create_session_token(
+            user.id, user.role, password_hash=user.hashed_password
+        )
+        client.cookies.set("veditor_session", session_token)
+
+        # Before reset: session is valid and accesses /studio without redirection
+        resp_before = client.get("/studio", follow_redirects=False)
+        assert resp_before.status_code == 200
+
+        # Device B initiates and completes password reset
+        reset_token = create_password_reset_token(
+            user.id, user.email, user.hashed_password
+        )
+        client_b = TestClient(app)
+        reset_resp = client_b.post(
+            "/reset-password",
+            data={
+                "token": reset_token,
+                "password": "NewUpdatedPassword123!",
+                "password_confirm": "NewUpdatedPassword123!",
+            },
+            follow_redirects=False,
+        )
+        assert reset_resp.status_code == 303
+
+        # After reset: Device A's old session token is revoked and cannot access /studio
+        resp_after = client.get("/studio", follow_redirects=False)
+        assert resp_after.status_code == 302
+        assert "/login" in resp_after.headers["location"]
+
+        # API bearer auth with old token is also rejected with 401
+        api_resp = client.get(
+            "/events",
+            headers={"Authorization": f"Bearer {session_token}"},
+        )
+        assert api_resp.status_code == 401
+
+        # Direct unit verification that session revocation detects the change
+        old_payload = decode_session_token(session_token)
+        assert old_payload is not None
+        db.refresh(user)
+        assert (
+            verify_session_token_not_revoked(old_payload, user.hashed_password) is False
+        )
+
+        # New login with new password produces a working session
+        login_resp = client.post(
+            "/login",
+            data={"email": user.email, "password": "NewUpdatedPassword123!"},
+            follow_redirects=False,
+        )
+        assert login_resp.status_code == 303
+        new_session = login_resp.cookies.get("veditor_session")
+        assert new_session is not None
+        client.cookies.set("veditor_session", new_session)
+        resp_new = client.get("/studio", follow_redirects=False)
+        assert resp_new.status_code == 200
+    finally:
+        db.query(models.User).filter(models.User.id == user.id).delete()
+        db.commit()
+        db.close()
+
+
+def test_password_reset_error_page_renders_configured_expiry():
+    """Error page displays the configured lifetime rather than a hardcoded 1 hour."""
+    client = TestClient(app)
+    with patch.object(settings, "password_reset_expire_hours", 3):
+        resp = client.get("/reset-password?token=invalid_token")
+        assert resp.status_code == 400
+        assert "valid for 3 hours" in resp.text
+
+    with patch.object(settings, "password_reset_expire_hours", 1):
+        resp = client.get("/reset-password?token=invalid_token")
+        assert resp.status_code == 400
+        assert "valid for 1 hour" in resp.text

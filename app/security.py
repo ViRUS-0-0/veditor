@@ -98,7 +98,10 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_session_token(
-    user_id: int, role: str, expires_in_hours: int | None = None
+    user_id: int,
+    role: str,
+    expires_in_hours: int | None = None,
+    password_hash: str | None = None,
 ) -> str:
     """
     Generates a stateless signed session token carrying user_id and role,
@@ -118,7 +121,44 @@ def create_session_token(
         "iat": now,
         "exp": now + timedelta(hours=expiry),
     }
+    if password_hash:
+        payload["pwh"] = get_password_fingerprint(password_hash)
     return jwt.encode(payload, get_session_secret(), algorithm=settings.jwt_algorithm)
+
+
+def verify_session_token_not_revoked(
+    payload: dict, current_password_hash: str | None = None
+) -> bool:
+    """Verifies that a session token has not been revoked by password change or marker."""
+    if not payload or not isinstance(payload, dict):
+        return False
+
+    token_pwh = payload.get("pwh")
+    if token_pwh and current_password_hash:
+        current_pwh = get_password_fingerprint(current_password_hash)
+        return bool(current_pwh and hmac.compare_digest(token_pwh, current_pwh))
+
+    user_id = payload.get("user_id")
+    if user_id:
+        try:
+            from app.queue import redis_conn
+
+            revoked_val = redis_conn.get(f"session_revoked:{user_id}")
+            if revoked_val:
+                revoked_ts = int(revoked_val)
+                iat = payload.get("iat")
+                if isinstance(iat, datetime):
+                    token_ts = int(iat.timestamp())
+                elif isinstance(iat, (int, float)):
+                    token_ts = int(iat)
+                else:
+                    token_ts = 0
+                if token_ts <= revoked_ts:
+                    return False
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    return True
 
 
 def decode_session_token(token: str) -> dict | None:
@@ -319,7 +359,7 @@ def decode_password_reset_token(token: str) -> dict | None:
         ):
             return None
         return payload
-    except jwt.PyJWTError, TypeError, ValueError, AttributeError:
+    except (jwt.PyJWTError, TypeError, ValueError, AttributeError) as _exc:
         return None
 
 

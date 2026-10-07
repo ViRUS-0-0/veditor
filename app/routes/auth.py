@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import urllib.parse
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -17,25 +17,24 @@ from app.queue import light_queue, redis_conn
 from app.security import (
     create_access_token,
     create_email_verification_token,
-    create_password_reset_token,
     create_session_token,
     decode_email_verification_token,
     decode_password_reset_token,
     decode_session_token,
-    get_password_fingerprint,
     hash_password,
     is_valid_email,
     verify_password,
     verify_password_reset_token,
+    verify_session_token_not_revoked,
 )
 from app.tasks import job_send_password_reset_email, job_send_verification_email
 from app.ui.templating import templates
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["auth"])
-
 _DUMMY_HASH = hash_password("veditor-timing-defense-sentinel")
+
+router = APIRouter(tags=["auth"])
 
 
 def _get_safe_redirect_target(target: str | None, default: str = "/studio") -> str:
@@ -105,7 +104,11 @@ def _get_authenticated_user_from_cookie(
     if not user_id:
         return None
     user = db.query(models.User).filter(models.User.id == user_id).first()
-    if user and user.is_active:
+    if (
+        user
+        and user.is_active
+        and verify_session_token_not_revoked(payload, user.hashed_password)
+    ):
         return user
     return None
 
@@ -185,7 +188,7 @@ def login_submit(
 
     _sync_speaker_role(user, db, clean_email)
 
-    token = create_session_token(user.id, user.role)
+    token = create_session_token(user.id, user.role, password_hash=user.hashed_password)
     redirect_target = _get_safe_redirect_target(next, default="/studio")
     response = RedirectResponse(
         url=redirect_target, status_code=status.HTTP_303_SEE_OTHER
@@ -585,7 +588,9 @@ def verify_email_submit(
 
     _sync_speaker_role(user, db, user.email)
 
-    session_token = create_session_token(user.id, user.role)
+    session_token = create_session_token(
+        user.id, user.role, password_hash=user.hashed_password
+    )
     response = RedirectResponse(
         url="/studio?verified=1", status_code=status.HTTP_303_SEE_OTHER
     )
@@ -765,38 +770,25 @@ def forgot_password_submit(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
-    user = db.query(models.User).filter(models.User.email == clean_email).first()
-    if user and user.is_active:
-        token = create_password_reset_token(
-            user_id=user.id,
-            email=user.email,
-            password_hash=user.hashed_password,
-            expires_in_hours=settings.password_reset_expire_hours,
+    try:
+        light_queue.enqueue(
+            job_send_password_reset_email,
+            clean_email,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "Failed to enqueue password reset email for %s: %s",
+            clean_email,
+            exc,
         )
         try:
-            light_queue.enqueue(
-                job_send_password_reset_email,
-                user.id,
-                user.email,
-                token,
+            redis_conn.delete(rate_key)
+        except Exception as del_exc:  # noqa: BLE001
+            logger.debug(
+                "Failed to clear password reset rate limit for %s: %s",
+                clean_email,
+                del_exc,
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "Failed to enqueue password reset email for %s: %s",
-                user.email,
-                exc,
-            )
-            try:
-                redis_conn.delete(rate_key)
-            except Exception as del_exc:  # noqa: BLE001
-                logger.debug(
-                    "Failed to clear password reset rate limit for %s: %s",
-                    clean_email,
-                    del_exc,
-                )
-    else:
-        # Dummy fingerprint calculation to balance non-Argon2 execution time
-        get_password_fingerprint(_DUMMY_HASH)
 
     return templates.TemplateResponse(
         request,
@@ -817,11 +809,15 @@ def reset_password_page(
 ):
     """Render reset password form without mutating account state (scanner-safe)."""
     clean_token = token.strip()
+    expire_hours = settings.password_reset_expire_hours
     if not clean_token:
         return templates.TemplateResponse(
             request,
             "reset_password_error.html.jinja",
-            {"error": "Password reset link is missing or invalid."},
+            {
+                "error": "Password reset link is missing or invalid.",
+                "expire_hours": expire_hours,
+            },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -830,7 +826,10 @@ def reset_password_page(
         return templates.TemplateResponse(
             request,
             "reset_password_error.html.jinja",
-            {"error": "Password reset link is invalid or has expired."},
+            {
+                "error": "Password reset link is invalid or has expired.",
+                "expire_hours": expire_hours,
+            },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -848,7 +847,8 @@ def reset_password_page(
             request,
             "reset_password_error.html.jinja",
             {
-                "error": "Password reset link is invalid, expired, or has already been used."
+                "error": "Password reset link is invalid, expired, or has already been used.",
+                "expire_hours": expire_hours,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -873,11 +873,15 @@ def reset_password_submit(
     password_confirm: Annotated[str, Form()] = "",
 ):
     clean_token = token.strip() or request.query_params.get("token", "").strip()
+    expire_hours = settings.password_reset_expire_hours
     if not clean_token:
         return templates.TemplateResponse(
             request,
             "reset_password_error.html.jinja",
-            {"error": "Password reset link is missing or invalid."},
+            {
+                "error": "Password reset link is missing or invalid.",
+                "expire_hours": expire_hours,
+            },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -886,7 +890,10 @@ def reset_password_submit(
         return templates.TemplateResponse(
             request,
             "reset_password_error.html.jinja",
-            {"error": "Password reset link is invalid or has expired."},
+            {
+                "error": "Password reset link is invalid or has expired.",
+                "expire_hours": expire_hours,
+            },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -904,7 +911,8 @@ def reset_password_submit(
             request,
             "reset_password_error.html.jinja",
             {
-                "error": "Password reset link is invalid, expired, or has already been used."
+                "error": "Password reset link is invalid, expired, or has already been used.",
+                "expire_hours": expire_hours,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -970,10 +978,24 @@ def reset_password_submit(
             request,
             "reset_password_error.html.jinja",
             {
-                "error": "Password reset link is invalid, expired, or has already been used."
+                "error": "Password reset link is invalid, expired, or has already been used.",
+                "expire_hours": expire_hours,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
+
+    # Revoke all existing sessions across devices for this account
+    try:
+        expire_seconds = int(
+            timedelta(hours=settings.session_token_expire_hours).total_seconds()
+        )
+        redis_conn.set(
+            f"session_revoked:{user.id}",
+            int(datetime.now(UTC).timestamp()),
+            ex=max(3600, expire_seconds),
+        )
+    except Exception as redis_exc:  # noqa: BLE001
+        logger.debug("Failed to set session revocation marker: %s", redis_exc)
 
     response = RedirectResponse(
         url="/login?reset=success", status_code=status.HTTP_303_SEE_OTHER

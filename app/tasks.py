@@ -1288,23 +1288,27 @@ def job_send_verification_email(user_id: int, email: str, token: str) -> bool:
     return True
 
 
-def job_send_password_reset_email(user_id: int, email: str, token: str) -> bool:
+def job_send_password_reset_email(email: str) -> bool:
     """Send a password reset email via RQ background worker.
 
-    Checks user state in DB, generates the reset URL, dispatches via
-    send_password_reset_email, and exits.
+    Looks up active user by email, creates a fresh reset token, generates the
+    reset URL, dispatches via send_password_reset_email, and exits.
     """
     from app.email import send_password_reset_email
     from app.models import User
+    from app.security import create_password_reset_token
 
+    clean_email = email.strip().lower()
     with SessionLocal() as db:
-        user = db.get(User, user_id)
+        user = db.query(User).filter(User.email == clean_email).first()
         if not user or not user.is_active:
             logger.info(
                 "Skipping password reset email: user %s not found or inactive",
-                user_id,
+                clean_email,
             )
             return True
+        user_id = user.id
+        password_hash = user.hashed_password
 
     if settings.smtp_host and not settings.base_url:
         raise RuntimeError(
@@ -1314,12 +1318,25 @@ def job_send_password_reset_email(user_id: int, email: str, token: str) -> bool:
     base = (
         settings.base_url.rstrip("/") if settings.base_url else "http://localhost:8000"
     )
+    if settings.is_production and not base.startswith("https://"):
+        raise RuntimeError(
+            "BASE_URL must use HTTPS in production for password reset delivery"
+        )
+
+    expire_hours = settings.password_reset_expire_hours
+    token = create_password_reset_token(
+        user_id=user_id,
+        email=clean_email,
+        password_hash=password_hash,
+        expires_in_hours=expire_hours,
+    )
+
     reset_url = f"{base}/reset-password?token={token}"
     success = send_password_reset_email(
-        recipient=email,
+        recipient=clean_email,
         reset_url=reset_url,
-        expire_hours=settings.password_reset_expire_hours,
+        expire_hours=expire_hours,
     )
     if not success:
-        raise RuntimeError(f"Failed to deliver password reset email to {email}")
+        raise RuntimeError(f"Failed to deliver password reset email to {clean_email}")
     return True
