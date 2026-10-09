@@ -10,8 +10,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app import models
 from app.auth import CurrentUser
+from app.config import settings
 from app.db import SessionLocal, get_db
-from app.security import decode_session_token, decode_sso_token
+from app.security import (
+    decode_session_token,
+    decode_sso_token,
+    verify_session_token_not_revoked,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +105,13 @@ def auth_context_processor(request: Request) -> dict[str, Any]:
                             .filter(models.User.id == user_id)
                             .first()
                         )
-                        if candidate is not None and candidate.is_active is True:
+                        if (
+                            candidate is not None
+                            and candidate.is_active is True
+                            and verify_session_token_not_revoked(
+                                payload, candidate.hashed_password, user=candidate
+                            )
+                        ):
                             db.expunge(candidate)
                             user = candidate
                     except SQLAlchemyError as exc:
@@ -120,7 +131,11 @@ def auth_context_processor(request: Request) -> dict[str, Any]:
         or getattr(user, "role", None) not in ["organizer", "admin"]
         or getattr(user, "role", None) == "speaker"
     )
-    return {"user": user, "is_speaker": is_speaker}
+    return {
+        "user": user,
+        "is_speaker": is_speaker,
+        "password_reset_expire_hours": settings.password_reset_expire_hours,
+    }
 
 
 templates = Jinja2Templates(env=_env, context_processors=[auth_context_processor])

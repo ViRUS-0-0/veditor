@@ -775,6 +775,7 @@ def test_job_publish_dispatches_talk_published_webhook():
         patch("app.tasks.publish"),
         patch("app.tasks.cleanup_intermediates"),
         patch("app.webhook.light_queue.enqueue") as mock_enqueue,
+        patch.object(settings, "base_url", ""),
     ):
         job_publish(42, "42/transcode/master.mp4")
 

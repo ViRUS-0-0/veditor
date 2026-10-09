@@ -301,6 +301,8 @@ def ingest_recording(
         job_detect,
         talk.id,
         raw_key,
+        payload.recording_start,
+        is_room_recording=payload.recording_start is not None,
         job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
     )
 
@@ -2091,7 +2093,9 @@ async def attach_room_recording(
                 job_detect,
                 tid,
                 f"{tid}/raw/raw.mp4",
+                rec_start,
                 tolerance_seconds=float("inf"),
+                is_room_recording=True,
                 job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
             )
         except (OSError, RedisError, RuntimeError) as exc:
