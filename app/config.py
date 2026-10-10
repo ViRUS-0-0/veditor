@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     access_token_expire_seconds: int = 3600
     sso_token_expire_seconds: int = 300
     email_verification_expire_hours: int = 24
+    password_reset_expire_hours: int = 1
 
     smtp_host: str = ""
     smtp_port: int = 587
@@ -107,6 +108,7 @@ class Settings(BaseSettings):
         "access_token_expire_seconds",
         "sso_token_expire_seconds",
         "email_verification_expire_hours",
+        "password_reset_expire_hours",
         mode="after",
     )
     @classmethod

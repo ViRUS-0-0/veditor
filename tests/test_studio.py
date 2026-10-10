@@ -927,19 +927,104 @@ def test_dashboard_and_studio_render_active_job_progress(
     db_session.add(job)
     db_session.commit()
 
-    # 1. Dashboard should render the progress percentage badge and track
+    # 1. Dashboard STATUS column should render clean status badge without progress bar or percentage
     dash_res = client.get("/studio", headers={"X-API-Key": api_key})
     assert dash_res.status_code == 200
-    assert "72%" in dash_res.text
-    assert "job-progress-fill" in dash_res.text
+    assert "badge badge-processing" in dash_res.text
+    assert "Transcoding" in dash_res.text
+    assert "job-progress-col" not in dash_res.text
+    assert "72%" not in dash_res.text
 
-    # 2. Studio should render the pipeline progress and milestones stepper without job cards
+    # 2. Studio player viewport should render the prominent loader screen with progress bar & stage info
     studio_res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
     assert studio_res.status_code == 200
-    assert "pipeline-progress-wrap" in studio_res.text
+    assert "studio-viewport-loader" in studio_res.text
+    assert "is-processing" in studio_res.text
+    assert "Transcoding Broadcast Master" in studio_res.text
+    assert "72%" in studio_res.text
+    assert "viewport-loader-desc" not in studio_res.text
     assert "stepper-timeline" in studio_res.text
     assert "Recent Jobs" not in studio_res.text
     assert "job-card" not in studio_res.text
+
+
+def test_studio_viewport_loader_states_and_dashboard_clean_status(
+    client: TestClient, db_session
+):
+    event = models.Event(name=f"Loader Event {uuid.uuid4().hex}")
+    db_session.add(event)
+    db_session.commit()
+    db_session.refresh(event)
+
+    api_key = f"key_{uuid.uuid4().hex}"
+    client_model = models.Client(hashed_key=hash_api_key(api_key), event_ids=[event.id])
+    db_session.add(client_model)
+    db_session.commit()
+
+    now = datetime.now(tz=UTC)
+    # Test cutting state
+    talk_cut = models.Talk(
+        event_id=event.id,
+        title="Cutting Stage Talk",
+        room="Room 101",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="cutting",
+    )
+    db_session.add(talk_cut)
+    db_session.commit()
+    db_session.refresh(talk_cut)
+
+    job_cut = models.Job(
+        talk_id=talk_cut.id,
+        kind="cut",
+        status="running",
+        progress_pct=45.0,
+        started_at=now - timedelta(seconds=10),
+        updated_at=now,
+    )
+    db_session.add(job_cut)
+    db_session.commit()
+
+    # Studio should render loader with cutting stage title, progress pct, and timing
+    res = client.get(f"/studio/talks/{talk_cut.id}", headers={"X-API-Key": api_key})
+    assert res.status_code == 200
+    assert "player-viewport-loader" in res.text
+    assert "is-active" in res.text
+    assert 'role="status"' in res.text
+    assert 'aria-label="Video processing status"' in res.text
+    assert '<span class="spinner spinner-lg" aria-hidden="true"></span>' in res.text
+    assert "Cutting Recording Bounds" in res.text
+    assert "viewport-loader-desc" not in res.text
+    assert "45%" in res.text
+    assert "seconds remaining" in res.text or "seconds elapsed" in res.text
+
+    # Dashboard should render Cutting badge without progress track
+    dash_res = client.get("/studio", headers={"X-API-Key": api_key})
+    assert dash_res.status_code == 200
+    assert "badge badge-processing" in dash_res.text
+    assert "Cutting" in dash_res.text
+    assert "job-progress-col" not in dash_res.text
+
+    # Non-processing talk (preview) should NOT have is-processing class on player-panel
+    talk_preview = models.Talk(
+        event_id=event.id,
+        title="Preview Ready Talk",
+        room="Room 102",
+        start=now,
+        end=now + timedelta(minutes=30),
+        status="preview",
+    )
+    db_session.add(talk_preview)
+    db_session.commit()
+    db_session.refresh(talk_preview)
+
+    prev_res = client.get(
+        f"/studio/talks/{talk_preview.id}", headers={"X-API-Key": api_key}
+    )
+    assert prev_res.status_code == 200
+    assert 'class="player-panel is-processing"' not in prev_res.text
+    assert "player-viewport-loader is-active" not in prev_res.text
 
 
 def test_import_schedule_mm_ss_duration(client: TestClient, db_session):

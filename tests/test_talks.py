@@ -560,6 +560,8 @@ def test_post_recording_success_enqueues_detect():
             job_detect,
             1,
             "1/raw/video.mp4",
+            None,
+            is_room_recording=False,
             job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
         )
 
@@ -1276,6 +1278,8 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
             job_detect,
             1,
             "1/raw/session.mp4",
+            None,
+            is_room_recording=False,
             job_timeout=300,
         )
 
@@ -1375,5 +1379,130 @@ def test_full_pipeline_flow_recordings_to_preview_halt():
     data = resp.json()
     assert data["status"] == "preview"
     assert data["preview_urls"] == ["memory://1/preview/preview.mp4"]
+
+    app.dependency_overrides.clear()
+
+
+def test_post_recording_with_recording_start_enqueues_detect():
+    from app.pipeline.detect import DetectResult
+
+    mock_db = MagicMock()
+    mock_client = models.Client(id=1, event_ids=[1])
+    fake_storage = FakeStorageBackend()
+
+    app.dependency_overrides[get_client] = lambda: mock_client
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: fake_storage
+
+    # Scheduled talk is 30 minutes (10:15 - 10:45 UTC, scheduled duration = 1800s)
+    talk_start = datetime(2026, 9, 26, 10, 15, tzinfo=UTC)
+    talk_end = datetime(2026, 9, 26, 10, 45, tzinfo=UTC)
+    mock_talk = models.Talk(
+        id=1,
+        event_id=1,
+        title="Test Talk",
+        room="Room 1",
+        start=talk_start,
+        end=talk_end,
+        status="waiting_for_files",
+    )
+    mock_db.query.return_value.filter.return_value.first.return_value = mock_talk
+
+    with (
+        patch(
+            "app.routes.talks.stage_recording", return_value="1/raw/video.mp4"
+        ) as mock_stage,
+        patch("app.routes.talks.light_queue.enqueue") as mock_enqueue,
+    ):
+        response = client.post(
+            "/talks/1/recordings",
+            json={
+                "relative_key": "video.mp4",
+                "recording_start": "2026-09-26T10:00:00Z",
+            },
+            headers={"X-API-Key": "valid_key"},
+        )
+        assert response.status_code == 202
+
+        expected_dt = datetime(2026, 9, 26, 10, 0, tzinfo=UTC)
+        mock_stage.assert_called_once()
+        mock_enqueue.assert_called_once_with(
+            job_detect,
+            1,
+            "1/raw/video.mp4",
+            expected_dt,
+            is_room_recording=True,
+            job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
+        )
+
+        # Verify forwarded intent and resulting detection behavior for a room recording
+        # longer than the scheduled talk (7200s room recording vs 1800s scheduled talk).
+        enqueued_call = mock_enqueue.call_args
+        target_func = enqueued_call.args[0]
+        pos_args = enqueued_call.args[1:]
+        kw_args = {k: v for k, v in enqueued_call.kwargs.items() if k != "job_timeout"}
+        assert kw_args.get("is_room_recording") is True
+
+        jobs: dict = {}
+
+        class WorkerDBContext:
+            def __call__(self_inner):
+                class Session:
+                    def __enter__(s):
+                        mock_s = MagicMock()
+                        mock_s.get.side_effect = lambda model, obj_id: (
+                            mock_talk if model == models.Talk else jobs.get(obj_id)
+                        )
+
+                        def add_fn(obj):
+                            if isinstance(obj, models.Job):
+                                if obj.id is None:
+                                    obj.id = len(jobs) + 1
+                                jobs[obj.id] = obj
+
+                        mock_s.add.side_effect = add_fn
+                        mock_s.commit = MagicMock()
+                        mock_s.refresh = MagicMock()
+                        return mock_s
+
+                    def __exit__(s, *args):
+                        pass
+
+                return Session()
+
+        worker_db = WorkerDBContext()
+        fake_storage.put("1/raw/video.mp4", b"fake_video_content")
+        room_rec_duration = 7200.0  # 2 hours
+        detect_result = DetectResult(
+            passed=True,
+            actual_duration_seconds=room_rec_duration,
+            has_video=True,
+            has_audio=True,
+            reason=None,
+        )
+
+        with (
+            patch("app.tasks.SessionLocal", side_effect=worker_db),
+            patch("app.tasks.get_storage_backend", return_value=fake_storage),
+            patch("app.tasks.detect", return_value=detect_result) as mock_detect_fn,
+        ):
+            target_func(*pos_args, **kw_args)
+
+            mock_detect_fn.assert_called_once()
+            detect_call_args, detect_call_kwargs = mock_detect_fn.call_args
+            assert detect_call_args[0].key == "1/raw/video.mp4"
+            assert detect_call_kwargs["scheduled_start"] == talk_start
+            assert detect_call_kwargs["scheduled_end"] == talk_end
+            assert detect_call_kwargs["tolerance_seconds"] == float("inf")
+            assert detect_call_kwargs["is_room_recording"] is True
+            # Ensure the talk is not marked broken and instead advances with pre-seeded cut bounds
+            assert mock_talk.status == "pending_approval"
+            assert mock_talk.raw_duration_seconds == room_rec_duration
+            assert mock_talk.cut_start == pytest.approx(
+                900.0
+            )  # 10:15 - 10:00 = 15m (900s)
+            assert mock_talk.cut_end == pytest.approx(
+                2700.0
+            )  # 10:45 - 10:00 = 45m (2700s)
 
     app.dependency_overrides.clear()

@@ -131,7 +131,12 @@ def _get_scratch_dir(storage) -> Path | None:
     return None
 
 
-def job_ingest(talk_id: int, staged_path: str, raw_key: str | None = None) -> None:
+def job_ingest(
+    talk_id: int,
+    staged_path: str,
+    raw_key: str | None = None,
+    recording_start: datetime | None = None,
+) -> None:
     raw_key = raw_key or f"{talk_id}/raw/raw.mp4"
     job_id = None
     storage = get_storage_backend()
@@ -205,6 +210,7 @@ def job_ingest(talk_id: int, staged_path: str, raw_key: str | None = None) -> No
             job_detect,
             talk_id,
             raw_key,
+            recording_start,
             job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
         )
     except Exception as exc:
@@ -224,8 +230,10 @@ def job_ingest(talk_id: int, staged_path: str, raw_key: str | None = None) -> No
 def job_detect(
     talk_id: int,
     raw_key: str,
+    recording_start: datetime | None = None,
     *,
     tolerance_seconds: float | None = None,
+    is_room_recording: bool = False,
 ) -> None:
     job_id = None
     storage = get_storage_backend()
@@ -252,9 +260,12 @@ def job_detect(
             scheduled_start = talk.start
             scheduled_end = talk.end
             if tolerance_seconds is None:
-                tolerance_seconds = float(
-                    get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
-                )
+                if is_room_recording:
+                    tolerance_seconds = float("inf")
+                else:
+                    tolerance_seconds = float(
+                        get_setting("detect_duration_tolerance_seconds", 300.0, db=db)
+                    )
 
         # Omit parameter when default to preserve pipeline default and mock compatibility
         detect_kwargs = (
@@ -262,6 +273,8 @@ def job_detect(
             if tolerance_seconds != DETECT_DURATION_TOLERANCE_SECONDS
             else {}
         )
+        if is_room_recording:
+            detect_kwargs["is_room_recording"] = True
         raw_path = storage.get(raw_key)
         result = detect(
             raw_path,
@@ -287,6 +300,43 @@ def job_detect(
                     db.commit()
                 return
             talk.raw_duration_seconds = result.actual_duration_seconds
+
+            # Seed cut bounds from schedule offsets when not already set by user.
+            # ponytail: only seeds when both are None; user edits are always preserved.
+            if (
+                talk.cut_start is None
+                and talk.cut_end is None
+                and recording_start is not None
+                and talk.start is not None
+                and talk.end is not None
+                and result.actual_duration_seconds
+            ):
+                if isinstance(recording_start, str):
+                    recording_start = datetime.fromisoformat(recording_start)
+                rec_s = (
+                    recording_start
+                    if recording_start.tzinfo is not None
+                    else recording_start.replace(tzinfo=UTC)
+                )
+                t_start = (
+                    talk.start
+                    if talk.start.tzinfo is not None
+                    else talk.start.replace(tzinfo=UTC)
+                )
+                t_end = (
+                    talk.end
+                    if talk.end.tzinfo is not None
+                    else talk.end.replace(tzinfo=UTC)
+                )
+                offset_s = max(0.0, (t_start - rec_s).total_seconds())
+                offset_e = min(
+                    result.actual_duration_seconds,
+                    (t_end - rec_s).total_seconds(),
+                )
+                if offset_e > offset_s:
+                    talk.cut_start = offset_s
+                    talk.cut_end = offset_e
+
             advance(talk, "pending_approval")
             job.status = "done"
             job.updated_at = datetime.now(UTC)
@@ -1285,4 +1335,58 @@ def job_send_verification_email(user_id: int, email: str, token: str) -> bool:
     )
     if not success:
         raise RuntimeError(f"Failed to deliver verification email to {email}")
+    return True
+
+
+def job_send_password_reset_email(email: str) -> bool:
+    """Send a password reset email via RQ background worker.
+
+    Looks up active user by email, creates a fresh reset token, generates the
+    reset URL, dispatches via send_password_reset_email, and exits.
+    """
+    from app.email import send_password_reset_email
+    from app.models import User
+    from app.security import create_password_reset_token
+
+    clean_email = email.strip().lower()
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == clean_email).first()
+        if not user or not user.is_active:
+            logger.info(
+                "Skipping password reset email: user %s not found or inactive",
+                clean_email,
+            )
+            return True
+        user_id = user.id
+        password_hash = user.hashed_password
+
+    if settings.smtp_host and not settings.base_url:
+        raise RuntimeError(
+            "BASE_URL must be configured when SMTP is enabled for email delivery"
+        )
+
+    base = (
+        settings.base_url.rstrip("/") if settings.base_url else "http://localhost:8000"
+    )
+    if settings.is_production and not base.startswith("https://"):
+        raise RuntimeError(
+            "BASE_URL must use HTTPS in production for password reset delivery"
+        )
+
+    expire_hours = settings.password_reset_expire_hours
+    token = create_password_reset_token(
+        user_id=user_id,
+        email=clean_email,
+        password_hash=password_hash,
+        expires_in_hours=expire_hours,
+    )
+
+    reset_url = f"{base}/reset-password?token={token}"
+    success = send_password_reset_email(
+        recipient=clean_email,
+        reset_url=reset_url,
+        expire_hours=expire_hours,
+    )
+    if not success:
+        raise RuntimeError(f"Failed to deliver password reset email to {clean_email}")
     return True

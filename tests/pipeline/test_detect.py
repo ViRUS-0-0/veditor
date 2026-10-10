@@ -61,6 +61,19 @@ def test_detect_tolerance_boundary_fail(tmp_path: Path):
     assert "duration" in result.reason
 
 
+def test_detect_room_recording_bypasses_duration_mismatch(tmp_path: Path):
+    # Clip is 1s while scheduled window is 302s (delta is 301s > 300s default tolerance)
+    scheduled_start = datetime(2026, 3, 20, 9, 0, tzinfo=UTC)
+    scheduled_end = scheduled_start + timedelta(seconds=302)
+    clip = generate_clip(1, output_dir=tmp_path)
+
+    result = detect(clip, scheduled_start, scheduled_end, is_room_recording=True)
+
+    assert result.passed
+    assert result.reason is None
+    assert result.actual_duration_seconds > 0
+
+
 def test_detect_custom_tolerance_parameter(tmp_path: Path):
     scheduled_start = datetime(2026, 3, 20, 9, 0, tzinfo=UTC)
     scheduled_end = scheduled_start + timedelta(seconds=15)

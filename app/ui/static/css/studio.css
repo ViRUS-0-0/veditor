@@ -166,6 +166,117 @@ a.breadcrumb-event:hover {
   display: none;
 }
 
+/* ── Processing State: Viewport Loader Screen & Controls Lock ── */
+.player-viewport-loader {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 15, 29, 0.96);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 20;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 24px;
+  color: var(--v-text-primary);
+}
+
+.player-panel.is-processing #studio-viewport-loader,
+#studio-viewport-loader.is-active {
+  display: flex;
+}
+
+.player-panel.is-processing #main-video,
+.player-panel.is-processing #no-preview-msg,
+.player-panel.is-processing #preview-quality-notice,
+.player-panel.is-processing .timecode-bar,
+.player-panel.is-processing .player-controls,
+.player-panel.is-processing .timeline-section {
+  display: none;
+}
+
+.viewport-loader-content {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 18px;
+}
+
+.viewport-loader-spinner-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--v-primary-subtle);
+  color: var(--v-primary);
+}
+
+.viewport-loader-header {
+  display: flex;
+  flex-direction: column;
+}
+
+.viewport-loader-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--v-text-primary);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.viewport-loader-progress-box {
+  width: 100%;
+  background: var(--v-bg-surface);
+  border: 1px solid var(--v-border);
+  border-radius: var(--v-radius-md);
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.viewport-loader-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.viewport-loader-status-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--v-text-secondary);
+}
+
+.viewport-loader-pct {
+  font-size: 0.75rem;
+  padding: 2px 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewport-loader-track {
+  height: 6px;
+  margin: 2px 0;
+  background: var(--v-border);
+  border-radius: var(--v-radius-full);
+}
+
+.viewport-loader-timing {
+  font-size: 0.78rem;
+  color: var(--v-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-height: 1.1em;
+}
+
 .player-panel {
   background: var(--v-bg-subtle);
 }

@@ -95,9 +95,20 @@ class User(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    session_revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("'1970-01-01 00:00:00+00'"),
+        default=lambda: datetime.fromtimestamp(0, UTC),
+        nullable=False,
+    )
 
     events: Mapped[list[Event]] = relationship(back_populates="created_by_user")
     reviews: Mapped[list[Review]] = relationship(back_populates="user")
+
+    def __init__(self, **kwargs: Any) -> None:
+        if "session_revoked_at" not in kwargs:
+            kwargs["session_revoked_at"] = datetime.fromtimestamp(0, UTC)
+        super().__init__(**kwargs)
 
 
 class Event(Base):
