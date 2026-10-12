@@ -95,4 +95,4 @@ def test_docker_compose_postgres_volume_mount():
     assert "postgres" in services
 
     postgres_volumes = services["postgres"].get("volumes", [])
-    assert "postgres_data:/var/lib/postgresql/data" in postgres_volumes
+    assert "postgres_data:/var/lib/postgresql" in postgres_volumes
