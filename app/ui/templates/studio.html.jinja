@@ -97,8 +97,33 @@
 {% set awaiting_speaker = talk.speaker_email and not is_speaker %}
 <div class="studio-shell{% if is_other_organizer_talk %} is-view-only{% endif %}" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-cut-start="{{ talk.cut_start if talk.cut_start is not none else '' }}" data-cut-end="{{ talk.cut_end if talk.cut_end is not none else '' }}" data-talk-title="{{ (talk.title or '') | e }}" data-talk-room="{{ (talk.room or '') | e }}" data-talk-start="{{ talk.start.isoformat() if talk.start else '' }}" data-talk-end="{{ talk.end.isoformat() if talk.end else '' }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}" data-is-other-organizer="{{ 'true' if is_other_organizer_talk else 'false' }}">
 
+{% set is_processing = talk.status in ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'] %}
+{% set active_job = (talk.jobs | selectattr('status', 'equalto', 'running') | list | first) if talk.jobs else none %}
+{% if talk.status == 'detecting' %}
+  {% set default_title = 'Detecting Recording Metadata' %}
+{% elif talk.status == 'cutting' %}
+  {% set default_title = 'Cutting Recording Bounds' %}
+{% elif talk.status == 'generating_previews' %}
+  {% set default_title = 'Generating Preview Video' %}
+{% elif talk.status == 'assembling' %}
+  {% set default_title = 'Assembling Talk Media' %}
+{% elif talk.status == 'transcoding' %}
+  {% set default_title = 'Transcoding Broadcast Master' %}
+{% elif talk.status == 'uploading' %}
+  {% set default_title = 'Publishing & Uploading Media' %}
+{% else %}
+  {% set default_title = 'Processing Video Pipeline' %}
+{% endif %}
+{% set initial_pct = (active_job.progress_pct | round | int) if (active_job and active_job.progress_pct is not none) else 0 %}
+{% if active_job and active_job.estimated_remaining is not none and active_job.estimated_remaining > 0 %}
+  {% set initial_timing = '~' ~ (active_job.estimated_remaining | round | int) ~ ' seconds remaining' %}
+{% elif active_job and active_job.elapsed_time is not none %}
+  {% set initial_timing = (active_job.elapsed_time | round | int) ~ ' seconds elapsed' %}
+{% else %}
+  {% set initial_timing = '' %}
+{% endif %}
   <!-- ── CENTER: Video Player or Upload Dropzone ─────────────── -->
-  <div class="player-panel">
+  <div class="player-panel{% if is_processing %} is-processing{% endif %}" id="player-panel">
     <button id="btn-expand-right-panel" class="btn btn-ghost btn-icon btn-sm expand-panel-tab" title="Restore Review Panel" aria-label="Restore Review Panel" aria-expanded="false" aria-controls="studio-panel-right">
       <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
         <polyline points="15 18 9 12 15 6"/>
@@ -174,6 +199,29 @@
         </span>
       </div>
       {% endif %}
+
+      <!-- Pipeline Loader Screen for Active Processing States -->
+      <div class="player-viewport-loader{% if is_processing %} is-active{% endif %}" id="studio-viewport-loader" role="status" aria-live="polite" aria-label="Video processing status">
+        <div class="viewport-loader-content">
+          <div class="viewport-loader-spinner-wrap">
+            <span class="spinner spinner-lg" aria-hidden="true"></span>
+          </div>
+          <div class="viewport-loader-header">
+            <h3 class="viewport-loader-title" id="viewport-loader-title">{{ default_title }}</h3>
+          </div>
+          <div class="viewport-loader-progress-box">
+            <div class="viewport-loader-progress-header">
+              <span class="viewport-loader-status-label" id="viewport-loader-status-label">{{ talk.status | replace('_', ' ') | title }}</span>
+              <span class="badge badge-info viewport-loader-pct" id="viewport-loader-pct">{{ initial_pct }}%</span>
+            </div>
+            <div class="job-progress-track viewport-loader-track">
+              <div class="job-progress-fill animated" id="viewport-loader-fill" data-progress="{{ initial_pct }}"></div>
+            </div>
+            <div class="viewport-loader-timing" id="viewport-loader-timing">{{ initial_timing }}</div>
+          </div>
+        </div>
+      </div>
+
       <video id="main-video" preload="metadata">
         Your browser does not support HTML5 video.
       </video>

@@ -167,6 +167,7 @@ def test_job_ingest_success(dummy_talk, mock_storage, tmp_path):
         job_detect,
         dummy_talk.id,
         f"{dummy_talk.id}/raw/raw.mp4",
+        None,
         job_timeout=STAGE_CONFIG["detect"]["job_timeout"],
     )
     # Staged file is unlinked
@@ -232,7 +233,7 @@ def test_no_db_session_held_during_detect(dummy_talk, mock_storage):
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_detect(raw_path, scheduled_start, scheduled_end):
+    def fake_detect(raw_path, scheduled_start, scheduled_end, **kwargs):
         assert db_ctx.open_sessions == 0, "DB session was open during detect!"
         return DetectResult(
             passed=True,
@@ -293,7 +294,7 @@ def test_failure_on_already_broken_talk_does_not_crash(dummy_talk, mock_storage)
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_detect(raw_path, scheduled_start, scheduled_end):
+    def fake_detect(raw_path, scheduled_start, scheduled_end, **kwargs):
         dummy_talk.status = "broken"
         raise RuntimeError("Unexpected error")
 
@@ -316,7 +317,7 @@ def test_failure_on_done_talk_does_not_transition_to_broken(dummy_talk, mock_sto
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_detect(raw_path, scheduled_start, scheduled_end):
+    def fake_detect(raw_path, scheduled_start, scheduled_end, **kwargs):
         dummy_talk.status = "done"
         raise RuntimeError("Late job error")
 
@@ -340,7 +341,7 @@ def test_failure_on_rejected_talk_does_not_transition_to_broken(
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_detect(raw_path, scheduled_start, scheduled_end):
+    def fake_detect(raw_path, scheduled_start, scheduled_end, **kwargs):
         dummy_talk.status = "rejected"
         raise RuntimeError("Late job error")
 
@@ -776,7 +777,7 @@ def test_job_detect_discards_when_talk_aborted(dummy_talk, mock_storage):
     jobs = {}
     db_ctx = MockDBContext(dummy_talk, jobs)
 
-    def fake_detect(raw_path, scheduled_start, scheduled_end):
+    def fake_detect(raw_path, scheduled_start, scheduled_end, **kwargs):
         # Simulate /abort occurring during pure video processing
         dummy_talk.status = "waiting_for_files"
         jobs.clear()
@@ -1376,6 +1377,71 @@ def test_job_detect_room_recording_tolerance_override(dummy_talk, mock_storage):
         assert dummy_talk.raw_duration_seconds == 12600.0
 
 
+def test_job_detect_recording_start_alone_retains_configured_tolerance(
+    dummy_talk, mock_storage
+):
+    """A timestamp alone (recording_start) must NOT set infinite tolerance for ordinary recordings."""
+    dummy_talk.status = "detecting"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.detect") as mock_detect,
+    ):
+        mock_detect.return_value = DetectResult(
+            passed=True,
+            actual_duration_seconds=1800.0,
+            has_video=True,
+            has_audio=True,
+            reason=None,
+        )
+        rec_start = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+        job_detect(1, "1/raw/raw.mp4", recording_start=rec_start)
+
+        # Configured default tolerance (300.0) is retained, not inf
+        mock_detect.assert_called_once_with(
+            mock_storage.get("1/raw/raw.mp4"),
+            scheduled_start=dummy_talk.start,
+            scheduled_end=dummy_talk.end,
+        )
+
+
+def test_job_detect_confirmed_room_recording_bypasses_duration(
+    dummy_talk, mock_storage
+):
+    """When is_room_recording=True, infinite tolerance is applied and forwarded."""
+    dummy_talk.status = "detecting"
+    jobs = {}
+    db_ctx = MockDBContext(dummy_talk, jobs)
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.detect") as mock_detect,
+    ):
+        mock_detect.return_value = DetectResult(
+            passed=True,
+            actual_duration_seconds=12600.0,
+            has_video=True,
+            has_audio=True,
+            reason=None,
+        )
+        rec_start = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+        job_detect(
+            1, "1/raw/raw.mp4", recording_start=rec_start, is_room_recording=True
+        )
+
+        mock_detect.assert_called_once_with(
+            mock_storage.get("1/raw/raw.mp4"),
+            scheduled_start=dummy_talk.start,
+            scheduled_end=dummy_talk.end,
+            tolerance_seconds=float("inf"),
+            is_room_recording=True,
+        )
+
+
 def test_unified_transcode_resolves_staged_slates_and_bypasses_concat_reencode(
     dummy_talk, mock_storage
 ):
@@ -1433,3 +1499,112 @@ def test_unified_transcode_resolves_staged_slates_and_bypasses_concat_reencode(
     assert captured_transcode_kwargs["intro_path"] == Path("/tmp/fake_media.mp4")
     assert captured_transcode_kwargs["outro_path"] == Path("/tmp/fake_media.mp4")
     assert captured_transcode_kwargs["target_lufs"] is None
+
+
+# ── Cut-Bounds Pre-Seeding Tests ────────────────────────────────────────────
+
+
+def _make_detect_result(duration: float) -> DetectResult:
+    return DetectResult(
+        passed=True,
+        actual_duration_seconds=duration,
+        has_video=True,
+        has_audio=True,
+        reason=None,
+    )
+
+
+def _run_detect_with_seed(talk: Talk, recording_start) -> None:
+    """Helper: run job_detect with mocked DB & storage, returning the mutated talk."""
+    jobs: dict = {}
+    db_ctx = MockDBContext(talk, jobs)
+    mock_storage = MagicMock()
+    mock_storage.get.return_value = Path("/tmp/fake.mp4")
+
+    with (
+        patch("app.tasks.SessionLocal", side_effect=db_ctx),
+        patch("app.tasks.get_storage_backend", return_value=mock_storage),
+        patch("app.tasks.detect", return_value=_make_detect_result(14400.0)),
+    ):
+        job_detect(talk.id, "1/raw/raw.mp4", recording_start)
+
+
+def test_seed_cut_bounds_happy_path(dummy_talk):
+    """Seeds cut_start/cut_end from schedule offsets when both are unset."""
+    dummy_talk.status = "detecting"
+    dummy_talk.cut_start = None
+    dummy_talk.cut_end = None
+    # Recording started at 09:00 UTC; talk is 09:15–09:55
+    dummy_talk.start = datetime(2026, 8, 29, 9, 15, tzinfo=UTC)
+    dummy_talk.end = datetime(2026, 8, 29, 9, 55, tzinfo=UTC)
+    rec_start = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+
+    _run_detect_with_seed(dummy_talk, rec_start)
+
+    assert dummy_talk.cut_start == pytest.approx(900.0)  # 15 min
+    assert dummy_talk.cut_end == pytest.approx(3300.0)  # 55 min
+    assert dummy_talk.status == "pending_approval"
+
+
+def test_seed_cut_bounds_no_overwrite_when_already_set(dummy_talk):
+    """Does not overwrite existing cut_start/cut_end if user already set them."""
+    dummy_talk.status = "detecting"
+    dummy_talk.cut_start = 42.0
+    dummy_talk.cut_end = 1800.0
+    dummy_talk.start = datetime(2026, 8, 29, 9, 15, tzinfo=UTC)
+    dummy_talk.end = datetime(2026, 8, 29, 9, 55, tzinfo=UTC)
+    rec_start = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+
+    _run_detect_with_seed(dummy_talk, rec_start)
+
+    # Guard: both were set, so seeding must be skipped
+    assert dummy_talk.cut_start == pytest.approx(42.0)
+    assert dummy_talk.cut_end == pytest.approx(1800.0)
+
+
+def test_seed_cut_bounds_no_op_without_recording_start(dummy_talk):
+    """Bounds stay None when recording_start is not provided (graceful degradation)."""
+    dummy_talk.status = "detecting"
+    dummy_talk.cut_start = None
+    dummy_talk.cut_end = None
+    dummy_talk.start = datetime(2026, 8, 29, 9, 15, tzinfo=UTC)
+    dummy_talk.end = datetime(2026, 8, 29, 9, 55, tzinfo=UTC)
+
+    _run_detect_with_seed(dummy_talk, recording_start=None)
+
+    assert dummy_talk.cut_start is None
+    assert dummy_talk.cut_end is None
+    assert dummy_talk.status == "pending_approval"
+
+
+def test_seed_cut_bounds_talk_entirely_outside_recording(dummy_talk):
+    """Skips seeding when offset_e <= offset_s (talk is before the recording start)."""
+    dummy_talk.status = "detecting"
+    dummy_talk.cut_start = None
+    dummy_talk.cut_end = None
+    # Recording started at 10:00; talk ended before that
+    dummy_talk.start = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+    dummy_talk.end = datetime(2026, 8, 29, 9, 30, tzinfo=UTC)
+    rec_start = datetime(2026, 8, 29, 10, 0, tzinfo=UTC)
+
+    _run_detect_with_seed(dummy_talk, rec_start)
+
+    # offset_s = max(0, -3600) = 0; offset_e = min(14400, -1800) → negative → clamped to ≤0
+    assert dummy_talk.cut_start is None
+    assert dummy_talk.cut_end is None
+
+
+def test_seed_cut_bounds_clamped_to_duration(dummy_talk):
+    """cut_end is clamped to raw_duration_seconds when talk extends past the recording."""
+    dummy_talk.status = "detecting"
+    dummy_talk.cut_start = None
+    dummy_talk.cut_end = None
+    # Recording started at 09:00; 4 h long (14400 s); talk goes until 13:15 → end at 15300 s > 14400
+    dummy_talk.start = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+    dummy_talk.end = datetime(2026, 8, 29, 13, 15, tzinfo=UTC)
+    rec_start = datetime(2026, 8, 29, 9, 0, tzinfo=UTC)
+
+    _run_detect_with_seed(dummy_talk, rec_start)
+
+    assert dummy_talk.cut_start == pytest.approx(0.0)
+    assert dummy_talk.cut_end == pytest.approx(14400.0)  # clamped to duration

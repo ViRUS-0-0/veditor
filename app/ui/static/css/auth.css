@@ -108,3 +108,33 @@ a.btn-auth-submit {
   border-color: var(--v-border-strong, #334155);
   text-decoration: none;
 }
+
+.form-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.form-label-row .form-label {
+  margin-bottom: 0;
+}
+
+.auth-forgot-link {
+  font-size: 0.85rem;
+  color: var(--v-primary, #3b82f6);
+  text-decoration: none;
+}
+
+.auth-forgot-link:hover {
+  text-decoration: underline;
+  color: var(--v-primary-hover, #60a5fa);
+}
+
+.alert-success {
+  background: var(--v-status-success-bg);
+  color: var(--v-status-success-text);
+  border-color: var(--v-status-success-border);
+  border-radius: var(--v-radius-sm);
+  padding: 10px 14px;
+}

@@ -11,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.db import SessionLocal, get_db
-from app.security import decode_access_token, decode_session_token, decode_sso_token
+from app.security import (
+    decode_access_token,
+    decode_session_token,
+    decode_sso_token,
+    verify_session_token_not_revoked,
+)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 bearer_security = HTTPBearer(auto_error=False)
@@ -296,7 +301,13 @@ def get_current_user(
                     .filter(models.User.id == payload["user_id"])
                     .first()
                 )
-                if not user or not user.is_active:
+                if (
+                    not user
+                    or not user.is_active
+                    or not verify_session_token_not_revoked(
+                        payload, user.hashed_password, user=user
+                    )
+                ):
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="User account not found or inactive",
@@ -369,7 +380,13 @@ def get_current_user(
                 .filter(models.User.id == payload["user_id"])
                 .first()
             )
-            if not user or not user.is_active:
+            if (
+                not user
+                or not user.is_active
+                or not verify_session_token_not_revoked(
+                    payload, user.hashed_password, user=user
+                )
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="User account not found or inactive",
