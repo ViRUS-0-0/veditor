@@ -95,7 +95,7 @@
 {% set can_manage = (user and user.role in ['organizer', 'admin'] and not user.is_sso) or (user is none) %}
 {% set is_admin_or_org = (user and user.role in ['organizer', 'admin']) or (user is none) %}
 {% set awaiting_speaker = talk.speaker_email and not is_speaker %}
-<div class="studio-shell{% if is_other_organizer_talk %} is-view-only{% endif %}" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-cut-start="{{ talk.cut_start if talk.cut_start is not none else '' }}" data-cut-end="{{ talk.cut_end if talk.cut_end is not none else '' }}" data-talk-title="{{ (talk.title or '') | e }}" data-talk-room="{{ (talk.room or '') | e }}" data-talk-start="{{ talk.start.isoformat() if talk.start else '' }}" data-talk-end="{{ talk.end.isoformat() if talk.end else '' }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}" data-is-other-organizer="{{ 'true' if is_other_organizer_talk else 'false' }}">
+<div class="studio-shell{% if is_other_organizer_talk %} is-view-only{% endif %}" data-talk-id="{{ talk.id }}" data-talk-status="{{ talk.status }}" data-speaker-email="{{ talk.speaker_email or '' }}" data-cut-start="{{ talk.cut_start if talk.cut_start is not none else '' }}" data-cut-end="{{ talk.cut_end if talk.cut_end is not none else '' }}" data-talk-title="{{ (talk.title or '') | e }}" data-talk-room="{{ (talk.room or '') | e }}" data-talk-start="{{ talk.start.isoformat() if talk.start else '' }}" data-talk-end="{{ talk.end.isoformat() if talk.end else '' }}" data-preview-urls="{{ preview_urls | tojson | forceescape }}" data-is-other-organizer="{{ 'true' if is_other_organizer_talk else 'false' }}">
 
 {% set is_processing = talk.status in ['detecting', 'cutting', 'generating_previews', 'assembling', 'transcoding', 'uploading'] %}
 {% set active_job = (talk.jobs | selectattr('status', 'equalto', 'running') | list | first) if talk.jobs else none %}
@@ -449,6 +449,16 @@
               <button class="btn btn-primary w-full" id="btn-approve" data-edit-control="true">
                 Submit Timestamps
               </button>
+            {% endif %}
+            {% if is_admin_or_org and talk.handed_off_at %}
+              <div class="handoff-status">
+                <span class="handoff-status-label">Speaker handoff sent</span>
+                <time datetime="{{ talk.handed_off_at.isoformat() }}">{{ talk.handed_off_at.strftime('%b %d, %Y at %H:%M UTC') }}</time>
+              </div>
+              <button class="btn btn-ghost w-full handoff-resend-btn" id="btn-resend-handoff" data-edit-control="true" title="You can resend after the 60-second cooldown">
+                Resend Handoff Email
+              </button>
+              <p class="handoff-cooldown-hint">Resend is limited to once every 60 seconds.</p>
             {% endif %}
             {% if is_admin_or_org %}
               <button class="btn btn-danger w-full btn-reject-spacing" id="btn-abort" data-edit-control="true">

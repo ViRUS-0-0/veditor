@@ -192,6 +192,12 @@ class Talk(Base):
         String(50), nullable=False, default="waiting_for_files"
     )
     speaker_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    handed_off_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    handed_off_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     raw_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     cut_start: Mapped[float | None] = mapped_column(Float, nullable=True)
     cut_end: Mapped[float | None] = mapped_column(Float, nullable=True)

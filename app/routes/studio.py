@@ -162,8 +162,7 @@ def _authorize_studio_talk(
         authorized = (
             user.role == "admin"
             or (
-                user.role == "speaker"
-                and talk.speaker_email
+                talk.speaker_email
                 and user.email
                 and talk.speaker_email.lower() == user.email.lower()
             )
@@ -187,6 +186,14 @@ def _authorize_studio_talk(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=not_found_detail,
             )
+        if (
+            user.role == "user"
+            and talk.speaker_email
+            and user.email
+            and talk.speaker_email.lower() == user.email.lower()
+        ):
+            user.role = "speaker"
+            db.commit()
         if hasattr(request, "state"):
             request.state.user = user
         return talk
@@ -465,6 +472,16 @@ def _render_talks_page(
     # caller may see, narrowed to the selected event. Speakers see their own
     # talks; everyone else sees the events they have access to (none for plain
     # users).
+    if (
+        user
+        and user.email
+        and user.role == "user"
+        and db.query(models.Talk)
+        .filter(func.lower(models.Talk.speaker_email) == user.email.lower())
+        .first()
+    ):
+        user.role = "speaker"
+        db.commit()
     if user and user.role == "speaker" and user.email:
         scope = func.lower(models.Talk.speaker_email) == user.email.lower()
     else:

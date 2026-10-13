@@ -863,6 +863,23 @@ window.approveTalk = async function(id) {
   }
 };
 
+window.resendHandoffEmail = async function(id) {
+  if (isStudioViewOnly()) return;
+  const btn = document.getElementById('btn-resend-handoff');
+  setBtnBusy(btn, true, 'Sending...');
+  try {
+    await postAPI(`/talks/${id}/handoff`, {
+      include_intro: false,
+      include_outro: false,
+      speaker_email: getStudioShell()?.dataset?.speakerEmail || null,
+    });
+    location.reload();
+  } catch (err) {
+    alert(`Resend failed: ${err.message}`);
+    setBtnBusy(btn, false);
+  }
+};
+
 
 window.abortTalk = function(id) {
   if (isStudioViewOnly()) return;
@@ -1522,6 +1539,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const approveBtn = e.target.closest('#btn-approve');
       if (approveBtn) {
         window.approveTalk(getTalkId());
+        return;
+      }
+      const resendBtn = e.target.closest('#btn-resend-handoff');
+      if (resendBtn) {
+        window.resendHandoffEmail(getTalkId());
         return;
       }
       const rejectBtn = e.target.closest('#btn-reject');

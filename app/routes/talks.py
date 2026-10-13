@@ -58,6 +58,7 @@ from app.tasks import (
     job_cut,
     job_detect,
     job_ingest,
+    job_send_speaker_handoff_email,
 )
 from app.webhook import dispatch_talk_webhook
 
@@ -646,19 +647,36 @@ def handoff_talk(
         )
     check_event_access(talk.event_id, user, db)
 
-    if talk.status != "pending_intro_outro":
+    if talk.status not in ("pending_intro_outro", "pending_bounds"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot handoff talk in status '{talk.status}'; talk must be in 'pending_intro_outro'",
+            detail=f"Cannot handoff talk in status '{talk.status}'; talk must be in 'pending_intro_outro' or 'pending_bounds'",
         )
 
-    _apply_intro_outro_config(talk, payload, storage)
+    if talk.status == "pending_intro_outro":
+        _apply_intro_outro_config(talk, payload, storage)
     if payload.speaker_email is not None:
         talk.speaker_email = payload.speaker_email.strip() or None
+    if not talk.speaker_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="speaker_email is required for handoff",
+        )
 
-    advance(talk, "pending_bounds")
+    now = datetime.now(UTC)
+    if talk.handed_off_at and now - talk.handed_off_at < timedelta(seconds=60):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="A handoff email was sent recently; please wait before resending",
+        )
+
+    if talk.status == "pending_intro_outro":
+        advance(talk, "pending_bounds")
+    talk.handed_off_at = now
+    talk.handed_off_by_user_id = user.user_id if not user.is_machine else None
     db.commit()
     db.refresh(talk)
+    light_queue.enqueue(job_send_speaker_handoff_email, talk.id)
 
     client_id = user.client_id if (user and user.is_machine) else None
     dispatch_talk_webhook("talk.bounds_pending", talk, db, client_id=client_id)

@@ -1142,6 +1142,40 @@ a.breadcrumb-event:hover {
   margin-top: 1rem;
 }
 
+.handoff-status {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--v-primary);
+  background: var(--v-bg-card);
+  color: var(--v-text-secondary);
+  font-size: 0.78rem;
+}
+
+.handoff-status-label {
+  color: var(--v-text-primary);
+  font-weight: 600;
+}
+
+.handoff-status time {
+  color: var(--v-text-muted);
+  font-family: var(--v-font-mono);
+  font-size: 0.72rem;
+}
+
+.handoff-resend-btn {
+  margin-top: 2px;
+}
+
+.handoff-cooldown-hint {
+  margin: 6px 0 0;
+  color: var(--v-text-muted);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
 .handoff-email-input {
   margin-top: 0.5rem;
 }
