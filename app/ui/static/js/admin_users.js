@@ -61,6 +61,18 @@ document.addEventListener('DOMContentLoaded', () => {
           badge.textContent = updated.role.charAt(0).toUpperCase() + updated.role.slice(1);
         }
 
+        // Remove pending badge, note, container, and approve button if promoted away from user
+        if (updated.role !== 'user') {
+          const pendingBadge = document.getElementById(`pending-badge-${userId}`);
+          if (pendingBadge) pendingBadge.remove();
+          const pendingNote = document.getElementById(`pending-note-${userId}`);
+          if (pendingNote) pendingNote.remove();
+          const pendingContainer = document.getElementById(`pending-container-${userId}`);
+          if (pendingContainer) pendingContainer.remove();
+          const approveBtn = document.getElementById(`approve-organizer-btn-${userId}`);
+          if (approveBtn) approveBtn.remove();
+        }
+
         showBanner(`User #${userId} role updated to ${updated.role}`, 'success');
       } catch (err) {
         showBanner(`Network error: ${err.message}`, 'error');
@@ -147,4 +159,142 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   });
+
+  // ── Approve Organizer Request Confirmation Modal ───────────────
+  const approveModal = document.getElementById('approve-organizer-modal');
+  const approveModalUserEmail = document.getElementById('approve-modal-user-email');
+  const btnConfirmApprove = document.getElementById('btn-confirm-approve-modal');
+  const btnCancelApprove = document.getElementById('btn-cancel-approve-modal');
+  let pendingApproveUserId = null;
+  let pendingApproveBtn = null;
+
+  function closeApproveModal() {
+    if (approveModal && typeof approveModal.close === 'function' && approveModal.open) {
+      approveModal.close();
+    }
+    pendingApproveUserId = null;
+    pendingApproveBtn = null;
+    if (btnConfirmApprove) {
+      btnConfirmApprove.disabled = false;
+      btnConfirmApprove.textContent = 'Approve';
+    }
+  }
+
+  if (btnCancelApprove) {
+    btnCancelApprove.addEventListener('click', closeApproveModal);
+  }
+
+  if (approveModal) {
+    approveModal.addEventListener('click', (e) => {
+      if (e.target === approveModal) {
+        closeApproveModal();
+      }
+    });
+    approveModal.addEventListener('cancel', () => {
+      pendingApproveUserId = null;
+      pendingApproveBtn = null;
+    });
+  }
+
+  async function executeApprove(userId, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Approving…';
+
+    try {
+      const resp = await fetch(`/admin/users/${userId}/promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ role: 'organizer' }),
+      });
+
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        showBanner(errData.detail || `Failed to approve (${resp.status})`, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Approve';
+        return;
+      }
+
+      const updated = await resp.json();
+
+      // Update role badge
+      const roleBadge = document.getElementById(`badge-role-${userId}`);
+      if (roleBadge) {
+        roleBadge.className = `badge badge-role badge-role-${updated.role}`;
+        roleBadge.textContent = updated.role.charAt(0).toUpperCase() + updated.role.slice(1);
+      }
+
+      // Update role select
+      const roleSelect = document.getElementById(`role-select-${userId}`);
+      if (roleSelect) {
+        roleSelect.value = 'organizer';
+        roleSelect.setAttribute('data-current-role', 'organizer');
+      }
+
+      // Remove pending badge, note, container, and approve button
+      const pendingBadge = document.getElementById(`pending-badge-${userId}`);
+      if (pendingBadge) pendingBadge.remove();
+      const pendingNote = document.getElementById(`pending-note-${userId}`);
+      if (pendingNote) pendingNote.remove();
+      const pendingContainer = document.getElementById(`pending-container-${userId}`);
+      if (pendingContainer) pendingContainer.remove();
+      btn.remove();
+
+      showBanner(`User #${userId} promoted to organizer`, 'success');
+
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('pending') === 'true' || urlParams.get('pending') === '1') {
+        setTimeout(() => {
+          const remainingPending = document.querySelectorAll(
+            '.badge-pending-request, .btn-approve-organizer'
+          );
+          const currentPage = parseInt(urlParams.get('page') || '1', 10);
+          if (remainingPending.length === 0 && currentPage > 1) {
+            urlParams.set('page', String(currentPage - 1));
+            window.location.href = `${window.location.pathname}?${urlParams.toString()}`;
+          } else {
+            window.location.reload();
+          }
+        }, 600);
+      }
+    } catch (err) {
+      showBanner(`Network error: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Approve';
+    }
+  }
+
+  document.querySelectorAll('.btn-approve-organizer').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const userId = btn.getAttribute('data-user-id');
+      const userEmail = btn.getAttribute('data-user-email') || `User #${userId}`;
+      pendingApproveUserId = userId;
+      pendingApproveBtn = btn;
+
+      if (approveModalUserEmail) {
+        approveModalUserEmail.textContent = userEmail;
+      }
+
+      if (approveModal && typeof approveModal.showModal === 'function') {
+        approveModal.showModal();
+      } else {
+        const confirmed = confirm(`Are you sure you want to approve organizer access for ${userEmail}?`);
+        if (confirmed) {
+          executeApprove(userId, btn);
+        }
+      }
+    });
+  });
+
+  if (btnConfirmApprove) {
+    btnConfirmApprove.addEventListener('click', async () => {
+      if (!pendingApproveUserId || !pendingApproveBtn) return;
+      const userId = pendingApproveUserId;
+      const btn = pendingApproveBtn;
+      btnConfirmApprove.disabled = true;
+      btnConfirmApprove.textContent = 'Approving…';
+      await executeApprove(userId, btn);
+      closeApproveModal();
+    });
+  }
 });
