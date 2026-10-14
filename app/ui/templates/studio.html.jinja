@@ -424,8 +424,36 @@
 
       <!-- Action Panel for Review Actions -->
       <div class="review-box">
-        <div class="review-box-title">
-          Review Actions
+        <div class="review-box-header">
+          <div class="review-box-title">
+            Review Actions
+          </div>
+          {% if talk.status == 'preview' and not awaiting_speaker %}
+          <div class="review-help-wrap">
+            <button type="button" class="btn-info-icon" id="btn-preview-help" aria-label="Review actions guide" aria-expanded="false" title="Review actions guide">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+            </button>
+            <div class="preview-help-popover" id="preview-help-popover" role="tooltip">
+              <div class="preview-help-popover-title">Button Actions</div>
+              <div class="preview-help-item">
+                <span class="preview-help-name">Approve Video</span>
+                <span class="preview-help-desc">Approve preview and start final production transcode.</span>
+              </div>
+              <div class="preview-help-item">
+                <span class="preview-help-name">Edit Video</span>
+                <span class="preview-help-desc">Reopen timestamp editor to adjust cut boundaries.</span>
+              </div>
+              <div class="preview-help-item">
+                <span class="preview-help-name">Reset Video</span>
+                <span class="preview-help-desc">Clear cuts and bumpers to start over from raw recording.</span>
+              </div>
+            </div>
+          </div>
+          {% endif %}
         </div>
 
         {% if talk.status in ['pending_bounds', 'preview', 'needs_work'] and not awaiting_speaker %}
@@ -528,13 +556,13 @@
               </div>
             {% else %}
               <button class="btn btn-success w-full" id="btn-approve" data-edit-control="true">
-                Approve Preview
+                Approve Video
               </button>
               <button class="btn btn-warning w-full" id="btn-needs-work" data-edit-control="true">
-                Request Changes (Needs Work)
+                Edit Video
               </button>
               <button class="btn btn-danger w-full btn-reject-spacing" id="btn-reject" data-edit-control="true">
-                Reset Talk to Raw
+                Reset Video
               </button>
             {% endif %}
             {% if is_admin_or_org %}
@@ -682,7 +710,7 @@
             {% endif %}
           {% elif talk.status == 'done' %}
             <div class="badge badge-done badge-status-full">
-              <span class="badge-dot"></span> Published & Complete
+              <span class="badge-dot"></span> Completed
             </div>
 
             <div class="published-download-card">
@@ -858,7 +886,7 @@
 <div id="modal-reset-raw" class="modal-backdrop" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
-      <h3 class="modal-title">Reset to Raw Video</h3>
+      <h3 class="modal-title">Reset Video</h3>
       <button class="btn btn-ghost btn-sm btn-close-modal" id="btn-close-reset-raw-modal">✕</button>
     </div>
     <div class="modal-body">
@@ -868,7 +896,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" id="btn-cancel-reset-raw-modal">Cancel</button>
-      <button class="btn btn-danger" id="btn-confirm-reset-raw">Reset to Raw</button>
+      <button class="btn btn-danger" id="btn-confirm-reset-raw">Reset Video</button>
     </div>
   </div>
 </div>

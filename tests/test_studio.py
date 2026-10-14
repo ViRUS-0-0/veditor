@@ -1578,7 +1578,11 @@ def test_studio_review_notes_present_for_preview(client: TestClient, db_session)
     res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
     assert res.status_code == 200
     assert "review-notes-input" in res.text
-    assert "Approve Preview" in res.text
+    assert "Approve Video" in res.text
+    assert "Edit Video" in res.text
+    assert "Reset Video" in res.text
+    assert "btn-preview-help" in res.text
+    assert "preview-help-popover" in res.text
 
     # Verify pending_bounds also renders review-notes-input, timestamps card, and 'Submit Timestamps'
     talk.status = "pending_bounds"
@@ -1831,7 +1835,7 @@ def test_studio_done_talk_download_actions(
         # 1. Studio page renders download actions
         res = client.get(f"/studio/talks/{talk.id}", headers={"X-API-Key": api_key})
         assert res.status_code == 200
-        assert "Published & Complete" in res.text
+        assert "Completed" in res.text
         assert 'id="btn-download-master"' in res.text
         assert "Download Master Video" in res.text
         assert "download" in res.text
@@ -2472,7 +2476,7 @@ def test_talk_studio_reset_to_raw_modal_and_no_retry_button(
     assert 'id="btn-confirm-reset-raw"' in res.text
     assert 'id="btn-cancel-reset-raw-modal"' in res.text
     assert 'id="btn-close-reset-raw-modal"' in res.text
-    assert "Reset Talk to Raw" in res.text
+    assert "Reset Video" in res.text
     assert 'id="btn-reject"' in res.text
     # Ensure extra step retry lifecycle button is removed
     assert 'id="btn-retry"' not in res.text

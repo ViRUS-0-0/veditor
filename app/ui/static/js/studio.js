@@ -948,7 +948,7 @@ window.confirmResetRawTalk = async function() {
   try {
     await postAPI(`/talks/${id}/review`, {
       decision: 'reject',
-      note: notes || 'Reset talk to raw video',
+      note: notes || 'Reset video',
     });
     location.reload();
   } catch (err) {
@@ -989,12 +989,12 @@ window.requestChangesTalk = async function(id) {
   if (!id || typeof id !== 'number') id = getTalkId();
   const notes = (document.getElementById('review-notes-input') || {}).value || '';
   const btn = document.getElementById('btn-needs-work');
-  setBtnBusy(btn, true, 'Requesting changes...');
+  setBtnBusy(btn, true, 'Opening editor...');
   try {
-    await postAPI(`/talks/${id}/review`, { decision: 'needs_work', note: notes || 'Needs work' });
+    await postAPI(`/talks/${id}/review`, { decision: 'needs_work', note: notes || 'Edit video' });
     location.reload();
   } catch (err) {
-    alert(`Request changes failed: ${err.message}`);
+    alert(`Edit video failed: ${err.message}`);
     setBtnBusy(btn, false);
   }
 };
@@ -1560,6 +1560,31 @@ document.addEventListener('DOMContentLoaded', () => {
       if (abortBtn) {
         window.abortTalk(getTalkId());
         return;
+      }
+    });
+  }
+
+  const btnHelp = document.getElementById('btn-preview-help');
+  const popover = document.getElementById('preview-help-popover');
+  if (btnHelp && popover) {
+    btnHelp.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = popover.classList.toggle('is-open');
+      btnHelp.classList.toggle('is-active', isOpen);
+      btnHelp.setAttribute('aria-expanded', String(isOpen));
+    });
+    document.addEventListener('click', (e) => {
+      if (!popover.contains(e.target) && !btnHelp.contains(e.target)) {
+        popover.classList.remove('is-open');
+        btnHelp.classList.remove('is-active');
+        btnHelp.setAttribute('aria-expanded', 'false');
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && popover.classList.contains('is-open')) {
+        popover.classList.remove('is-open');
+        btnHelp.classList.remove('is-active');
+        btnHelp.setAttribute('aria-expanded', 'false');
       }
     });
   }
