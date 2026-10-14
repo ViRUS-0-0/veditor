@@ -657,29 +657,78 @@ def handoff_talk(
         _apply_intro_outro_config(talk, payload, storage)
     if payload.speaker_email is not None:
         talk.speaker_email = payload.speaker_email.strip() or None
-    if not talk.speaker_email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="speaker_email is required for handoff",
-        )
+
+    event = (
+        talk.event
+        if getattr(talk, "event", None)
+        else db.query(models.Event).filter(models.Event.id == talk.event_id).first()
+    )
+    event_synced = False
+    if event is not None and isinstance(event, models.Event):
+        event_synced = event.is_eventyay_synced
+    elif event is not None:
+        src = getattr(event, "source", None)
+        if isinstance(src, str) and src.strip():
+            src_lower = src.strip().lower()
+            event_synced = (
+                src_lower in ("eventyay", "platform")
+                or "eventyay" in src_lower
+                or "sso" in src_lower
+            )
+
+    is_eventyay = (
+        getattr(user, "is_sso", False) is True
+        or getattr(user, "is_platform", False) is True
+        or event_synced
+    )
+
+    if talk.status == "pending_bounds":
+        if is_eventyay:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Handoff email cannot be sent for talks synced from Eventyay (managed via SSO)",
+            )
+        if not talk.speaker_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="speaker_email is required to resend handoff email",
+            )
 
     now = datetime.now(UTC)
-    if talk.handed_off_at and now - talk.handed_off_at < timedelta(seconds=60):
+    handed_off_at = (
+        talk.handed_off_at.replace(tzinfo=UTC)
+        if talk.handed_off_at and talk.handed_off_at.tzinfo is None
+        else talk.handed_off_at
+    )
+    if (
+        not is_eventyay
+        and talk.speaker_email
+        and handed_off_at
+        and now - handed_off_at < timedelta(seconds=60)
+    ):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="A handoff email was sent recently; please wait before resending",
         )
 
-    if talk.status == "pending_intro_outro":
+    is_initial_handoff = talk.status == "pending_intro_outro"
+    if is_initial_handoff:
         advance(talk, "pending_bounds")
-    talk.handed_off_at = now
-    talk.handed_off_by_user_id = user.user_id if not user.is_machine else None
+
+    send_email = bool(talk.speaker_email) and not is_eventyay
+    if send_email:
+        talk.handed_off_at = now
+        talk.handed_off_by_user_id = user.user_id if not user.is_machine else None
+
     db.commit()
     db.refresh(talk)
-    light_queue.enqueue(job_send_speaker_handoff_email, talk.id)
 
-    client_id = user.client_id if (user and user.is_machine) else None
-    dispatch_talk_webhook("talk.bounds_pending", talk, db, client_id=client_id)
+    if send_email:
+        light_queue.enqueue(job_send_speaker_handoff_email, talk.id)
+
+    if is_initial_handoff:
+        client_id = user.client_id if (user and user.is_machine) else None
+        dispatch_talk_webhook("talk.bounds_pending", talk, db, client_id=client_id)
 
     return schemas.TalkRead.model_validate(talk)
 

@@ -1355,6 +1355,24 @@ def job_send_speaker_handoff_email(talk_id: int) -> bool:
             )
             return True
         event = db.query(Event).filter(Event.id == talk.event_id).first()
+        event_synced = False
+        if event is not None and isinstance(event, Event):
+            event_synced = event.is_eventyay_synced
+        elif event is not None:
+            src = getattr(event, "source", None)
+            if isinstance(src, str) and src.strip():
+                src_lower = src.strip().lower()
+                event_synced = (
+                    src_lower in ("eventyay", "platform")
+                    or "eventyay" in src_lower
+                    or "sso" in src_lower
+                )
+
+        if event_synced:
+            logger.info(
+                "Skipping handoff email: talk %s is synced from Eventyay/SSO", talk_id
+            )
+            return True
         event_name = event.name if event else "VEditor"
         recipient = talk.speaker_email
         title = talk.title

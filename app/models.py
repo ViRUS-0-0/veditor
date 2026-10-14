@@ -142,6 +142,13 @@ class Event(Base):
     def _validate_retention_overrides(self, key: str, value: Any) -> Any:
         return validate_retention_overrides(value)
 
+    @property
+    def is_eventyay_synced(self) -> bool:
+        if not isinstance(self.source, str):
+            return False
+        src = self.source.strip().lower()
+        return src in ("eventyay", "platform") or "eventyay" in src or "sso" in src
+
 
 class Client(Base):
     __tablename__ = "clients"
@@ -232,6 +239,11 @@ class Talk(Base):
     @validates("speaker_email")
     def _validate_speaker_email(self, key: str, value: str | None) -> str | None:
         return value.strip().lower() or None if value else None
+
+    @property
+    def is_eventyay_synced(self) -> bool:
+        ev = getattr(self, "event", None)
+        return ev.is_eventyay_synced if ev else False
 
 
 class Job(Base):
