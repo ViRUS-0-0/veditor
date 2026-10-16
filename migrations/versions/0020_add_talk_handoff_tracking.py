@@ -32,6 +32,12 @@ def upgrade() -> None:
         )
 
 
+    indexes = [idx["name"] for idx in insp.get_indexes("talks")]
+    if op.f("ix_talks_speaker_email") not in indexes and "ix_talks_speaker_email" not in indexes:
+        op.create_index(op.f("ix_talks_speaker_email"), "talks", ["speaker_email"], unique=False)
+
+
 def downgrade() -> None:
+    op.drop_index(op.f("ix_talks_speaker_email"), table_name="talks")
     op.drop_column("talks", "handed_off_by_user_id")
     op.drop_column("talks", "handed_off_at")

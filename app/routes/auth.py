@@ -216,7 +216,8 @@ def signup_page(
     next: str = "",
 ):
     if _get_authenticated_user_from_cookie(request, db) is not None:
-        return RedirectResponse(url="/studio", status_code=status.HTTP_302_FOUND)
+        target = _get_safe_redirect_target(next, default="/studio")
+        return RedirectResponse(url=target, status_code=status.HTTP_302_FOUND)
     return templates.TemplateResponse(
         request,
         "signup.html.jinja",

@@ -1805,3 +1805,72 @@ def test_job_send_speaker_handoff_email_skips_eventyay_talk():
         result = job_send_speaker_handoff_email(1)
         assert result is True
         mock_send.assert_not_called()
+
+
+def test_is_eventyay_synced_exact_matching():
+    """Event.is_eventyay_synced must match managed sources ('eventyay', 'platform') exactly."""
+    assert models.Event(source="eventyay").is_eventyay_synced is True
+    assert models.Event(source="EVENTYAY ").is_eventyay_synced is True
+    assert models.Event(source="platform").is_eventyay_synced is True
+    assert models.Event(source="classroom_sso").is_eventyay_synced is False
+    assert models.Event(source="other").is_eventyay_synced is False
+    assert models.Event(source=None).is_eventyay_synced is False
+
+
+def test_handoff_platform_user_on_regular_event_sends_email():
+    """Platform API user handing off a talk in a regular event sends email."""
+    from app.auth import CurrentUser, get_current_user
+
+    mock_db = MagicMock()
+    user = CurrentUser(
+        user_id=1,
+        role="organizer",
+        source="api_key",
+        is_platform=True,
+        event_ids=[1],
+    )
+    mock_event = models.Event(id=1, name="Regular Conf", source=None)
+    now = datetime.now(UTC)
+    mock_talk = models.Talk(
+        id=1,
+        event_id=1,
+        title="Regular Talk",
+        room="Room 1",
+        start=now,
+        end=now,
+        status="pending_intro_outro",
+        speaker_email="speaker@example.com",
+    )
+    mock_talk.event = mock_event
+
+    def mock_query(model):
+        q = MagicMock()
+        if model is models.Talk:
+            q.filter.return_value.first.return_value = mock_talk
+            q.filter.return_value.with_for_update.return_value.first.return_value = (
+                mock_talk
+            )
+        elif model is models.Event:
+            q.filter.return_value.first.return_value = mock_event
+        return q
+
+    mock_db.query = mock_query
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: mock_db
+    app.dependency_overrides[get_storage_backend] = lambda: FakeStorageBackend()
+
+    try:
+        with patch("app.routes.talks.light_queue.enqueue") as mock_enqueue:
+            resp = client.post(
+                "/talks/1/handoff",
+                json={"include_intro": False, "include_outro": False},
+            )
+            assert resp.status_code == 200
+            assert mock_talk.status == "pending_bounds"
+            assert mock_talk.handed_off_at is not None
+            from app.tasks import job_send_speaker_handoff_email
+
+            enqueued_jobs = [c[0][0] for c in mock_enqueue.call_args_list]
+            assert job_send_speaker_handoff_email in enqueued_jobs
+    finally:
+        app.dependency_overrides.clear()

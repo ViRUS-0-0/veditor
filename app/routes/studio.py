@@ -455,7 +455,7 @@ def _render_talks_page(
                 speaker_events = (
                     db.query(models.Talk.event_id)
                     .filter(
-                        func.lower(models.Talk.speaker_email) == user.email.lower(),
+                        models.Talk.speaker_email == user.email.lower(),
                         models.Talk.event_id.isnot(None),
                     )
                     .scalar_subquery()
@@ -488,24 +488,24 @@ def _render_talks_page(
         and user.email
         and user.role == "user"
         and db.query(models.Talk)
-        .filter(func.lower(models.Talk.speaker_email) == user.email.lower())
+        .filter(models.Talk.speaker_email == user.email.lower())
         .first()
     ):
         user.role = "speaker"
         db.commit()
     if user and user.role == "speaker" and user.email:
-        scope = func.lower(models.Talk.speaker_email) == user.email.lower()
+        scope = models.Talk.speaker_email == user.email.lower()
     else:
         scope = models.Talk.event_id.in_([e.id for e in user_events])
         if sso_user and sso_user.get("role") == "speaker":
             scope = and_(
                 scope,
-                func.lower(models.Talk.speaker_email) == sso_user["email"].lower(),
+                models.Talk.speaker_email == sso_user["email"].lower(),
             )
         elif user and user.email and user.role != "admin":
             scope = or_(
                 scope,
-                func.lower(models.Talk.speaker_email) == user.email.lower(),
+                models.Talk.speaker_email == user.email.lower(),
             )
     if event_id is not None:
         scope = and_(scope, models.Talk.event_id == event_id)
@@ -927,9 +927,25 @@ def studio(
             "preview_urls": preview_urls,
             "all_statuses": ALL_STATUSES,
             "is_speaker": (
-                sso_user.get("role") if sso_user else getattr(user, "role", None)
-            )
-            == "speaker",
+                (
+                    sso_user.get("role") == "speaker"
+                    or bool(
+                        talk.speaker_email
+                        and sso_user.get("email")
+                        and talk.speaker_email.lower() == sso_user["email"].lower()
+                    )
+                )
+                if sso_user
+                else (
+                    getattr(user, "role", None) == "speaker"
+                    or bool(
+                        talk.speaker_email
+                        and getattr(user, "email", None)
+                        and talk.speaker_email.lower()
+                        == getattr(user, "email", "").lower()
+                    )
+                )
+            ),
             "is_other_organizer_talk": is_other_organizer_talk,
             "is_from_admin": is_from_admin,
             "back_url": back_url,

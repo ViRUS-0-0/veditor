@@ -669,18 +669,9 @@ def handoff_talk(
     elif event is not None:
         src = getattr(event, "source", None)
         if isinstance(src, str) and src.strip():
-            src_lower = src.strip().lower()
-            event_synced = (
-                src_lower in ("eventyay", "platform")
-                or "eventyay" in src_lower
-                or "sso" in src_lower
-            )
+            event_synced = src.strip().lower() in ("eventyay", "platform")
 
-    is_eventyay = (
-        getattr(user, "is_sso", False) is True
-        or getattr(user, "is_platform", False) is True
-        or event_synced
-    )
+    is_eventyay = getattr(user, "is_sso", False) is True or event_synced
 
     if talk.status == "pending_bounds":
         if is_eventyay:

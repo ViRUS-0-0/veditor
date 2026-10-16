@@ -1361,12 +1361,7 @@ def job_send_speaker_handoff_email(talk_id: int) -> bool:
         elif event is not None:
             src = getattr(event, "source", None)
             if isinstance(src, str) and src.strip():
-                src_lower = src.strip().lower()
-                event_synced = (
-                    src_lower in ("eventyay", "platform")
-                    or "eventyay" in src_lower
-                    or "sso" in src_lower
-                )
+                event_synced = src.strip().lower() in ("eventyay", "platform")
 
         if event_synced:
             logger.info(

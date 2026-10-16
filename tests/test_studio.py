@@ -3785,3 +3785,60 @@ def test_studio_handoff_utc_format_and_cooldown_attr(client: TestClient, db_sess
     assert "Oct 14, 2026 at 12:30 UTC" in resp.text
     assert 'data-handed-off-at="' in resp.text
     assert "btn-resend-handoff" in resp.text
+    assert "Speaker handoff requested" in resp.text
+
+
+def test_sso_speaker_view_derived_from_email_match(client: TestClient, db_session):
+    """Ensure speaker matching speaker_email gets speaker controls even if role is 'user'."""
+    now = datetime.now(UTC)
+
+    event = models.Event(name="SSO Speaker Event")
+    db_session.add(event)
+    db_session.commit()
+
+    talk = models.Talk(
+        event_id=event.id,
+        title="SSO Speaker Talk",
+        status="pending_bounds",
+        speaker_email="assigned_sso_speaker@example.com",
+        start=now,
+        end=now,
+    )
+    db_session.add(talk)
+    db_session.commit()
+
+    # 1. SSO token with matching email
+    sso_token = create_sso_token(
+        scope_type="event",
+        scope_id=event.id,
+        role="speaker",
+        email="assigned_sso_speaker@example.com",
+    )
+    resp = client.get(
+        f"/studio/talks/{talk.id}?sso_token={sso_token}", follow_redirects=True
+    )
+    assert resp.status_code == 200
+    assert "Awaiting Speaker to Submit Timestamps" not in resp.text
+    assert "Submit Timestamps" in resp.text
+
+    # 2. Registered user with role="user" matching talk.speaker_email
+    human_speaker = models.User(
+        email="assigned_sso_speaker@example.com",
+        hashed_password="pw",
+        role="user",
+        is_active=True,
+    )
+    db_session.add(human_speaker)
+    db_session.commit()
+
+    user_token = create_session_token(human_speaker.id, human_speaker.role)
+    client.cookies.set("veditor_session", user_token)
+    resp2 = client.get(f"/studio/talks/{talk.id}")
+    assert resp2.status_code == 200
+    assert "Awaiting Speaker to Submit Timestamps" not in resp2.text
+    assert "Submit Timestamps" in resp2.text
+
+
+def test_talk_speaker_email_index():
+    """Ensure speaker_email column has an index defined on models.Talk."""
+    assert models.Talk.__table__.c.speaker_email.index is True

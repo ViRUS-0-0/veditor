@@ -160,8 +160,7 @@ class Event(Base):
     def is_eventyay_synced(self) -> bool:
         if not isinstance(self.source, str):
             return False
-        src = self.source.strip().lower()
-        return src in ("eventyay", "platform") or "eventyay" in src or "sso" in src
+        return self.source.strip().lower() in ("eventyay", "platform")
 
 
 class Client(Base):
@@ -212,7 +211,9 @@ class Talk(Base):
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="waiting_for_files"
     )
-    speaker_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    speaker_email: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
     handed_off_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
