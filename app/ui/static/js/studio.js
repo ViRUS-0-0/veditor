@@ -863,9 +863,31 @@ window.approveTalk = async function(id) {
   }
 };
 
+function initHandoffCooldown() {
+  const btn = document.getElementById('btn-resend-handoff');
+  if (!btn || !btn.dataset.handedOffAt) return;
+  const handedOffMs = Date.parse(btn.dataset.handedOffAt);
+  if (isNaN(handedOffMs)) return;
+
+  function update() {
+    const elapsedSec = Math.floor((Date.now() - handedOffMs) / 1000);
+    const remaining = 60 - elapsedSec;
+    if (remaining > 0) {
+      btn.disabled = true;
+      btn.textContent = `Resend Handoff Email (${remaining}s)`;
+      setTimeout(update, 1000);
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Resend Handoff Email';
+    }
+  }
+  update();
+}
+
 window.resendHandoffEmail = async function(id) {
   if (isStudioViewOnly()) return;
   const btn = document.getElementById('btn-resend-handoff');
+  if (btn && btn.disabled) return;
   setBtnBusy(btn, true, 'Sending...');
   try {
     await postAPI(`/talks/${id}/handoff`, {
@@ -1525,6 +1547,8 @@ document.addEventListener('DOMContentLoaded', () => {
       videoInput.click();
     });
   }
+
+  initHandoffCooldown();
 
   const actionBtns = document.getElementById('action-btns');
   if (actionBtns) {

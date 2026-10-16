@@ -520,11 +520,12 @@
               </button>
             {% endif %}
             {% if is_admin_or_org and talk.handed_off_at %}
+              {% set handed_off_at_utc = talk.handed_off_at.astimezone(UTC) if talk.handed_off_at.tzinfo else talk.handed_off_at %}
               <div class="handoff-status">
                 <span class="handoff-status-label">Speaker handoff sent</span>
-                <time datetime="{{ talk.handed_off_at.isoformat() }}">{{ talk.handed_off_at.strftime('%b %d, %Y at %H:%M UTC') }}</time>
+                <time datetime="{{ talk.handed_off_at.isoformat() }}">{{ handed_off_at_utc.strftime('%b %d, %Y at %H:%M UTC') }}</time>
               </div>
-              <button class="btn btn-ghost w-full handoff-resend-btn" id="btn-resend-handoff" data-edit-control="true" title="You can resend after the 60-second cooldown">
+              <button class="btn btn-ghost w-full handoff-resend-btn" id="btn-resend-handoff" data-edit-control="true" data-handed-off-at="{{ talk.handed_off_at.isoformat() }}" title="You can resend after the 60-second cooldown">
                 Resend Handoff Email
               </button>
               <p class="handoff-cooldown-hint">Resend is limited to once every 60 seconds.</p>

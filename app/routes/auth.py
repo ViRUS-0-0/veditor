@@ -640,11 +640,18 @@ def verify_email_submit(
 def verify_email_resend_page(
     request: Request,
     email: str = "",
+    next: str = "",
 ):
+    safe_next = _get_safe_redirect_target(next) if next else ""
     return templates.TemplateResponse(
         request,
         "verify_email_resend.html.jinja",
-        {"error": None, "message": None, "email": email.strip()},
+        {
+            "error": None,
+            "message": None,
+            "email": email.strip(),
+            "next": safe_next,
+        },
     )
 
 
@@ -653,7 +660,9 @@ def verify_email_resend_submit(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
     email: Annotated[str, Form()] = "",
+    next: Annotated[str, Form()] = "",
 ):
+    safe_next = _get_safe_redirect_target(next) if next else ""
     clean_email = email.strip().lower()
     if not clean_email or not is_valid_email(clean_email):
         return templates.TemplateResponse(
@@ -663,6 +672,7 @@ def verify_email_resend_submit(
                 "error": "Please enter a valid email address.",
                 "message": None,
                 "email": clean_email,
+                "next": safe_next,
             },
             status_code=status.HTTP_400_BAD_REQUEST,
         )
@@ -681,6 +691,7 @@ def verify_email_resend_submit(
                     "error": f"Please wait {wait_seconds} seconds before requesting another verification email.",
                     "message": None,
                     "email": clean_email,
+                    "next": safe_next,
                 },
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             )
@@ -693,6 +704,7 @@ def verify_email_resend_submit(
                 "error": "The service is temporarily unavailable. Please try again later.",
                 "message": None,
                 "email": clean_email,
+                "next": safe_next,
             },
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
@@ -710,6 +722,7 @@ def verify_email_resend_submit(
                 user.id,
                 user.email,
                 token,
+                safe_next,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error(
@@ -733,6 +746,7 @@ def verify_email_resend_submit(
             "error": None,
             "message": "If an unverified account exists with that email address, a new verification link has been sent.",
             "email": clean_email,
+            "next": safe_next,
         },
     )
 

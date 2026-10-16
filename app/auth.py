@@ -577,6 +577,14 @@ def check_talk_access(
             ):
                 if user.role == "user":
                     user.role = "speaker"
+                    if user.user_id:
+                        db_u = (
+                            db.query(models.User)
+                            .filter(models.User.id == user.user_id)
+                            .first()
+                        )
+                        if db_u and db_u.role == "user":
+                            db_u.role = "speaker"
                     db.commit()
             elif user.role == "speaker":
                 raise HTTPException(
@@ -607,6 +615,12 @@ def check_talk_access(
     ):
         if user.role == "user":
             user.role = "speaker"
+            if user.user_id:
+                db_u = (
+                    db.query(models.User).filter(models.User.id == user.user_id).first()
+                )
+                if db_u and db_u.role == "user":
+                    db_u.role = "speaker"
             db.commit()
         return target_talk
 

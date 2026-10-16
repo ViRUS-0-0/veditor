@@ -41,6 +41,12 @@ def send_speaker_handoff_email(
         )
         return True
 
+    if settings.smtp_user and not (settings.smtp_ssl or settings.smtp_tls):
+        logger.error(
+            "Plaintext SMTP authentication is rejected; enable smtp_ssl or smtp_tls",
+        )
+        return False
+
     msg = EmailMessage()
     msg["Subject"] = f"Review your talk in VEditor - {talk_title}"
     msg["From"] = settings.smtp_from
@@ -122,6 +128,12 @@ def send_verification_email(
             verify_url,
         )
         return True
+
+    if settings.smtp_user and not (settings.smtp_ssl or settings.smtp_tls):
+        logger.error(
+            "Plaintext SMTP authentication is rejected; enable smtp_ssl or smtp_tls",
+        )
+        return False
 
     msg = EmailMessage()
     msg["Subject"] = "Verify your email address - VEditor"
@@ -214,6 +226,12 @@ def send_password_reset_email(
             reset_url,
         )
         return True
+
+    if settings.smtp_user and not (settings.smtp_ssl or settings.smtp_tls):
+        logger.error(
+            "Plaintext SMTP authentication is rejected; enable smtp_ssl or smtp_tls",
+        )
+        return False
 
     msg = EmailMessage()
     msg["Subject"] = "Reset your password - VEditor"

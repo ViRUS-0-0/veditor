@@ -13,7 +13,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from redis.exceptions import RedisError
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
@@ -450,9 +450,20 @@ def _render_talks_page(
         user_events = db.query(models.Event).filter(models.Event.id == event_id).all()
     elif user:
         if user.role in ("organizer", "admin"):
+            filters = [models.Event.created_by_user_id == user.id]
+            if user.email:
+                speaker_events = (
+                    db.query(models.Talk.event_id)
+                    .filter(
+                        func.lower(models.Talk.speaker_email) == user.email.lower(),
+                        models.Talk.event_id.isnot(None),
+                    )
+                    .scalar_subquery()
+                )
+                filters.append(models.Event.id.in_(speaker_events))
             user_events = (
                 db.query(models.Event)
-                .filter(models.Event.created_by_user_id == user.id)
+                .filter(or_(*filters))
                 .order_by(models.Event.name.asc())
                 .all()
             )
@@ -490,6 +501,11 @@ def _render_talks_page(
             scope = and_(
                 scope,
                 func.lower(models.Talk.speaker_email) == sso_user["email"].lower(),
+            )
+        elif user and user.email and user.role != "admin":
+            scope = or_(
+                scope,
+                func.lower(models.Talk.speaker_email) == user.email.lower(),
             )
     if event_id is not None:
         scope = and_(scope, models.Talk.event_id == event_id)
