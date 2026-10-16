@@ -82,3 +82,17 @@ def test_docker_compose_worker_concurrency():
 
     assert "--concurrency" in light_cmd
     assert "--concurrency" in heavy_cmd
+
+
+def test_docker_compose_postgres_volume_mount():
+    compose_path = Path(__file__).parent.parent / "docker-compose.yml"
+    assert compose_path.is_file()
+
+    with open(compose_path, "r", encoding="utf-8") as f:
+        compose = yaml.safe_load(f)
+
+    services = compose.get("services", {})
+    assert "postgres" in services
+
+    postgres_volumes = services["postgres"].get("volumes", [])
+    assert "postgres_data:/var/lib/postgresql" in postgres_volumes
