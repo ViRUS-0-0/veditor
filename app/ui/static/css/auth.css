@@ -7,6 +7,26 @@
   text-decoration: none;
 }
 
+#btn-login-submit,
+form[action^="/login"] .btn-auth-submit {
+  background: #15803d;
+  border-color: #15803d;
+  color: #ffffff;
+}
+
+#btn-login-submit:hover,
+form[action^="/login"] .btn-auth-submit:hover {
+  background: #166534;
+  border-color: #166534;
+}
+
+html[data-theme="dark"] #btn-login-submit:hover,
+html[data-theme="dark"] form[action^="/login"] .btn-auth-submit:hover {
+  background: #22c55e;
+  border-color: #22c55e;
+  color: #0c0e14;
+}
+
 a.btn-auth-submit {
   text-decoration: none;
 }
