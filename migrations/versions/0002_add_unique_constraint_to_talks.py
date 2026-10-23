@@ -19,6 +19,25 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade schema."""
+    # Preserve duplicate rows and their related jobs/reviews while making the
+    # legacy key unique. Later rows receive a deterministic title suffix.
+    op.execute(
+        """
+        UPDATE talks AS duplicate
+        SET title = left(
+            duplicate.title,
+            255 - length(' [duplicate ' || duplicate.id::text || ']')
+        ) || ' [duplicate ' || duplicate.id::text || ']'
+        WHERE EXISTS (
+            SELECT 1
+            FROM talks AS original
+            WHERE original.event_id = duplicate.event_id
+              AND original.start = duplicate.start
+              AND original.title = duplicate.title
+              AND original.id < duplicate.id
+        )
+        """
+    )
     op.create_unique_constraint(
         "uq_talks_event_id_title_start",
         "talks",

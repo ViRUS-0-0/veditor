@@ -42,4 +42,32 @@ if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
     uv run alembic upgrade head
 fi
 
+if [ "${WAIT_FOR_API:-false}" = "true" ]; then
+    python - <<'PY'
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+
+timeout = float(os.environ.get("SERVICE_WAIT_TIMEOUT", "120"))
+deadline = time.monotonic() + timeout
+url = os.environ.get("API_HEALTH_URL", "http://api:8000/health")
+
+while True:
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            if 200 <= response.status < 300:
+                break
+    except (OSError, urllib.error.URLError):
+        pass
+
+    if time.monotonic() >= deadline:
+        print(f"Timed out waiting for API health at {url}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Waiting for API health at {url}...")
+    time.sleep(2)
+PY
+fi
+
 exec "$@"

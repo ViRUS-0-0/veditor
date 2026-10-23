@@ -13,7 +13,7 @@ services:
       INGEST_ROOTS: '["/app/ingest"]'
       RUN_MIGRATIONS: "true"
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     volumes:
       - veditor_data:/app/data
       - veditor_ingest:/app/ingest
@@ -45,6 +45,8 @@ services:
       DATA_DIR: /app/data
       INGEST_ROOTS: '["/app/ingest"]'
       RUN_MIGRATIONS: "false"
+      WAIT_FOR_API: "true"
+      API_HEALTH_URL: http://api:8000/health
       ENCODER_THREADS: 2
     volumes:
       - veditor_data:/app/data
@@ -54,9 +56,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     labels:
       com.centurylinklabs.watchtower.enable: "true"
-    stop_grace_period: 120s
+    stop_grace_period: 1h
     restart: unless-stopped
 
   worker-heavy:
@@ -72,6 +76,8 @@ services:
       DATA_DIR: /app/data
       INGEST_ROOTS: '["/app/ingest"]'
       RUN_MIGRATIONS: "false"
+      WAIT_FOR_API: "true"
+      API_HEALTH_URL: http://api:8000/health
       ENCODER_THREADS: 2
     volumes:
       - veditor_data:/app/data
@@ -81,9 +87,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      api:
+        condition: service_healthy
     labels:
       com.centurylinklabs.watchtower.enable: "true"
-    stop_grace_period: 120s
+    stop_grace_period: 1h
     restart: unless-stopped
 
   postgres:
@@ -101,7 +109,7 @@ services:
 
   redis:
     image: redis:8-alpine
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --appendfsync always
     volumes:
       - redis_data:/data
     healthcheck:
@@ -118,13 +126,17 @@ services:
       WATCHTOWER_POLL_INTERVAL: 300
       WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_ROLLING_RESTART: "true"
-      WATCHTOWER_STOP_TIMEOUT: 120s
+      WATCHTOWER_STOP_TIMEOUT: 1h
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
 volumes:
   postgres_data:
+    name: ${POSTGRES_VOLUME_NAME:-veditor_postgres_data}
   redis_data:
+    name: ${REDIS_VOLUME_NAME:-veditor_redis_data}
   veditor_data:
+    name: ${DATA_VOLUME_NAME:-veditor_veditor_data}
   veditor_ingest:
+    name: ${INGEST_VOLUME_NAME:-veditor_veditor_ingest}

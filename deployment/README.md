@@ -20,10 +20,23 @@ keep their data in named Docker volumes.
    ```
 
 The API waits for PostgreSQL and Redis, runs `alembic upgrade head` once, and
-then starts Uvicorn. Workers wait for the same services but never run
-migrations. Watchtower checks the `latest` image every five minutes and only
-updates containers carrying its enable label. Worker restarts allow up to 120
-seconds for an active job to stop cleanly.
+then starts Uvicorn. Workers wait for a healthy API, so they cannot consume
+queued jobs until migrations have completed. Nickfedor Watchtower checks the
+production `latest` image every five minutes and only updates containers
+carrying its enable label. Worker updates use a one-hour graceful shutdown
+deadline so active RQ jobs can drain before replacement.
+
+Workers also wait for the API health endpoint at startup. This remains
+effective during Watchtower restarts, ensuring migrations finish before a
+restarted worker can consume queued jobs.
+
+Redis uses `appendfsync always` so an acknowledged enqueue is persisted before
+the write returns. This reduces throughput, so monitor Redis latency and
+consider a transactional outbox if queue volume later requires higher
+performance.
+
+The API binds to `127.0.0.1` by default. Put Nginx or Caddy in front of it for
+public HTTPS access; do not expose Uvicorn directly to the internet.
 
 ## Reverse proxy and HTTPS
 
@@ -40,10 +53,27 @@ Check service logs with `docker compose logs -f api` or
 changes, and do not remove the named volumes: they contain the database,
 Redis queue data, uploaded recordings, and generated video files.
 
-Every successful deployment workflow publishes a new `latest` image. To apply
-it immediately instead of waiting for Watchtower's five-minute poll:
+Production releases from `main` or a version tag publish a new `latest` image.
+Pushes to `dev` publish only the `dev` image and cannot update this production
+stack. To apply a new production image immediately instead of waiting for
+Watchtower's five-minute poll:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
+
+## Existing root-Compose deployments
+
+The production file uses explicit volume names. The defaults match the named
+volumes created by a root Compose project named `veditor`. Before switching an
+existing host, inspect the actual names:
+
+```bash
+docker volume ls | grep veditor
+```
+
+Set `POSTGRES_VOLUME_NAME`, `REDIS_VOLUME_NAME`, `DATA_VOLUME_NAME`, and
+`INGEST_VOLUME_NAME` in `.env` to those existing names. Use unique names for an
+isolated test stack. Never run `docker compose down -v` until the volume
+migration has been verified.
