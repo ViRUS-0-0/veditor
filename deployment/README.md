@@ -10,9 +10,8 @@ keep their data in named Docker volumes.
 2. Create a deployment directory and copy `docker-compose.yml` and `env.sample`
    into it as `docker-compose.yml` and `.env`.
 3. Set a strong database password and `SESSION_SECRET` (at least 32 bytes).
-4. Choose the image tag with `TAG=latest`, `TAG=main`, or `TAG=dev`.
-5. Log in to Docker Hub if the repository is private.
-6. Start the stack:
+4. Log in to Docker Hub if the repository is private.
+5. Start the stack:
 
    ```bash
    docker compose pull
@@ -22,9 +21,9 @@ keep their data in named Docker volumes.
 
 The API waits for PostgreSQL and Redis, runs `alembic upgrade head` once, and
 then starts Uvicorn. Workers wait for the same services but never run
-migrations. Watchtower checks Docker Hub every five minutes and only updates
-containers carrying its enable label. Worker restarts allow up to 120 seconds
-for an active job to stop cleanly.
+migrations. Watchtower checks the `latest` image every five minutes and only
+updates containers carrying its enable label. Worker restarts allow up to 120
+seconds for an active job to stop cleanly.
 
 ## Reverse proxy and HTTPS
 
@@ -41,9 +40,10 @@ Check service logs with `docker compose logs -f api` or
 changes, and do not remove the named volumes: they contain the database,
 Redis queue data, uploaded recordings, and generated video files.
 
-To deploy a specific release without changing the file:
+Every successful deployment workflow publishes a new `latest` image. To apply
+it immediately instead of waiting for Watchtower's five-minute poll:
 
 ```bash
-TAG=1.2.3 docker compose pull
-TAG=1.2.3 docker compose up -d
+docker compose pull
+docker compose up -d
 ```

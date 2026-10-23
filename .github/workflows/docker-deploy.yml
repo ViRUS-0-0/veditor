@@ -34,10 +34,7 @@ jobs:
         with:
           images: v2nvirus/veditor
           tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
 
       - name: Build and push image
         uses: docker/build-push-action@v6
