@@ -142,6 +142,7 @@ services:
         condition: service_started
     networks:
       - docker_control
+      - egress
     restart: unless-stopped
 
   docker-socket-proxy:
@@ -161,6 +162,8 @@ networks:
   application:
   docker_control:
     internal: true
+  egress:
+    driver: bridge
 
 volumes:
   postgres_data:
