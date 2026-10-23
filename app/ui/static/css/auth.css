@@ -7,6 +7,16 @@
   text-decoration: none;
 }
 
+.btn-auth-signin {
+  background: var(--v-status-success-text);
+  border-color: var(--v-status-success-text);
+}
+
+.btn-auth-signin:hover {
+  background: var(--v-status-success-border);
+  border-color: var(--v-status-success-border);
+}
+
 a.btn-auth-submit {
   text-decoration: none;
 }
