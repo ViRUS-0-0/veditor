@@ -25,6 +25,6 @@ jobs:
           context: .
           file: ./Dockerfile
           push: false
-          tags: v2nvirus/veditor:pr-${{ github.event.pull_request.number }}
+          tags: fossasia/veditor:pr-${{ github.event.pull_request.number }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

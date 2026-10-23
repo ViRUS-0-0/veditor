@@ -32,7 +32,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: v2nvirus/veditor
+          images: fossasia/veditor
           tags: |
             type=raw,value=latest
 
