@@ -3,8 +3,8 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote_plus
 
+import sqlalchemy
 from pydantic import PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -43,11 +43,14 @@ ALLOWED_JWT_ALGORITHMS: tuple[str, ...] = ("HS256", "HS384", "HS512")
 
 
 class Settings(BaseSettings):
-    postgres_user: str = "veditor"
-    postgres_password: str = "password"
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
     postgres_db: str = "veditor"
+    # The minimal config below for PostgreSQL is for "peer" mode,
+    # which is enabled by default under Linux.
+    # `None` means using the Postgres user with the same username as Linux user.
+    postgres_user: str | None = None
+    postgres_password: str = ""
+    postgres_host: str = ""
+    postgres_port: int | None = None
 
     redis_url: str = "redis://localhost:6379/0"
 
@@ -68,6 +71,7 @@ class Settings(BaseSettings):
     session_token_expire_hours: int = 168
     access_token_expire_seconds: int = 3600
     sso_token_expire_seconds: int = 300
+    speaker_magic_link_expire_hours: int = 168
     email_verification_expire_hours: int = 24
     password_reset_expire_hours: int = 1
 
@@ -108,6 +112,7 @@ class Settings(BaseSettings):
         "session_token_expire_hours",
         "access_token_expire_seconds",
         "sso_token_expire_seconds",
+        "speaker_magic_link_expire_hours",
         "email_verification_expire_hours",
         "password_reset_expire_hours",
         mode="after",
@@ -145,10 +150,43 @@ class Settings(BaseSettings):
         return self.environment.lower() in ("production", "prod")
 
     @property
-    def database_url(self) -> str:
-        user = quote_plus(self.postgres_user)
-        password = quote_plus(self.postgres_password)
-        return f"postgresql+psycopg://{user}:{password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+    def testing_db_name(self) -> str:
+        """
+        Deduce database name to use in test.
+
+        The convention is to prefix the main database name with "test_".
+        For example, "veditor" -> "test_veditor".
+        Why not suffix, like "veditor_test"? It is to prevent the mistake
+        when the developer types "ved", see some autocomplete then quickly select
+        the one without "_test".
+        """
+        return f"test_{self.postgres_db}"
+
+    @property
+    def database_url(self) -> sqlalchemy.URL:
+        return sqlalchemy.URL.create(
+            "postgresql+psycopg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        )
+
+    @property
+    def testing_database_url(self) -> sqlalchemy.URL:
+        """
+        Create database URL for use in test.
+        """
+        db_name = f"test_{self.postgres_db}"
+        return sqlalchemy.URL.create(
+            "postgresql+psycopg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=db_name,
+        )
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -168,6 +206,21 @@ class SettingDefinition:
 
 
 SYSTEM_SETTING_DEFINITIONS: dict[str, SettingDefinition] = {
+    "speaker_magic_link_expire_hours": SettingDefinition(
+        key="speaker_magic_link_expire_hours",
+        title="Speaker Review Magic Link Expiry",
+        description="Default expiration window (in hours) for speaker review magic links sent via email.",
+        default_value=168,
+        value_type=int,
+        input_type="select",
+        options=(
+            ("24", "1 day (24 hours)"),
+            ("72", "3 days (72 hours)"),
+            ("168", "7 days (168 hours) - Default"),
+            ("336", "14 days (336 hours)"),
+            ("720", "30 days (720 hours)"),
+        ),
+    ),
     "detect_duration_tolerance_seconds": SettingDefinition(
         key="detect_duration_tolerance_seconds",
         title="Schedule Time Margin",

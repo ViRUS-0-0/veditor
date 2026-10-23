@@ -36,7 +36,7 @@ from app.auth import (
     get_current_user,
     require_role,
 )
-from app.config import settings
+from app.config import get_setting, settings
 from app.db import get_db
 from app.ingest import (
     IngestPathRejectedError,
@@ -59,6 +59,7 @@ from app.tasks import (
     job_detect,
     job_ingest,
     job_ingest_room_url,
+    job_send_speaker_handoff_email,
 )
 from app.webhook import dispatch_talk_webhook
 
@@ -647,22 +648,79 @@ def handoff_talk(
         )
     check_event_access(talk.event_id, user, db)
 
-    if talk.status != "pending_intro_outro":
+    if talk.status not in ("pending_intro_outro", "pending_bounds"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot handoff talk in status '{talk.status}'; talk must be in 'pending_intro_outro'",
+            detail=f"Cannot handoff talk in status '{talk.status}'; talk must be in 'pending_intro_outro' or 'pending_bounds'",
         )
 
-    _apply_intro_outro_config(talk, payload, storage)
+    if talk.status == "pending_intro_outro":
+        _apply_intro_outro_config(talk, payload, storage)
     if payload.speaker_email is not None:
         talk.speaker_email = payload.speaker_email.strip() or None
 
-    advance(talk, "pending_bounds")
+    event = (
+        talk.event
+        if getattr(talk, "event", None)
+        else db.query(models.Event).filter(models.Event.id == talk.event_id).first()
+    )
+    event_synced = False
+    if event is not None and isinstance(event, models.Event):
+        event_synced = event.is_eventyay_synced
+    elif event is not None:
+        src = getattr(event, "source", None)
+        if isinstance(src, str) and src.strip():
+            event_synced = src.strip().lower() in ("eventyay", "platform")
+
+    is_eventyay = getattr(user, "is_sso", False) is True or event_synced
+
+    if talk.status == "pending_bounds":
+        if is_eventyay:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Handoff email cannot be sent for talks synced from Eventyay (managed via SSO)",
+            )
+        if not talk.speaker_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="speaker_email is required to resend handoff email",
+            )
+
+    now = datetime.now(UTC)
+    handed_off_at = (
+        talk.handed_off_at.replace(tzinfo=UTC)
+        if talk.handed_off_at and talk.handed_off_at.tzinfo is None
+        else talk.handed_off_at
+    )
+    if (
+        not is_eventyay
+        and talk.speaker_email
+        and handed_off_at
+        and now - handed_off_at < timedelta(seconds=60)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="A handoff email was sent recently; please wait before resending",
+        )
+
+    is_initial_handoff = talk.status == "pending_intro_outro"
+    if is_initial_handoff:
+        advance(talk, "pending_bounds")
+
+    send_email = bool(talk.speaker_email) and not is_eventyay
+    if send_email:
+        talk.handed_off_at = now
+        talk.handed_off_by_user_id = user.user_id if not user.is_machine else None
+
     db.commit()
     db.refresh(talk)
 
-    client_id = user.client_id if (user and user.is_machine) else None
-    dispatch_talk_webhook("talk.bounds_pending", talk, db, client_id=client_id)
+    if send_email:
+        light_queue.enqueue(job_send_speaker_handoff_email, talk.id)
+
+    if is_initial_handoff:
+        client_id = user.client_id if (user and user.is_machine) else None
+        dispatch_talk_webhook("talk.bounds_pending", talk, db, client_id=client_id)
 
     return schemas.TalkRead.model_validate(talk)
 
@@ -1681,22 +1739,31 @@ def create_talk_sso_token(
         )
     if not talk:
         talk_filters = [models.Talk.external_id == talk_identifier]
-        if not getattr(client, "is_platform", False) and client.event_ids:
-            talk_filters.append(models.Talk.event_id.in_(client.event_ids))
-        elif target_event_id is not None:
-            resolved_eid = (
-                int(target_event_id) if str(target_event_id).isdigit() else None
+        resolved_event_id: int | None = None
+        if target_event_id is not None:
+            target_str = str(target_event_id).strip()
+            # Match by Event.external_id first to prevent numeric external IDs from clashing with internal PKs
+            event_match = (
+                db.query(models.Event)
+                .filter(models.Event.external_id == target_str)
+                .first()
             )
-            if resolved_eid is None:
-                ev = (
-                    db.query(models.Event)
-                    .filter(models.Event.external_id == str(target_event_id))
-                    .first()
-                )
-                if ev:
-                    resolved_eid = ev.id
-            if resolved_eid is not None:
-                talk_filters.append(models.Talk.event_id == resolved_eid)
+            if event_match:
+                resolved_event_id = event_match.id
+            elif target_str.isdigit():
+                resolved_event_id = int(target_str)
+
+        if not getattr(client, "is_platform", False) and client.event_ids:
+            if resolved_event_id is not None:
+                if resolved_event_id in client.event_ids:
+                    talk_filters.append(models.Talk.event_id == resolved_event_id)
+                else:
+                    talk_filters.append(models.Talk.event_id.in_(client.event_ids))
+            else:
+                talk_filters.append(models.Talk.event_id.in_(client.event_ids))
+        elif resolved_event_id is not None:
+            talk_filters.append(models.Talk.event_id == resolved_event_id)
+
         talk = db.query(models.Talk).filter(*talk_filters).first()
     if not talk:
         raise HTTPException(
@@ -1714,11 +1781,23 @@ def create_talk_sso_token(
     target_email = payload.email if payload else None
     target_display_name = payload.display_name if payload else None
 
+    if payload and payload.expires_in_seconds is not None:
+        expires_in = payload.expires_in_seconds
+    elif talk.event and talk.event.speaker_magic_link_expire_hours is not None:
+        expires_in = talk.event.speaker_magic_link_expire_hours * 3600
+    else:
+        global_hours = get_setting(
+            "speaker_magic_link_expire_hours",
+            default=settings.speaker_magic_link_expire_hours,
+            db=db,
+        )
+        expires_in = int(global_hours) * 3600
+
     token = create_sso_token(
         scope_type="talk",
         scope_id=talk.id,
         role="speaker",
-        expires_in_seconds=settings.sso_token_expire_seconds,
+        expires_in_seconds=expires_in,
         email=target_email,
         display_name=target_display_name,
     )
@@ -1728,7 +1807,7 @@ def create_talk_sso_token(
         scope_type="talk",
         scope_id=talk.id,
         role="speaker",
-        expires_in_seconds=settings.sso_token_expire_seconds,
+        expires_in_seconds=expires_in,
         url=f"/studio/talks/{talk.id}?sso_token={token}",
     )
 
