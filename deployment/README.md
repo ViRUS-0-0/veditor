@@ -26,6 +26,10 @@ production `latest` image every five minutes and only updates containers
 carrying its enable label. Worker updates use a one-hour graceful shutdown
 deadline so active RQ jobs can drain before replacement.
 
+Watchtower talks to Docker through a restricted socket-proxy service rather
+than mounting the Docker socket directly. The proxy permits only the container,
+image, info, and required write operations used for image replacement.
+
 Workers also wait for the API health endpoint at startup. This remains
 effective during Watchtower restarts, ensuring migrations finish before a
 restarted worker can consume queued jobs.

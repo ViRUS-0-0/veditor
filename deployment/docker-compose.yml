@@ -120,13 +120,26 @@ services:
     restart: unless-stopped
 
   watchtower:
-    image: nickfedor/watchtower:latest
+    image: nickfedor/watchtower@sha256:62fb91130ddb493f869cad7e198fa260dd16c5da293ed092cbd5d8781566f7a6
     command: --label-enable
     environment:
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
       WATCHTOWER_POLL_INTERVAL: 300
       WATCHTOWER_CLEANUP: "true"
       WATCHTOWER_ROLLING_RESTART: "true"
       WATCHTOWER_STOP_TIMEOUT: 1h
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    restart: unless-stopped
+
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.1.2
+    environment:
+      CONTAINERS: "1"
+      IMAGES: "1"
+      INFO: "1"
+      POST: "1"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
