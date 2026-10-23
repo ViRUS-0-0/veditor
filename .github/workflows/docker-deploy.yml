@@ -5,8 +5,6 @@ on:
     branches:
       - dev
       - main
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +20,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -39,7 +39,6 @@ jobs:
           images: fossasia/veditor
           tags: |
             type=ref,event=branch
-            type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push image

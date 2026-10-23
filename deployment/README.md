@@ -57,7 +57,7 @@ Check service logs with `docker compose logs -f api` or
 changes, and do not remove the named volumes: they contain the database,
 Redis queue data, uploaded recordings, and generated video files.
 
-Production releases from `main` or a version tag publish a new `latest` image.
+Production releases from `main` publish both the `main` and `latest` images.
 Pushes to `dev` publish only the `dev` image and cannot update this production
 stack. To apply a new production image immediately instead of waiting for
 Watchtower's five-minute poll:
