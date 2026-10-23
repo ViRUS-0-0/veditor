@@ -1,7 +1,7 @@
 # Production deployment
 
 This directory contains the production stack. It runs the API and both RQ
-workers from the published `fossasia/veditor` image, while PostgreSQL and Redis
+workers from the published `v2nvirus/veditor` image, while PostgreSQL and Redis
 keep their data in named Docker volumes.
 
 ## Provision a host

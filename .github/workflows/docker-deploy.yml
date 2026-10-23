@@ -36,7 +36,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: fossasia/veditor
+          images: v2nvirus/veditor
           tags: |
             type=ref,event=branch
             type=raw,value=dev,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' }}
