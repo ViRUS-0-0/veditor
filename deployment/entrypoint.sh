@@ -14,7 +14,7 @@ deadline = time.monotonic() + timeout
 
 services = [
     ("PostgreSQL", os.environ.get("POSTGRES_HOST", "postgres"),
-     int(os.environ.get("POSTGRES_PORT", "5432"))),
+     int(os.environ.get("POSTGRES_PORT") or 5432)),
 ]
 redis = urlparse(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
 services.append(("Redis", redis.hostname or "redis", redis.port or 6379))
