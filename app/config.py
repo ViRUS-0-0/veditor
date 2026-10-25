@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     postgres_host: str = ""
     postgres_port: int | None = None
 
+    # TODO: Detect being run in pytest-xdist
+    # and allocate a DB number for each xdist worker.
+    # Ref: https://pytest-xdist.readthedocs.io/en/latest/how-to.html#identifying-the-worker-process-during-a-test
+    # It may require to change this config key, so we will do it later.
     redis_url: str = "redis://localhost:6379/0"
 
     data_dir: str = "data"

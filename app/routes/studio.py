@@ -2,7 +2,7 @@ import logging
 import urllib.parse
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -24,7 +24,7 @@ from app.db import get_db
 from app.queue import light_queue
 from app.routes.auth import _get_authenticated_user_from_cookie
 from app.routes.talks import _cancel_talk_jobs, attach_room_recording
-from app.security import decode_sso_token
+from app.security import SSOTokenPayload, decode_sso_token
 from app.storage import StorageBackend, get_storage_backend
 from app.tasks import job_waveform
 from app.ui.templating import templates
@@ -115,16 +115,15 @@ def _authorize_studio_talk(
                     detail=not_found_detail,
                 )
             authorized = (
-                sso_payload.get("scope_type") == "talk"
-                and sso_payload.get("scope_id") == talk.id
+                sso_payload.scope_type == "talk" and sso_payload.scope_id == talk.id
             ) or (
-                sso_payload.get("scope_type") == "event"
-                and sso_payload.get("scope_id") == talk.event_id
+                sso_payload.scope_type == "event"
+                and sso_payload.scope_id == talk.event_id
                 and (
-                    sso_payload.get("role") != "speaker"
+                    sso_payload.role != "speaker"
                     or (
                         talk.speaker_email
-                        and talk.speaker_email.lower() == sso_payload["email"].lower()
+                        and talk.speaker_email.lower() == sso_payload.email.lower()
                     )
                 )
             )
@@ -135,15 +134,15 @@ def _authorize_studio_talk(
                 )
             if hasattr(request, "state"):
                 request.state.user = CurrentUser(
-                    email=sso_payload.get("email"),
-                    display_name=sso_payload.get("display_name"),
-                    role=sso_payload["role"],
+                    email=sso_payload.email,
+                    display_name=sso_payload.display_name,
+                    role=sso_payload.role,
                     source="sso",
-                    event_ids=[sso_payload["scope_id"]]
-                    if sso_payload.get("scope_type") == "event"
+                    event_ids=[sso_payload.scope_id]
+                    if sso_payload.scope_type == "event"
                     else [],
-                    scope_type=sso_payload.get("scope_type"),
-                    scope_id=sso_payload.get("scope_id"),
+                    scope_type=sso_payload.scope_type,
+                    scope_id=sso_payload.scope_id,
                 )
             return talk
 
@@ -306,9 +305,9 @@ def get_evaluated_milestones(status: str) -> list[dict]:
     return result
 
 
-def _get_sso_cookie_max_age(sso_payload: dict[str, Any]) -> int:
+def _get_sso_cookie_max_age(sso_payload: SSOTokenPayload) -> int:
     """Calculate the remaining validity period in seconds for the session cookie based on token expiration."""
-    exp_timestamp = sso_payload.get("exp")
+    exp_timestamp = sso_payload.exp
     if isinstance(exp_timestamp, (int, float)):
         return max(int(exp_timestamp - datetime.now(UTC).timestamp()), 0)
     return settings.sso_token_expire_seconds
@@ -345,10 +344,10 @@ def dashboard(
         is_secure = (request.url.scheme == "https") or (
             settings.environment.lower() in ("production", "prod")
         )
-        if sso_payload["scope_type"] == "talk":
-            dest_url = f"/studio/talks/{sso_payload['scope_id']}"
+        if sso_payload.scope_type == "talk":
+            dest_url = f"/studio/talks/{sso_payload.scope_id}"
         else:
-            dest_url = f"/studio?event_id={sso_payload['scope_id']}"
+            dest_url = f"/studio?event_id={sso_payload.scope_id}"
         cookie_max_age = _get_sso_cookie_max_age(sso_payload)
 
         resp = RedirectResponse(url=dest_url, status_code=status.HTTP_303_SEE_OTHER)
@@ -452,12 +451,12 @@ def _render_talks_page(
         return resp
 
     if sso_user:
-        if sso_user["scope_type"] == "talk":
+        if sso_user.scope_type == "talk":
             return RedirectResponse(
-                url=f"/studio/talks/{sso_user['scope_id']}",
+                url=f"/studio/talks/{sso_user.scope_id}",
                 status_code=status.HTTP_303_SEE_OTHER,
             )
-        event_id = sso_user["scope_id"]
+        event_id = sso_user.scope_id
         user_events = db.query(models.Event).filter(models.Event.id == event_id).all()
     elif user:
         if user.role in ("organizer", "admin"):
@@ -508,10 +507,10 @@ def _render_talks_page(
         scope = models.Talk.speaker_email == user.email.lower()
     else:
         scope = models.Talk.event_id.in_([e.id for e in user_events])
-        if sso_user and sso_user.get("role") == "speaker":
+        if sso_user and sso_user.role == "speaker":
             scope = and_(
                 scope,
-                models.Talk.speaker_email == sso_user["email"].lower(),
+                func.lower(models.Talk.speaker_email) == sso_user.email.lower(),
             )
         elif user and user.email and user.role != "admin":
             scope = or_(
@@ -594,7 +593,14 @@ def _render_talks_page(
 
 
 ALLOWED_MEDIA_CATEGORIES = frozenset(
-    {"preview", "raw", "intro", "outro", "cut", "final"}
+    {
+        "preview",
+        "raw",
+        "intro",
+        "outro",
+        "cut",
+        "final",
+    }
 )
 
 
@@ -786,23 +792,23 @@ def studio(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or expired SSO token",
             )
-        if sso_payload["scope_type"] == "talk" and sso_payload["scope_id"] != talk_id:
+        if sso_payload.scope_type == "talk" and sso_payload.scope_id != talk_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="SSO token is not authorized for this talk",
             )
-        if sso_payload["scope_type"] == "event":
+        if sso_payload.scope_type == "event":
             talk_obj = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
             if not talk_obj:
                 raise HTTPException(status_code=404, detail="Talk not found")
-            if talk_obj.event_id != sso_payload["scope_id"]:
+            if talk_obj.event_id != sso_payload.scope_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="SSO token is not authorized for this event",
                 )
-            if sso_payload.get("role") == "speaker" and not (
+            if sso_payload.role == "speaker" and not (
                 talk_obj.speaker_email
-                and talk_obj.speaker_email.lower() == sso_payload["email"].lower()
+                and talk_obj.speaker_email.lower() == sso_payload.email.lower()
             ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -941,11 +947,11 @@ def studio(
             "all_statuses": ALL_STATUSES,
             "is_speaker": (
                 (
-                    sso_user.get("role") == "speaker"
+                    sso_user.role == "speaker"
                     or bool(
                         talk.speaker_email
-                        and sso_user.get("email")
-                        and talk.speaker_email.lower() == sso_user["email"].lower()
+                        and sso_user.email
+                        and talk.speaker_email.lower() == sso_user.email.lower()
                     )
                 )
                 if sso_user

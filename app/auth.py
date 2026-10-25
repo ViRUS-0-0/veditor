@@ -1,7 +1,6 @@
 import hashlib
 import logging
 from datetime import UTC, datetime
-from enum import StrEnum
 from typing import Annotated, Literal
 
 from fastapi import Cookie, Depends, HTTPException, Request, Security, status
@@ -11,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import models
+from app.consts import ROLE_HIERARCHY, AuthRole, SSOScopeType
 from app.db import SessionLocal, get_db
 from app.security import (
     decode_access_token,
@@ -23,20 +23,22 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 bearer_security = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
-
-class AuthRole(StrEnum):
-    USER = "user"
-    ORGANIZER = "organizer"
-    SPEAKER = "speaker"
-    ADMIN = "admin"
-
-
-ROLE_HIERARCHY: dict[str, int] = {
-    "user": 0,
-    "speaker": 1,
-    "organizer": 2,
-    "admin": 3,
-}
+__all__ = [
+    "CurrentUser",
+    "api_key_header",
+    "bearer_security",
+    "check_event_access",
+    "check_talk_access",
+    "get_client",
+    "get_current_user",
+    "hash_api_key",
+    "lock_active_admins",
+    "require_admin",
+    "require_event_access",
+    "require_role",
+    "require_talk_access",
+    "verify_event_access",
+]
 
 
 class CurrentUser(BaseModel):
@@ -47,7 +49,7 @@ class CurrentUser(BaseModel):
     role: AuthRole = AuthRole.USER
     source: Literal["api_key", "cookie", "jwt", "sso"]
     event_ids: list[int] = Field(default_factory=list)
-    scope_type: Literal["event", "talk"] | None = None
+    scope_type: SSOScopeType | None = None
     scope_id: int | None = None
     is_platform: bool = False
 
@@ -269,15 +271,15 @@ def get_current_user(
         return CurrentUser(
             user_id=None,
             client_id=None,
-            email=sso_payload.get("email"),
-            display_name=sso_payload.get("display_name"),
-            role=AuthRole(sso_payload["role"]),
+            email=sso_payload.email,
+            display_name=sso_payload.display_name,
+            role=sso_payload.role,
             source="sso",
-            event_ids=[sso_payload["scope_id"]]
-            if sso_payload.get("scope_type") == "event"
+            event_ids=[sso_payload.scope_id]
+            if sso_payload.scope_type == "event"
             else [],
-            scope_type=sso_payload.get("scope_type"),
-            scope_id=sso_payload.get("scope_id"),
+            scope_type=sso_payload.scope_type,
+            scope_id=sso_payload.scope_id,
         )
 
     # 3. Session cookie (veditor_session)
@@ -295,15 +297,15 @@ def get_current_user(
                 return CurrentUser(
                     user_id=None,
                     client_id=None,
-                    email=sso_payload.get("email"),
-                    display_name=sso_payload.get("display_name"),
-                    role=AuthRole(sso_payload["role"]),
+                    email=sso_payload.email,
+                    display_name=sso_payload.display_name,
+                    role=sso_payload.role,
                     source="sso",
-                    event_ids=[sso_payload["scope_id"]]
-                    if sso_payload.get("scope_type") == "event"
+                    event_ids=[sso_payload.scope_id]
+                    if sso_payload.scope_type == "event"
                     else [],
-                    scope_type=sso_payload.get("scope_type"),
-                    scope_id=sso_payload.get("scope_id"),
+                    scope_type=sso_payload.scope_type,
+                    scope_id=sso_payload.scope_id,
                 )
 
             payload = decode_session_token(raw_cookie)
@@ -417,15 +419,15 @@ def get_current_user(
             return CurrentUser(
                 user_id=None,
                 client_id=None,
-                email=sso_payload.get("email"),
-                display_name=sso_payload.get("display_name"),
-                role=AuthRole(sso_payload["role"]),
+                email=sso_payload.email,
+                display_name=sso_payload.display_name,
+                role=sso_payload.role,
                 source="sso",
-                event_ids=[sso_payload["scope_id"]]
-                if sso_payload.get("scope_type") == "event"
+                event_ids=[sso_payload.scope_id]
+                if sso_payload.scope_type == "event"
                 else [],
-                scope_type=sso_payload.get("scope_type"),
-                scope_id=sso_payload.get("scope_id"),
+                scope_type=sso_payload.scope_type,
+                scope_id=sso_payload.scope_id,
             )
 
         raise HTTPException(
