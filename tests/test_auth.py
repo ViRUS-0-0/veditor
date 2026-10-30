@@ -19,7 +19,7 @@ from app.auth import (
     require_talk_access,
     verify_event_access,
 )
-from app.consts import ROLE_HIERARCHY
+from app.consts import AuthRole
 from app.db import SessionLocal, get_db
 from app.main import app
 from app.models import Client, Event, Talk, User
@@ -30,7 +30,7 @@ from app.security import (
 )
 
 
-def test_hash_api_key():
+def test_hash_api_key() -> None:
     key1 = "some-random-key"
     key2 = "some-random-key"
     key3 = "another-key"
@@ -40,14 +40,14 @@ def test_hash_api_key():
     assert len(hash_api_key(key1)) == 64
 
 
-def test_get_client_missing_key():
+def test_get_client_missing_key() -> None:
     with pytest.raises(HTTPException) as excinfo:
         get_client(None, MagicMock())
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert excinfo.value.detail == "Missing API Key"
 
 
-def test_get_client_invalid_key():
+def test_get_client_invalid_key() -> None:
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None
 
@@ -58,7 +58,7 @@ def test_get_client_invalid_key():
     assert excinfo.value.detail == "Invalid API Key"
 
 
-def test_get_client_valid_key():
+def test_get_client_valid_key() -> None:
     mock_client = Client(id=1, hashed_key="hashed", event_ids=[1, 2])
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = mock_client
@@ -67,13 +67,13 @@ def test_get_client_valid_key():
     assert client == mock_client
 
 
-def test_verify_event_access_in_scope():
+def test_verify_event_access_in_scope() -> None:
     mock_client = Client(id=1, event_ids=[1, 2, 3])
     # Should not raise any exception
     verify_event_access(2, mock_client)
 
 
-def test_verify_event_access_out_of_scope():
+def test_verify_event_access_out_of_scope() -> None:
     mock_client = Client(id=1, event_ids=[1, 2, 3])
     with pytest.raises(HTTPException) as excinfo:
         verify_event_access(4, mock_client)
@@ -86,7 +86,7 @@ def test_verify_event_access_out_of_scope():
 # ---------------------------------------------------------------------------
 
 
-def test_current_user_model_attributes():
+def test_current_user_model_attributes() -> None:
     user = CurrentUser(
         user_id=1,
         email="user@example.com",
@@ -119,7 +119,7 @@ def test_current_user_model_attributes():
 # ---------------------------------------------------------------------------
 
 
-def test_get_current_user_api_key_valid():
+def test_get_current_user_api_key_valid() -> None:
     mock_client = Client(id=1, hashed_key=hash_api_key("secret-key"), event_ids=[42])
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = mock_client
@@ -133,7 +133,7 @@ def test_get_current_user_api_key_valid():
     assert user.is_machine
 
 
-def test_get_current_user_cookie_api_key_valid():
+def test_get_current_user_cookie_api_key_valid() -> None:
     mock_client = Client(
         id=1, hashed_key=hash_api_key("secret-cookie-key"), event_ids=[42]
     )
@@ -151,7 +151,7 @@ def test_get_current_user_cookie_api_key_valid():
     assert user.is_machine
 
 
-def test_get_current_user_api_key_invalid():
+def test_get_current_user_api_key_invalid() -> None:
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None
 
@@ -159,10 +159,10 @@ def test_get_current_user_api_key_invalid():
         get_current_user(request=MagicMock(), api_key="bad-key", db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert excinfo.value.detail == "Invalid API Key"
-    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
+    assert (excinfo.value.headers or {}).get("WWW-Authenticate") == "Bearer"
 
 
-def test_get_current_user_session_cookie_valid():
+def test_get_current_user_session_cookie_valid() -> None:
     token = create_session_token(user_id=7, role="organizer")
     mock_user = User(id=7, email="org@example.com", role="organizer", is_active=True)
     mock_db = MagicMock()
@@ -177,7 +177,7 @@ def test_get_current_user_session_cookie_valid():
     assert not user.is_machine
 
 
-def test_get_current_user_session_cookie_invalid():
+def test_get_current_user_session_cookie_invalid() -> None:
     mock_db = MagicMock()
     with pytest.raises(HTTPException) as excinfo:
         get_current_user(
@@ -185,10 +185,10 @@ def test_get_current_user_session_cookie_invalid():
         )
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "Invalid or expired session token" in excinfo.value.detail
-    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
+    assert (excinfo.value.headers or {}).get("WWW-Authenticate") == "Bearer"
 
 
-def test_get_current_user_session_cookie_user_inactive():
+def test_get_current_user_session_cookie_user_inactive() -> None:
     token = create_session_token(user_id=7, role="user")
     mock_user = User(id=7, email="inactive@example.com", role="user", is_active=False)
     mock_db = MagicMock()
@@ -198,10 +198,10 @@ def test_get_current_user_session_cookie_user_inactive():
         get_current_user(request=MagicMock(), cookie_token=token, db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "inactive" in excinfo.value.detail.lower()
-    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
+    assert (excinfo.value.headers or {}).get("WWW-Authenticate") == "Bearer"
 
 
-def test_get_current_user_session_cookie_user_not_found():
+def test_get_current_user_session_cookie_user_not_found() -> None:
     token = create_session_token(user_id=99, role="user")
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None
@@ -210,11 +210,11 @@ def test_get_current_user_session_cookie_user_not_found():
         get_current_user(request=MagicMock(), cookie_token=token, db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "not found" in excinfo.value.detail.lower()
-    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
+    assert (excinfo.value.headers or {}).get("WWW-Authenticate") == "Bearer"
     assert "not found" in excinfo.value.detail.lower()
 
 
-def test_get_current_user_bearer_token_valid():
+def test_get_current_user_bearer_token_valid() -> None:
     token = create_access_token(user_id=15, email="dev@example.com", role="admin")
     mock_creds = MagicMock()
     mock_creds.credentials = token
@@ -230,7 +230,7 @@ def test_get_current_user_bearer_token_valid():
     assert user.is_admin
 
 
-def test_get_current_user_bearer_token_invalid():
+def test_get_current_user_bearer_token_invalid() -> None:
     mock_creds = MagicMock()
     mock_creds.credentials = "invalid.bearer.token"
     mock_db = MagicMock()
@@ -241,7 +241,7 @@ def test_get_current_user_bearer_token_invalid():
     assert "Invalid or expired access token" in excinfo.value.detail
 
 
-def test_get_current_user_bearer_token_user_inactive():
+def test_get_current_user_bearer_token_user_inactive() -> None:
     token = create_access_token(user_id=15, email="dev@example.com", role="admin")
     mock_creds = MagicMock()
     mock_creds.credentials = token
@@ -255,7 +255,7 @@ def test_get_current_user_bearer_token_user_inactive():
     assert "inactive" in excinfo.value.detail.lower()
 
 
-def test_get_current_user_no_credentials():
+def test_get_current_user_no_credentials() -> None:
     mock_db = MagicMock()
     request = MagicMock()
     request.headers = {}
@@ -264,10 +264,10 @@ def test_get_current_user_no_credentials():
         get_current_user(request=request, db=mock_db)
     assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert excinfo.value.detail == "Not authenticated"
-    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
+    assert (excinfo.value.headers or {}).get("WWW-Authenticate") == "Bearer"
 
 
-def test_get_current_user_precedence_api_key_over_cookie():
+def test_get_current_user_precedence_api_key_over_cookie() -> None:
     # When both API key and cookie are provided, API key is evaluated first.
     mock_client = Client(id=1, hashed_key=hash_api_key("api-key"), event_ids=[1])
     mock_db = MagicMock()
@@ -280,7 +280,7 @@ def test_get_current_user_precedence_api_key_over_cookie():
     assert user.source == "api_key"
 
 
-def test_get_current_user_fail_fast_on_invalid_api_key():
+def test_get_current_user_fail_fast_on_invalid_api_key() -> None:
     # If explicit API key is provided but invalid, fails immediately with 401 instead of falling back.
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None
@@ -294,7 +294,7 @@ def test_get_current_user_fail_fast_on_invalid_api_key():
     assert excinfo.value.detail == "Invalid API Key"
 
 
-def test_get_current_user_precedence_session_over_cookie_api_key():
+def test_get_current_user_precedence_session_over_cookie_api_key() -> None:
     # Valid session cookie takes precedence over stale or invalid cookie_api_key.
     mock_user = User(id=2, email="u@example.com", role="user", is_active=True)
     mock_db = MagicMock()
@@ -311,7 +311,7 @@ def test_get_current_user_precedence_session_over_cookie_api_key():
     assert user.user_id == 2
 
 
-def test_get_current_user_ignores_stale_cookie_api_key_for_bearer_token():
+def test_get_current_user_ignores_stale_cookie_api_key_for_bearer_token() -> None:
     token = create_access_token(user_id=2, email="u@example.com", role="user")
     mock_user = User(id=2, email="u@example.com", role="user", is_active=True)
     mock_db = MagicMock()
@@ -338,20 +338,14 @@ def test_get_current_user_ignores_stale_cookie_api_key_for_bearer_token():
 # ---------------------------------------------------------------------------
 
 
-def test_require_role_invalid_role():
-    with pytest.raises(ValueError) as excinfo:
-        require_role("superadmin")
-    assert "Invalid min_role" in str(excinfo.value)
+def test_require_role_hierarchy() -> None:
+    check_user = require_role(AuthRole.USER)
+    check_org = require_role(AuthRole.ORGANIZER)
+    check_admin = require_role(AuthRole.ADMIN)
 
-
-def test_require_role_hierarchy():
-    check_user = require_role("user")
-    check_org = require_role("organizer")
-    check_admin = require_role("admin")
-
-    regular_user = CurrentUser(role="user", source="jwt")
-    organizer_user = CurrentUser(role="organizer", source="jwt")
-    admin_user = CurrentUser(role="admin", source="jwt")
+    regular_user = CurrentUser(role=AuthRole.USER, source="jwt")
+    organizer_user = CurrentUser(role=AuthRole.ORGANIZER, source="jwt")
+    admin_user = CurrentUser(role=AuthRole.ADMIN, source="jwt")
 
     # 'user' requirement allows all
     assert check_user(regular_user) == regular_user
@@ -377,7 +371,7 @@ def test_require_role_hierarchy():
     assert check_admin(admin_user) == admin_user
 
 
-def test_require_admin():
+def test_require_admin() -> None:
     regular_user = CurrentUser(user_id=1, role="user", source="jwt")
     machine_admin = CurrentUser(role="admin", source="api_key")
     human_admin = CurrentUser(user_id=2, role="admin", source="cookie")
@@ -400,7 +394,7 @@ def test_require_admin():
 # ---------------------------------------------------------------------------
 
 
-def test_check_event_access_not_found():
+def test_check_event_access_not_found() -> None:
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None
     user = CurrentUser(role="admin", source="jwt")
@@ -411,7 +405,7 @@ def test_check_event_access_not_found():
     assert excinfo.value.detail == "Event not found"
 
 
-def test_check_event_access_machine_client_in_scope():
+def test_check_event_access_machine_client_in_scope() -> None:
     event = Event(id=5, name="PyCon", created_by_user_id=1)
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = event
@@ -420,7 +414,7 @@ def test_check_event_access_machine_client_in_scope():
     assert check_event_access(event_id=5, user=client_user, db=mock_db) == event
 
 
-def test_check_event_access_machine_client_not_found():
+def test_check_event_access_machine_client_not_found() -> None:
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = None
 
@@ -431,7 +425,7 @@ def test_check_event_access_machine_client_not_found():
     assert excinfo.value.detail == "Event not found"
 
 
-def test_check_event_access_machine_client_out_of_scope():
+def test_check_event_access_machine_client_out_of_scope() -> None:
     event = Event(id=10, name="PyCon", created_by_user_id=1)
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = event
@@ -443,7 +437,7 @@ def test_check_event_access_machine_client_out_of_scope():
     assert excinfo.value.detail == "Client is not authorized to access this event"
 
 
-def test_check_event_access_human_admin_unconditional():
+def test_check_event_access_human_admin_unconditional() -> None:
     event = Event(id=20, name="FOSSASIA", created_by_user_id=99)
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = event
@@ -452,7 +446,7 @@ def test_check_event_access_human_admin_unconditional():
     assert check_event_access(event_id=20, user=admin_user, db=mock_db) == event
 
 
-def test_check_event_access_event_creator():
+def test_check_event_access_event_creator() -> None:
     event = Event(id=30, name="OpenTech", created_by_user_id=12)
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = event
@@ -461,7 +455,7 @@ def test_check_event_access_event_creator():
     assert check_event_access(event_id=30, user=creator_user, db=mock_db) == event
 
 
-def test_check_event_access_non_creator_forbidden():
+def test_check_event_access_non_creator_forbidden() -> None:
     event = Event(id=30, name="OpenTech", created_by_user_id=12)
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = event
@@ -473,7 +467,7 @@ def test_check_event_access_non_creator_forbidden():
     assert excinfo.value.detail == "User is not authorized to access this event"
 
 
-def test_check_event_access_no_creator_regular_user_forbidden():
+def test_check_event_access_no_creator_regular_user_forbidden() -> None:
     event = Event(id=40, name="LegacyEvent", created_by_user_id=None)
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.first.return_value = event
@@ -489,17 +483,21 @@ def test_check_event_access_no_creator_regular_user_forbidden():
 # ---------------------------------------------------------------------------
 
 
-def test_fastapi_route_auth_integration():
+def test_fastapi_route_auth_integration() -> None:
     test_app = FastAPI()
 
     mock_event = Event(id=1, name="Test Conf", created_by_user_id=10)
 
     @test_app.get("/events/{event_id}")
-    def get_event_endpoint(event: Annotated[Event, Depends(require_event_access())]):
+    def get_event_endpoint(
+        event: Annotated[Event, Depends(require_event_access())],
+    ) -> dict[str, int | str]:
         return {"id": event.id, "name": event.name}
 
     @test_app.get("/organizer-only")
-    def org_endpoint(user: Annotated[CurrentUser, Depends(require_role("organizer"))]):
+    def org_endpoint(
+        user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
+    ) -> dict[str, int | str | None]:
         return {"user_id": user.user_id, "role": user.role}
 
     # Override get_db to return a mock DB session
@@ -553,7 +551,7 @@ def test_fastapi_route_auth_integration():
     assert resp.status_code == 403
 
 
-def test_current_user_is_human_admin():
+def test_current_user_is_human_admin() -> None:
     machine = CurrentUser(role="admin", source="api_key")
     assert machine.is_admin
     assert not machine.is_human_admin
@@ -563,11 +561,13 @@ def test_current_user_is_human_admin():
     assert human_admin.is_human_admin
 
 
-def test_require_event_access_invalid_path_param_format():
+def test_require_event_access_invalid_path_param_format() -> None:
     test_app = FastAPI()
 
     @test_app.get("/events/{event_id}")
-    def endpoint(event: Annotated[Event, Depends(require_event_access())]):
+    def endpoint(
+        event: Annotated[Event, Depends(require_event_access())],
+    ) -> dict[str, int]:
         return {"id": event.id}
 
     test_app.dependency_overrides[get_current_user] = lambda: CurrentUser(
@@ -580,12 +580,14 @@ def test_require_event_access_invalid_path_param_format():
     assert "Invalid event ID" in resp.json()["detail"]
 
 
-def test_require_event_access_query_param_bypass_prevented():
+def test_require_event_access_query_param_bypass_prevented() -> None:
     test_app = FastAPI()
 
     # Route defines {id} as the event path parameter
     @test_app.get("/events/{id}")
-    def endpoint(event: Annotated[Event, Depends(require_event_access("id"))]):
+    def endpoint(
+        event: Annotated[Event, Depends(require_event_access("id"))],
+    ) -> dict[str, int]:
         return {"id": event.id}
 
     mock_event_2 = Event(id=2, name="Target Event", created_by_user_id=99)
@@ -606,7 +608,7 @@ def test_require_event_access_query_param_bypass_prevented():
     assert resp.json()["detail"] == "Client is not authorized to access this event"
 
 
-def test_get_current_user_bearer_invalid_header_format():
+def test_get_current_user_bearer_invalid_header_format() -> None:
     request = MagicMock()
     request.headers = {"Authorization": "Basic dXNlcjpwYXNz"}
     request.cookies = {}
@@ -615,10 +617,10 @@ def test_get_current_user_bearer_invalid_header_format():
         get_current_user(request=request, db=MagicMock())
     assert excinfo.value.status_code == 401
     assert "Invalid authorization header format" in excinfo.value.detail
-    assert excinfo.value.headers.get("WWW-Authenticate") == "Bearer"
+    assert (excinfo.value.headers or {}).get("WWW-Authenticate") == "Bearer"
 
 
-def test_get_current_user_cookie_fail_fast_over_bearer():
+def test_get_current_user_cookie_fail_fast_over_bearer() -> None:
     mock_request = MagicMock()
     mock_request.headers = {"Authorization": "Bearer valid-looking-token"}
     mock_request.cookies = {"veditor_session": "malformed.session.token"}
@@ -630,7 +632,7 @@ def test_get_current_user_cookie_fail_fast_over_bearer():
     assert "session token" in excinfo.value.detail.lower()
 
 
-def test_lock_active_admins_mock():
+def test_lock_active_admins_mock() -> None:
     mock_session = MagicMock()
     mock_session.query.return_value.filter.return_value.order_by.return_value.with_for_update.return_value.all.return_value = [
         (1,),
@@ -640,11 +642,13 @@ def test_lock_active_admins_mock():
     assert admin_ids == [1, 2]
 
 
-def test_require_talk_access_invalid_path_param_format():
+def test_require_talk_access_invalid_path_param_format() -> None:
     test_app = FastAPI()
 
     @test_app.get("/talks/{talk_id}")
-    def endpoint(talk: Annotated[Talk, Depends(require_talk_access())]):
+    def endpoint(
+        talk: Annotated[Talk, Depends(require_talk_access())],
+    ) -> dict[str, int]:
         return {"id": talk.id}
 
     test_app.dependency_overrides[get_current_user] = lambda: CurrentUser(
@@ -657,11 +661,13 @@ def test_require_talk_access_invalid_path_param_format():
     assert "Invalid talk ID" in resp.json()["detail"]
 
 
-def test_require_talk_access_success_and_unauthorized():
+def test_require_talk_access_success_and_unauthorized() -> None:
     test_app = FastAPI()
 
     @test_app.get("/talks/{id}")
-    def endpoint(talk: Annotated[Talk, Depends(require_talk_access("id"))]):
+    def endpoint(
+        talk: Annotated[Talk, Depends(require_talk_access("id"))],
+    ) -> dict[str, int]:
         return {"id": talk.id}
 
     mock_talk = Talk(id=10, event_id=1, status="done")
@@ -686,17 +692,7 @@ def test_require_talk_access_success_and_unauthorized():
     assert resp.status_code == 403
 
 
-def test_role_hierarchy_levels():
-    """Verify exact role hierarchy: user(0) < speaker(1) < organizer(2) < admin(3)."""
-
-    assert ROLE_HIERARCHY["user"] == 0
-    assert ROLE_HIERARCHY["speaker"] == 1
-    assert ROLE_HIERARCHY["organizer"] == 2
-    assert ROLE_HIERARCHY["admin"] == 3
-    assert len(ROLE_HIERARCHY) == 4
-
-
-def test_login_routes_next_redirect_and_open_redirect_protection():
+def test_login_routes_next_redirect_and_open_redirect_protection() -> None:
     db = SessionLocal()
     app.dependency_overrides[get_db] = lambda: db
     user = None
@@ -810,7 +806,7 @@ def test_login_routes_next_redirect_and_open_redirect_protection():
             db.close()
 
 
-def test_get_client_throttles_last_used_at_updates():
+def test_get_client_throttles_last_used_at_updates() -> None:
     from datetime import UTC, datetime, timedelta
     from unittest.mock import MagicMock
 

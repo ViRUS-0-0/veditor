@@ -1,5 +1,6 @@
 import hashlib
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -10,7 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.consts import ROLE_HIERARCHY, AuthRole, SSOScopeType
+from app.consts import AuthRole, SSOScopeType
 from app.db import SessionLocal, get_db
 from app.security import (
     decode_access_token,
@@ -444,23 +445,17 @@ def get_current_user(
     )
 
 
-def require_role(min_role: Literal["user", "organizer", "admin"] | str):
+def require_role(min_role: AuthRole) -> Callable[[CurrentUser], CurrentUser]:
     """
     Dependency factory that evaluates the caller's role against a required minimum tier.
     Hierarchy: user (0) < organizer (1) < admin (2).
     Raises HTTP 403 Forbidden if caller's role is below the threshold.
     """
-    if min_role not in ROLE_HIERARCHY:
-        raise ValueError(
-            f"Invalid min_role '{min_role}'. Must be one of {list(ROLE_HIERARCHY)}"
-        )
 
     def _role_checker(
         user: Annotated[CurrentUser, Depends(get_current_user)],
     ) -> CurrentUser:
-        caller_tier = ROLE_HIERARCHY.get(user.role, -1)
-        required_tier = ROLE_HIERARCHY[min_role]
-        if caller_tier < required_tier:
+        if user.role.rank < min_role.rank:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Operation requires minimum role '{min_role}'",
@@ -589,18 +584,18 @@ def check_talk_access(
                 and target_talk.speaker_email
                 and target_talk.speaker_email.lower() == user.email.lower()
             ):
-                if user.role == "user":
-                    user.role = "speaker"
+                if user.role == AuthRole.USER:
+                    user.role = AuthRole.SPEAKER
                     if user.user_id:
                         db_u = (
                             db.query(models.User)
                             .filter(models.User.id == user.user_id)
                             .first()
                         )
-                        if db_u and db_u.role == "user":
-                            db_u.role = "speaker"
+                        if db_u and db_u.role == AuthRole.USER:
+                            db_u.role = AuthRole.SPEAKER
                     db.commit()
-            elif user.role == "speaker":
+            elif user.role == AuthRole.SPEAKER:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="SSO speaker session is not authorized for this talk",
@@ -627,14 +622,14 @@ def check_talk_access(
         and user.email
         and target_talk.speaker_email.lower() == user.email.lower()
     ):
-        if user.role == "user":
-            user.role = "speaker"
+        if user.role == AuthRole.USER:
+            user.role = AuthRole.SPEAKER
             if user.user_id:
                 db_u = (
                     db.query(models.User).filter(models.User.id == user.user_id).first()
                 )
-                if db_u and db_u.role == "user":
-                    db_u.role = "speaker"
+                if db_u and db_u.role == AuthRole.USER:
+                    db_u.role = AuthRole.SPEAKER
             db.commit()
         return target_talk
 
@@ -650,7 +645,9 @@ def check_talk_access(
     )
 
 
-def require_event_access(event_id_param: str | int = "event_id"):
+def require_event_access(
+    event_id_param: str | int = "event_id",
+) -> Callable[[Request, Session, CurrentUser], models.Event]:
     """
     Dependency factory to gate access to existing events.
     Resolves event ID from path parameters or static integer, validates existence,
@@ -691,7 +688,9 @@ def require_event_access(event_id_param: str | int = "event_id"):
     return _event_access_dependency
 
 
-def require_talk_access(talk_id_param: str | int = "talk_id"):
+def require_talk_access(
+    talk_id_param: str | int = "talk_id",
+) -> Callable[[Request, Session, CurrentUser], models.Talk]:
     """
     Dependency factory to gate access to existing talks.
     Resolves talk ID from path parameters or static integer, validates existence,

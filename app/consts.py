@@ -11,6 +11,7 @@ class AuthRole(StrEnum):
     SPEAKER = "speaker"
     ADMIN = "admin"
 
+    @property
     def rank(self) -> int:
         if self == self.ADMIN:
             return 3

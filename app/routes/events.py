@@ -12,7 +12,8 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import any_
+from sqlalchemy import any_, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -24,8 +25,9 @@ from app.auth import (
     require_role,
 )
 from app.config import settings
+from app.consts import AuthRole
 from app.db import get_db
-from app.routes.talks import _cancel_talk_jobs
+from app.routes.talks import _cancel_talk_jobs, _lock_event_for_room_operation
 from app.security import create_sso_token
 from app.storage import StorageBackend, get_storage_backend
 from app.tasks import _webhook_opener
@@ -41,7 +43,7 @@ router = APIRouter(
 @router.post("", response_model=schemas.EventRead, status_code=status.HTTP_201_CREATED)
 def create_event(
     payload: schemas.EventCreate,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     if user.is_sso:
@@ -80,7 +82,7 @@ def create_event(
 
 @router.get("", response_model=list[schemas.EventRead], status_code=status.HTTP_200_OK)
 def list_events(
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     if user.is_sso:
@@ -101,11 +103,159 @@ def list_events(
     )
 
 
+def _room_read(room: models.Room, talks_count: int = 0) -> schemas.RoomRead:
+    return schemas.RoomRead(
+        id=room.id,
+        event_id=room.event_id,
+        name=room.name,
+        description=room.description,
+        created_at=room.created_at,
+        talks_count=talks_count,
+    )
+
+
+@router.get("/{event_id}/rooms", response_model=list[schemas.RoomRead])
+def list_event_rooms(
+    event_id: int,
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """List event rooms without mutating event or talk records."""
+    check_event_access(event_id, user, db)
+    rows = (
+        db.query(models.Room, func.count(models.Talk.id))
+        .outerjoin(
+            models.Talk,
+            (models.Talk.event_id == models.Room.event_id)
+            & (models.Talk.room == models.Room.name),
+        )
+        .filter(models.Room.event_id == event_id)
+        .group_by(models.Room.id)
+        .order_by(func.lower(models.Room.name), models.Room.name)
+        .all()
+    )
+    return [_room_read(room, count) for room, count in rows]
+
+
+@router.post(
+    "/{event_id}/rooms",
+    response_model=schemas.RoomRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_event_room(
+    event_id: int,
+    payload: schemas.RoomCreate,
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Create an organizer-managed room scoped to one event."""
+    if user.is_sso:
+        raise HTTPException(status_code=403, detail="SSO sessions cannot manage rooms")
+    check_event_access(event_id, user, db)
+    _lock_event_for_room_operation(db, event_id)
+    room = models.Room(
+        event_id=event_id, name=payload.name, description=payload.description
+    )
+    db.add(room)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Room name already exists") from exc
+    db.refresh(room)
+    return _room_read(room)
+
+
+@router.patch("/{event_id}/rooms/{room_id}", response_model=schemas.RoomRead)
+def update_event_room(
+    event_id: int,
+    room_id: int,
+    payload: schemas.RoomUpdate,
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Update a room and synchronize its talk assignments atomically."""
+    if user.is_sso:
+        raise HTTPException(status_code=403, detail="SSO sessions cannot manage rooms")
+    check_event_access(event_id, user, db)
+    _lock_event_for_room_operation(db, event_id)
+    room = (
+        db.query(models.Room)
+        .filter(models.Room.id == room_id, models.Room.event_id == event_id)
+        .with_for_update()
+        .first()
+    )
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if payload.name is not None and payload.name != room.name:
+        duplicate = (
+            db.query(models.Room)
+            .filter(
+                models.Room.event_id == event_id,
+                func.lower(models.Room.name) == func.lower(payload.name),
+                models.Room.id != room_id,
+            )
+            .first()
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Room name already exists")
+        old_name = room.name
+        room.name = payload.name
+        db.query(models.Talk).filter(
+            models.Talk.event_id == event_id,
+            func.lower(func.trim(models.Talk.room)) == func.lower(old_name),
+        ).update({models.Talk.room: payload.name}, synchronize_session=False)
+    update_data = payload.model_dump(exclude_unset=True)
+    if "description" in update_data:
+        room.description = update_data["description"]
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Room name already exists") from exc
+    db.refresh(room)
+    count = (
+        db.query(models.Talk)
+        .filter(models.Talk.event_id == event_id, models.Talk.room == room.name)
+        .count()
+    )
+    return _room_read(room, count)
+
+
+@router.delete("/{event_id}/rooms/{room_id}")
+def delete_event_room(
+    event_id: int,
+    room_id: int,
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Delete a room and clear assignments for talks in the same event."""
+    if user.is_sso:
+        raise HTTPException(status_code=403, detail="SSO sessions cannot manage rooms")
+    check_event_access(event_id, user, db)
+    _lock_event_for_room_operation(db, event_id)
+    room = (
+        db.query(models.Room)
+        .filter(models.Room.id == room_id, models.Room.event_id == event_id)
+        .with_for_update()
+        .first()
+    )
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    db.query(models.Talk).filter(
+        models.Talk.event_id == event_id,
+        func.lower(func.trim(models.Talk.room)) == func.lower(room.name),
+    ).update({models.Talk.room: None}, synchronize_session=False)
+    db.delete(room)
+    db.commit()
+    return {"status": "ok", "deleted_id": room_id}
+
+
 @router.patch("/{event_id}", response_model=schemas.EventRead)
 def update_event(
     event_id: int,
     payload: schemas.EventUpdate,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     if user.is_sso:
@@ -144,7 +294,7 @@ def update_event(
 @router.delete("/{event_id}")
 def delete_event(
     event_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -269,7 +419,7 @@ def _get_event_client(event_id: int, db: Session) -> models.Client | None:
 )
 def list_event_api_keys(
     event_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """List all active API keys scoped to this event."""
@@ -314,7 +464,7 @@ def list_event_api_keys(
 )
 def create_event_api_key(
     event_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     payload: schemas.ApiKeyCreate | None = None,
 ):
@@ -389,7 +539,7 @@ def create_event_api_key(
 def revoke_event_api_key(
     event_id: int,
     client_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Revoke an API key scoped to this event."""
@@ -423,7 +573,7 @@ def revoke_event_api_key(
 )
 def get_event_webhook(
     event_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Retrieve the event's configured outbound webhook settings."""
@@ -460,7 +610,7 @@ def get_event_webhook(
 def update_event_webhook(
     event_id: int,
     payload: schemas.WebhookRegisterRequest,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Configure or update the outbound webhook URL and secret for an event."""
@@ -534,7 +684,7 @@ def update_event_webhook(
 )
 def delete_event_webhook(
     event_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Clear outbound webhook configuration for this event."""
@@ -595,7 +745,7 @@ def _validate_webhook_target_ip(url: str) -> None:
 def test_event_webhook(
     event_id: int,
     payload: schemas.WebhookTestRequest,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """Send a signed test ping webhook to verify destination URL and HMAC secret."""

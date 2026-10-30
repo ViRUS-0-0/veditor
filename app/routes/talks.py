@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeIs
 
 import anyio.to_thread
 import av
@@ -24,6 +24,8 @@ from fastapi import (
 )
 from redis.exceptions import RedisError
 from rq.command import send_stop_job_command
+from rq.job import Job
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -37,6 +39,7 @@ from app.auth import (
     require_role,
 )
 from app.config import get_setting, settings
+from app.consts import AuthRole
 from app.db import get_db
 from app.ingest import (
     IngestPathRejectedError,
@@ -71,11 +74,65 @@ router = APIRouter(
 )
 
 
+def _lock_event_for_room_operation(db: Session, event_id: int) -> None:
+    """Serialize room lifecycle changes and talk assignments per event."""
+    if not isinstance(db, Session):
+        return
+    db.query(models.Event).filter(models.Event.id == event_id).with_for_update().first()
+
+
+def _ensure_event_room(db: Session, event_id: int, raw_name: str | None) -> str | None:
+    """Register a talk room without changing the legacy Talk.room contract."""
+    if raw_name is None:
+        return None
+    name = raw_name.strip()
+    if not name:
+        return None
+    _lock_event_for_room_operation(db, event_id)
+    for pending in getattr(db, "new", ()):
+        if (
+            isinstance(pending, models.Room)
+            and pending.event_id == event_id
+            and pending.name.lower() == name.lower()
+        ):
+            return pending.name
+    room = (
+        db.query(models.Room)
+        .filter(
+            models.Room.event_id == event_id,
+            func.lower(models.Room.name) == func.lower(name),
+        )
+        .with_for_update()
+        .first()
+    )
+    if room is not None:
+        return room.name if isinstance(room, models.Room) else name
+    new_room = models.Room(event_id=event_id, name=name)
+    try:
+        with db.begin_nested():
+            db.add(new_room)
+            db.flush()
+    except IntegrityError:
+        room = (
+            db.query(models.Room)
+            .filter(
+                models.Room.event_id == event_id,
+                func.lower(models.Room.name) == func.lower(name),
+            )
+            .with_for_update()
+            .first()
+        )
+        if room is not None:
+            return room.name if isinstance(room, models.Room) else name
+        raise
+    return new_room.name
+
+
 @router.post("", response_model=schemas.TalkRead, status_code=status.HTTP_201_CREATED)
 def create_or_update_talk(
     payload: schemas.TalkCreate,
     response: Response,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """
@@ -100,8 +157,9 @@ def create_or_update_talk(
         .first()
     )
 
+    room_name = _ensure_event_room(db, payload.event_id, payload.room)
     if talk:
-        talk.room = payload.room
+        talk.room = room_name
         talk.end = payload.end
         if payload.speaker_email is not None:
             talk.speaker_email = payload.speaker_email
@@ -113,7 +171,7 @@ def create_or_update_talk(
     talk = models.Talk(
         event_id=payload.event_id,
         title=payload.title,
-        room=payload.room,
+        room=room_name,
         start=payload.start,
         end=payload.end,
         speaker_email=payload.speaker_email,
@@ -138,7 +196,7 @@ def create_or_update_talk(
         )
         if not talk:
             raise
-        talk.room = payload.room
+        talk.room = _ensure_event_room(db, payload.event_id, payload.room)
         talk.end = payload.end
         if payload.speaker_email is not None:
             talk.speaker_email = payload.speaker_email
@@ -252,7 +310,7 @@ def get_talk_jobs(
 def ingest_recording(
     talk_id: int,
     payload: schemas.RecordingIngestRequest,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -318,7 +376,7 @@ def ingest_recording(
 )
 def approve_talk(
     talk_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
     payload: schemas.ApproveRequest | None = None,
@@ -521,10 +579,10 @@ def submit_cut_bounds(
 )
 def upload_bumper_file(
     talk_id: int,
+    db: Annotated[Session, Depends(get_db)],
     file: Annotated[UploadFile, File()],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     kind: Annotated[str, Form()] = "intro",
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))] = None,
-    db: Annotated[Session, Depends(get_db)] = None,
 ):
     """Upload a custom bumper and return an opaque key understood by assembly."""
     talk = db.query(models.Talk).filter(models.Talk.id == talk_id).first()
@@ -628,7 +686,7 @@ def _apply_intro_outro_config(
 def handoff_talk(
     talk_id: int,
     payload: schemas.IntroOutroRequest,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -733,7 +791,7 @@ def handoff_talk(
 def configure_assembly(
     talk_id: int,
     payload: schemas.IntroOutroRequest,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -818,7 +876,7 @@ def _cancel_talk_jobs(talk_id: int, storage: StorageBackend | None = None) -> No
     """
     errors: list[str] = []
 
-    def _matches_talk(rq_job) -> bool:
+    def _matches_talk(rq_job: Job | None) -> TypeIs[Job]:
         if not rq_job:
             return False
         if rq_job.func_name == "app.tasks.job_ingest_room_url":
@@ -897,7 +955,7 @@ def _cancel_talk_jobs(talk_id: int, storage: StorageBackend | None = None) -> No
 )
 def abort_talk(
     talk_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -948,7 +1006,7 @@ def _normalize_dt(dt: datetime | None) -> datetime | None:
 def update_talk(
     talk_id: int,
     payload: schemas.TalkUpdate,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
 ):
     """
@@ -966,8 +1024,10 @@ def update_talk(
             status_code=status.HTTP_404_NOT_FOUND, detail="Talk not found"
         )
     check_event_access(talk.event_id, user, db)
-
     update_data = payload.model_dump(exclude_unset=True)
+
+    if "room" in update_data:
+        _lock_event_for_room_operation(db, talk.event_id)
 
     if "title" in update_data:
         title = (update_data["title"] or "").strip()
@@ -979,7 +1039,7 @@ def update_talk(
         talk.title = title
     if "room" in update_data:
         raw_room = update_data["room"]
-        talk.room = raw_room.strip() if (raw_room and raw_room.strip()) else None
+        talk.room = _ensure_event_room(db, talk.event_id, raw_room)
 
     if "start" in update_data and update_data["start"] is None:
         raise HTTPException(
@@ -1021,7 +1081,7 @@ def update_talk(
 @router.delete("/{talk_id}", status_code=status.HTTP_200_OK)
 def delete_talk(
     talk_id: int,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -1053,7 +1113,7 @@ def delete_talk(
 @router.post("/bulk-delete", response_model=schemas.BulkDeleteResponse)
 def bulk_delete_talks(
     payload: schemas.BulkDeleteRequest,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -1119,7 +1179,7 @@ def bulk_delete_talks(
 async def upload_recording(
     talk_id: int,
     file: Annotated[UploadFile, File()],
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ):
@@ -1236,7 +1296,7 @@ MAX_SCHEDULE_IMPORT_SIZE = 10 * 1024 * 1024  # 10MB
 @router.post("/schedule/import", response_model=schemas.ScheduleImportResponse)
 async def import_schedule(
     request: Request,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     file: Annotated[UploadFile | None, File()] = None,
 ):
@@ -1370,7 +1430,7 @@ async def import_schedule(
         if not isinstance(t_info, dict):
             continue
         title = t_info.get("title") or "Untitled Talk"
-        room = t_info.get("room") or "Main Hall"
+        room = t_info.get("room")
         raw_ext_id = (
             t_info.get("external_id")
             or t_info.get("code")
@@ -1639,6 +1699,21 @@ async def import_schedule(
                     set((client_record.event_ids or []) + [event.id])
                 )
 
+    _lock_event_for_room_operation(db, event.id)
+    import_room_names = {
+        room.name.lower(): room.name
+        for room in db.query(models.Room).filter(models.Room.event_id == event.id).all()
+    }
+
+    def resolve_import_room(raw_name: str | None) -> str | None:
+        if raw_name is None or not raw_name.strip():
+            return None
+        normalized = raw_name.strip()
+        key = normalized.lower()
+        if key not in import_room_names:
+            import_room_names[key] = _ensure_event_room(db, event.id, normalized)
+        return import_room_names[key]
+
     imported_count = 0
     for v_talk in deduped_talks:
         ext_id = v_talk.get("external_id")
@@ -1678,7 +1753,7 @@ async def import_schedule(
 
         if existing:
             existing.title = v_talk["title"]
-            existing.room = v_talk["room"]
+            existing.room = resolve_import_room(v_talk["room"])
             existing.start = v_talk["start"]
             existing.end = v_talk["end"]
             if v_talk.get("speaker_email"):
@@ -1692,7 +1767,7 @@ async def import_schedule(
             event_id=event.id,
             external_id=ext_id,
             title=v_talk["title"],
-            room=v_talk["room"],
+            room=resolve_import_room(v_talk["room"]),
             start=v_talk["start"],
             end=v_talk["end"],
             speaker_email=v_talk.get("speaker_email"),
@@ -1819,7 +1894,7 @@ def create_talk_sso_token(
 )
 async def attach_room_recording(
     request: Request,
-    user: Annotated[CurrentUser, Depends(require_role("organizer"))],
+    user: Annotated[CurrentUser, Depends(require_role(AuthRole.ORGANIZER))],
     db: Annotated[Session, Depends(get_db)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
     room: Annotated[str | None, Form()] = None,
