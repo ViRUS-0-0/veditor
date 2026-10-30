@@ -1,9 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Self
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -141,6 +143,11 @@ class Event(Base):
     speaker_magic_link_expire_hours: Mapped[int | None] = mapped_column(
         Integer, nullable=True, default=None
     )
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    timezone: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, default=None
+    )
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey(
             "users.id",
@@ -163,6 +170,22 @@ class Event(Base):
     @validates("retention_overrides")
     def _validate_retention_overrides(self, key: str, value: Any) -> Any:
         return validate_retention_overrides(value)
+
+    @property
+    def duration_days(self) -> int:
+        if self.start_date and self.end_date:
+            return max(1, (self.end_date - self.start_date).days + 1)
+        return 1
+
+    @property
+    def event_tz(self) -> ZoneInfo:
+        """Return the event's ZoneInfo, falling back to UTC if unset or invalid."""
+        if self.timezone:
+            try:
+                return ZoneInfo(self.timezone)
+            except ZoneInfoNotFoundError, KeyError:
+                pass
+        return UTC
 
     @property
     def is_eventyay_synced(self) -> bool:

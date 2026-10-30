@@ -1,9 +1,10 @@
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
     BaseModel,
@@ -19,12 +20,28 @@ from app.retention import validate_retention_overrides
 StrictPositiveInt = Annotated[int, Field(strict=True, gt=0)]
 
 
+def validate_timezone(v: str | None) -> str | None:
+    if v is None:
+        return None
+    cleaned = v.strip()
+    if not cleaned:
+        return None
+    try:
+        ZoneInfo(cleaned)
+    except (ZoneInfoNotFoundError, ValueError, KeyError) as exc:
+        raise ValueError(f"Unknown or invalid timezone: '{v}'") from exc
+    return cleaned
+
+
 class EventBase(BaseModel):
     name: str
     source: str | None = None
     external_id: str | None = None
     retention_overrides: dict[str, Any] | None = None
     speaker_magic_link_expire_hours: StrictPositiveInt | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    timezone: str | None = None
 
     @field_validator("retention_overrides")
     @classmethod
@@ -32,6 +49,17 @@ class EventBase(BaseModel):
         cls, v: dict[str, Any] | None
     ) -> dict[str, Any] | None:
         return validate_retention_overrides(v)
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str | None) -> str | None:
+        return validate_timezone(v)
+
+    @model_validator(mode="after")
+    def _validate_dates(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date must be greater than or equal to start_date")
+        return self
 
 
 class EventCreate(EventBase):
@@ -44,6 +72,9 @@ class EventUpdate(BaseModel):
     external_id: str | None = None
     retention_overrides: dict[str, Any] | None = None
     speaker_magic_link_expire_hours: StrictPositiveInt | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    timezone: str | None = None
 
     @field_validator("retention_overrides")
     @classmethod
@@ -51,6 +82,17 @@ class EventUpdate(BaseModel):
         cls, v: dict[str, Any] | None
     ) -> dict[str, Any] | None:
         return validate_retention_overrides(v)
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str | None) -> str | None:
+        return validate_timezone(v)
+
+    @model_validator(mode="after")
+    def _validate_dates(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date must be greater than or equal to start_date")
+        return self
 
 
 class EventRead(EventBase):
@@ -527,6 +569,7 @@ class RoomRecordingAttachResponse(BaseModel):
     event_id: int
     talk_ids: list[int]
     recording_duration_seconds: float | None = None
+    target_date: date | None = None
 
 
 class SystemSettingOption(BaseModel):

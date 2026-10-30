@@ -1,8 +1,9 @@
 import logging
 import urllib.parse
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 from fastapi import (
     APIRouter,
@@ -23,7 +24,7 @@ from app.config import get_setting, settings
 from app.db import get_db
 from app.queue import light_queue
 from app.routes.auth import _get_authenticated_user_from_cookie
-from app.routes.talks import _cancel_talk_jobs, attach_room_recording
+from app.routes.talks import _cancel_talk_jobs, attach_room_recording, get_room_days
 from app.security import SSOTokenPayload, decode_sso_token
 from app.storage import StorageBackend, get_storage_backend
 from app.tasks import job_waveform
@@ -1035,6 +1036,46 @@ def _parse_speaker_review_window_hours(raw_hours: str | None) -> int | None:
     return hours
 
 
+def _parse_date(raw_date: str | None) -> date | None:
+    """Parse date from YYYY-MM-DD string, returning None if empty."""
+    if raw_date is None:
+        return None
+    cleaned = str(raw_date).strip()
+    if not cleaned:
+        return None
+    try:
+        return date.fromisoformat(cleaned)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f"Invalid date format: '{raw_date}', expected YYYY-MM-DD"
+        ) from exc
+
+
+def _parse_timezone(raw_timezone: str | None) -> str | None:
+    """Parse timezone string, returning None if empty, raising ValueError if invalid."""
+    if raw_timezone is None:
+        return None
+    cleaned = str(raw_timezone).strip()
+    if not cleaned:
+        return None
+    try:
+        ZoneInfo(cleaned)
+    except (ZoneInfoNotFoundError, ValueError, KeyError) as exc:
+        raise ValueError(f"Invalid timezone: '{raw_timezone}'") from exc
+    return cleaned
+
+
+def _get_available_timezones() -> list[str]:
+    """Return sorted list of available IANA timezones."""
+    try:
+        tzs = sorted(available_timezones())
+        if tzs:
+            return tzs
+    except OSError as exc:
+        logger.warning("Failed to load system timezones: %s", exc)
+    return ["UTC"]
+
+
 def _render_studio_events_page(
     request: Request,
     user: models.User,
@@ -1061,6 +1102,7 @@ def _render_studio_events_page(
             "events": events,
             "error": error,
             "global_speaker_magic_link_expire_hours": int(global_hours),
+            "available_timezones": _get_available_timezones(),
         },
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
@@ -1073,6 +1115,9 @@ def create_studio_event(
     db: Annotated[Session, Depends(get_db)],
     name: Annotated[str, Form()] = "",
     speaker_magic_link_expire_hours: Annotated[str, Form()] = "",
+    start_date: Annotated[str, Form()] = "",
+    end_date: Annotated[str, Form()] = "",
+    timezone: Annotated[str, Form()] = "",
 ):
     cookie_token = request.cookies.get("veditor_session")
     if cookie_token and decode_sso_token(cookie_token) is not None:
@@ -1105,6 +1150,15 @@ def create_studio_event(
         parsed_hours = _parse_speaker_review_window_hours(
             speaker_magic_link_expire_hours
         )
+        parsed_start_date = _parse_date(start_date)
+        parsed_end_date = _parse_date(end_date)
+        if (
+            parsed_start_date
+            and parsed_end_date
+            and parsed_end_date < parsed_start_date
+        ):
+            raise ValueError("End date must be greater than or equal to start date.")
+        parsed_timezone = _parse_timezone(timezone)
     except ValueError as exc:
         return _render_studio_events_page(
             request,
@@ -1117,6 +1171,9 @@ def create_studio_event(
     event = models.Event(
         name=clean_name,
         speaker_magic_link_expire_hours=parsed_hours,
+        start_date=parsed_start_date,
+        end_date=parsed_end_date,
+        timezone=parsed_timezone,
         created_by_user_id=user.id,
     )
     db.add(event)
@@ -1136,6 +1193,9 @@ def edit_studio_event(
     db: Annotated[Session, Depends(get_db)],
     name: Annotated[str, Form()] = "",
     speaker_magic_link_expire_hours: Annotated[str, Form()] = "",
+    start_date: Annotated[str, Form()] = "",
+    end_date: Annotated[str, Form()] = "",
+    timezone: Annotated[str, Form()] = "",
 ):
     cookie_token = request.cookies.get("veditor_session")
     if cookie_token and decode_sso_token(cookie_token) is not None:
@@ -1174,16 +1234,23 @@ def edit_studio_event(
         )
 
     event.name = clean_name
-    if speaker_magic_link_expire_hours is not None:
-        try:
+    try:
+        if speaker_magic_link_expire_hours is not None:
             event.speaker_magic_link_expire_hours = _parse_speaker_review_window_hours(
                 speaker_magic_link_expire_hours
             )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(exc),
-            ) from exc
+        parsed_start = _parse_date(start_date)
+        parsed_end = _parse_date(end_date)
+        if parsed_start and parsed_end and parsed_end < parsed_start:
+            raise ValueError("End date must be greater than or equal to start date.")
+        event.start_date = parsed_start
+        event.end_date = parsed_end
+        event.timezone = _parse_timezone(timezone)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     db.commit()
     return RedirectResponse(url="/studio/events", status_code=status.HTTP_303_SEE_OTHER)
@@ -1250,5 +1317,12 @@ router.add_api_route(
     methods=["POST"],
     response_model=schemas.RoomRecordingAttachResponse,
     status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+
+router.add_api_route(
+    "/room/days",
+    get_room_days,
+    methods=["GET"],
     include_in_schema=False,
 )

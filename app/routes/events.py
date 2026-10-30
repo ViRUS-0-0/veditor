@@ -58,6 +58,9 @@ def create_event(
         external_id=payload.external_id,
         retention_overrides=payload.retention_overrides,
         speaker_magic_link_expire_hours=payload.speaker_magic_link_expire_hours,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        timezone=payload.timezone,
         created_by_user_id=created_by,
     )
     db.add(event)
@@ -285,6 +288,21 @@ def update_event(
 
     if payload.speaker_magic_link_expire_hours is not None:
         event.speaker_magic_link_expire_hours = payload.speaker_magic_link_expire_hours
+
+    fields_set = payload.model_fields_set
+    new_start = payload.start_date if "start_date" in fields_set else event.start_date
+    new_end = payload.end_date if "end_date" in fields_set else event.end_date
+    if new_start and new_end and new_end < new_start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="end_date must be greater than or equal to start_date",
+        )
+    if "start_date" in fields_set:
+        event.start_date = payload.start_date
+    if "end_date" in fields_set:
+        event.end_date = payload.end_date
+    if "timezone" in fields_set:
+        event.timezone = payload.timezone
 
     db.commit()
     db.refresh(event)

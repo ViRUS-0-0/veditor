@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -225,6 +225,38 @@ def test_dashboard_quick_talk_event_selection(client: TestClient, db_session):
     assert '<input type="text" id="quick-event-name"' in resp_admin.text
     assert "Org1 Selectable Summit" not in resp_admin.text
     assert "Org2 Private Conference" not in resp_admin.text
+
+
+def test_dashboard_attach_room_event_selection(client: TestClient, db_session):
+    org1 = create_user(db_session, "att_org1@test.com", "organizer")
+    org2 = create_user(db_session, "att_org2@test.com", "organizer")
+
+    # 1. Organizer with no events sees empty events option in attach modal
+    authenticate_client(client, org1)
+    resp_empty = client.get("/studio")
+    assert '<select id="attach-event-select"' in resp_empty.text
+    assert "No events found" in resp_empty.text
+
+    # 2. Add events for org1 and org2
+    event1 = models.Event(name="Org1 Attach Summit", created_by_user_id=org1.id)
+    event2 = models.Event(name="Org2 Other Conf", created_by_user_id=org2.id)
+    db_session.add_all([event1, event2])
+    db_session.commit()
+
+    # 3. Org1 should see <select id="attach-event-select"> with event1, but NOT event2
+    resp_org1 = client.get("/studio")
+    assert '<select id="attach-event-select"' in resp_org1.text
+    assert f'value="{event1.id}"' in resp_org1.text
+    assert "Org1 Attach Summit" in resp_org1.text
+    assert "Org2 Other Conf" not in resp_org1.text
+
+    # 4. When scoped to event1 via query param, event1 is selected in attach modal
+    resp_scoped = client.get(f"/studio?event_id={event1.id}")
+    assert (
+        f'<option value="{event1.id}" data-event-id="{event1.id}" selected>Org1 Attach Summit</option>'
+        in resp_scoped.text
+    )
+    assert '<select id="attach-room-select"' in resp_scoped.text
 
 
 def test_events_page_renders_clickable_name_and_action_buttons(
@@ -1404,6 +1436,8 @@ def test_studio_breadcrumb_links_to_event_and_room(client: TestClient, db_sessio
     assert 'id="talks-scope-title">Main Stage</h1>' in room_page.text
     assert "Main Stage Closing" in room_page.text
     assert "Workshop Hands-On" not in room_page.text
+    assert f'data-event-id="{event.id}"' in room_page.text
+    assert '<option value="Main Stage" selected>Main Stage</option>' in room_page.text
 
     # A talk without a room renders a placeholder instead of a link.
     roomless = client.get(f"/studio/talks/{talks['no_room'].id}")
@@ -1554,3 +1588,185 @@ def test_studio_events_create_and_edit_invalid_review_window(client, db_session)
         "Speaker review window must be a positive integer"
         in resp_edit_nan.json()["detail"]
     )
+
+
+def test_create_and_edit_event_with_dates(client: TestClient, db_session):
+    user = create_user(db_session, "dates_organizer@test.com", "organizer")
+    authenticate_client(client, user)
+
+    # 1. Reject create when end_date < start_date
+    resp_invalid = client.post(
+        "/studio/events",
+        data={
+            "name": "Invalid Date Event",
+            "start_date": "2026-10-27",
+            "end_date": "2026-10-25",
+        },
+    )
+    assert resp_invalid.status_code == 400
+    assert "End date must be greater than or equal to start date" in resp_invalid.text
+
+    # 2. Successful create with start and end dates
+    resp_create = client.post(
+        "/studio/events",
+        data={
+            "name": "FOSSASIA Summit 2026",
+            "start_date": "2026-10-25",
+            "end_date": "2026-10-27",
+        },
+        follow_redirects=False,
+    )
+    assert resp_create.status_code == 303
+    event = (
+        db_session.query(models.Event)
+        .filter(models.Event.name == "FOSSASIA Summit 2026")
+        .first()
+    )
+    assert event is not None
+    assert event.start_date == date(2026, 10, 25)
+    assert event.end_date == date(2026, 10, 27)
+    assert event.duration_days == 3
+
+    # 3. GET /studio/events displays date range and duration
+    resp_list = client.get("/studio/events")
+    assert resp_list.status_code == 200
+    assert "Duration / Dates" in resp_list.text
+    assert "Oct 25" in resp_list.text
+    assert "Oct 27, 2026" in resp_list.text
+    assert "(3 days)" in resp_list.text
+    assert 'id="event-duration"' not in resp_list.text
+    assert 'id="edit-event-duration"' not in resp_list.text
+
+    # 4. Successful edit of dates
+    resp_edit = client.post(
+        f"/studio/events/{event.id}/edit",
+        data={
+            "name": "FOSSASIA Summit 2026 (Extended)",
+            "start_date": "2026-10-24",
+            "end_date": "2026-10-28",
+        },
+        follow_redirects=False,
+    )
+    assert resp_edit.status_code == 303
+    db_session.refresh(event)
+    assert event.name == "FOSSASIA Summit 2026 (Extended)"
+    assert event.start_date == date(2026, 10, 24)
+    assert event.end_date == date(2026, 10, 28)
+    assert event.duration_days == 5
+
+    # 5. Reject edit when end_date < start_date
+    resp_edit_invalid = client.post(
+        f"/studio/events/{event.id}/edit",
+        data={
+            "name": "FOSSASIA Summit 2026 (Extended)",
+            "start_date": "2026-10-28",
+            "end_date": "2026-10-24",
+        },
+    )
+    assert resp_edit_invalid.status_code == 400
+    assert (
+        "End date must be greater than or equal to start date"
+        in resp_edit_invalid.json()["detail"]
+    )
+
+    # 6. Events with multi-year date range, end-date only, and start-date only
+    ev_multiyear = models.Event(
+        name="New Year Festival",
+        start_date=date(2026, 12, 30),
+        end_date=date(2027, 1, 3),
+        created_by_user_id=user.id,
+    )
+    ev_endonly = models.Event(
+        name="Deadline Conf",
+        end_date=date(2026, 11, 15),
+        created_by_user_id=user.id,
+    )
+    ev_startonly = models.Event(
+        name="Ongoing Conf",
+        start_date=date(2026, 10, 20),
+        created_by_user_id=user.id,
+    )
+    db_session.add_all([ev_multiyear, ev_endonly, ev_startonly])
+    db_session.commit()
+
+    resp_rendered = client.get("/studio/events")
+    assert resp_rendered.status_code == 200
+    assert "Dec 30, 2026 – Jan 3, 2027" in resp_rendered.text
+    assert "Until Nov 15, 2026" in resp_rendered.text
+    assert "From Oct 20, 2026" in resp_rendered.text
+    assert "(Single Day)" not in resp_rendered.text
+
+
+def test_studio_event_timezone_create_edit_and_rendering(
+    client: TestClient, db_session
+):
+    """Verify Studio create/edit forms support timezone selection and validation."""
+    user = create_user(db_session, "tz_organizer@example.com", "organizer")
+    authenticate_client(client, user)
+
+    # 1. Page renders timezone dropdowns in create form and edit modal
+    resp_page = client.get("/studio/events")
+    assert resp_page.status_code == 200
+    assert 'id="event-timezone"' in resp_page.text
+    assert 'name="timezone"' in resp_page.text
+    assert 'id="edit-event-timezone"' in resp_page.text
+    assert '<option value="Asia/Singapore">Asia/Singapore</option>' in resp_page.text
+
+    # 2. Creating event with valid timezone
+    resp_create = client.post(
+        "/studio/events",
+        data={
+            "name": "Tokyo Summit 2026",
+            "timezone": "Asia/Tokyo",
+        },
+        follow_redirects=False,
+    )
+    assert resp_create.status_code == 303
+    event = (
+        db_session.query(models.Event)
+        .filter(models.Event.name == "Tokyo Summit 2026")
+        .first()
+    )
+    assert event is not None
+    assert event.timezone == "Asia/Tokyo"
+
+    # 3. Timezone is rendered in table and in data-event-timezone on edit button
+    resp_list = client.get("/studio/events")
+    assert resp_list.status_code == 200
+    assert "Asia/Tokyo" in resp_list.text
+    assert 'data-event-timezone="Asia/Tokyo"' in resp_list.text
+
+    # 4. Editing event to update timezone
+    resp_edit = client.post(
+        f"/studio/events/{event.id}/edit",
+        data={
+            "name": "Tokyo Summit 2026 (Updated)",
+            "timezone": "America/New_York",
+        },
+        follow_redirects=False,
+    )
+    assert resp_edit.status_code == 303
+    db_session.refresh(event)
+    assert event.timezone == "America/New_York"
+
+    # 5. Invalid timezone on create renders error in page (HTTP 400)
+    resp_invalid_create = client.post(
+        "/studio/events",
+        data={
+            "name": "Bad TZ Event",
+            "timezone": "Asia/Singapur",
+        },
+    )
+    assert resp_invalid_create.status_code == 400
+    assert "Invalid timezone" in resp_invalid_create.text
+
+    # 6. Invalid timezone on edit returns HTTP 400
+    resp_invalid_edit = client.post(
+        f"/studio/events/{event.id}/edit",
+        data={
+            "name": "Tokyo Summit 2026 (Updated)",
+            "timezone": "Asia/Singapur",
+        },
+    )
+    assert resp_invalid_edit.status_code == 400
+    assert "Invalid timezone" in resp_invalid_edit.json()["detail"]
